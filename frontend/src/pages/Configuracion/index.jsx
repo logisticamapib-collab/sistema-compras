@@ -3,12 +3,14 @@ import Usuarios from './Usuarios'
 import Sites from './Sites'
 import CentrosCostos from './CentrosCostos'
 import CuentasGastos from './CuentasGastos'
+import Categorias from './Categorias'
 
 const secciones = [
   { id: 'usuarios', titulo: 'Usuarios' },
   { id: 'sites', titulo: 'Sites / Plantas' },
   { id: 'centros', titulo: 'Centros de Costos' },
   { id: 'cuentas', titulo: 'Cuentas de Gastos' },
+  { id: 'categorias', titulo: 'Categorias' },
 ]
 
 export default function Configuracion() {
@@ -32,6 +34,7 @@ export default function Configuracion() {
         {seccion === 'sites' && <Sites />}
         {seccion === 'centros' && <CentrosCostos />}
         {seccion === 'cuentas' && <CuentasGastos />}
+        {seccion === 'categorias' && <Categorias />}
       </div>
     </div>
   )
