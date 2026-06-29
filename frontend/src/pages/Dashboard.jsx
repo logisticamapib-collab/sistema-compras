@@ -6,6 +6,7 @@ import Proveedores from './Proveedores/index'
 import Articulos from './Articulos/index'
 import Requisiciones from './Requisiciones/index'
 import Ordenes from './Ordenes/index'
+import Aprobaciones from './Aprobaciones/index'
 
 const modulos = [
   { id: 'requisiciones', titulo: 'Requisiciones', desc: 'Crear y dar seguimiento a requisiciones', color: '#2563eb', roles: ['solicitante','gerente_area','gerente_planta','gerente_administrativo','compras','direccion','admin'] },
@@ -47,7 +48,8 @@ export default function Dashboard() {
           {moduloActivo === 'articulos' && <Articulos />}
           {moduloActivo === 'requisiciones' && <Requisiciones />}
           {moduloActivo === 'ordenes' && <Ordenes />}
-          {moduloActivo !== 'configuracion' && moduloActivo !== 'proveedores' && moduloActivo !== 'articulos' && moduloActivo !== 'requisiciones' && moduloActivo !== 'ordenes' && (
+          {moduloActivo === 'aprobaciones' && <Aprobaciones />}
+          {moduloActivo !== 'configuracion' && moduloActivo !== 'proveedores' && moduloActivo !== 'articulos' && moduloActivo !== 'requisiciones' && moduloActivo !== 'ordenes' && moduloActivo !== 'aprobaciones' && (
             <div style={styles.contenido}>
               <h2>Modulo: {moduloActivo} - En construccion</h2>
             </div>
