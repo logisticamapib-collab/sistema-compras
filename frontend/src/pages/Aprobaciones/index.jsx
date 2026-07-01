@@ -4,29 +4,6 @@ import { useAuth } from '../../context/AuthContext'
 import DetalleRequisicion from '../Requisiciones/DetalleRequisicion'
 import DetalleOrden from '../Ordenes/DetalleOrden'
 
-const estatusQueRequiereAprobacion = {
-  solicitante: [],
-  gerente_area: ['enviada', 'aprobacion_gerente_area'],
-  gerente_planta: ['aprobacion_gerente_planta'],
-  gerente_administrativo: ['aprobacion_gerente_planta'],
-  compras: ['aprobacion_compras', 'enviada_aprobacion'],
-  direccion: ['aprobacion_direccion', 'aprobada_gerente'],
-  admin: ['enviada', 'aprobacion_gerente_area', 'aprobacion_gerente_planta', 'aprobacion_compras', 'aprobacion_direccion', 'enviada_aprobacion', 'aprobada_gerente'],
-}
-
-const estatusLabelsReq = {
-  enviada: 'Enviada - Pendiente de revision',
-  aprobacion_gerente_area: 'Pendiente aprobacion Gerente Area',
-  aprobacion_gerente_planta: 'Pendiente aprobacion Gerente Planta',
-  aprobacion_compras: 'Pendiente aprobacion Compras',
-  aprobacion_direccion: 'Pendiente aprobacion Direccion',
-}
-
-const estatusLabelsOC = {
-  enviada_aprobacion: 'OC pendiente de aprobacion',
-  aprobada_gerente: 'OC pendiente aprobacion Direccion',
-}
-
 export default function Aprobaciones() {
   const { perfil } = useAuth()
   const [requisiciones, setRequisiciones] = useState([])
@@ -35,40 +12,44 @@ export default function Aprobaciones() {
   const [vista, setVista] = useState('lista')
   const [itemSeleccionado, setItemSeleccionado] = useState(null)
   const [tipoSeleccionado, setTipoSeleccionado] = useState(null)
-  const [filtro, setFiltro] = useState('todos')
 
   useEffect(() => { cargarPendientes() }, [])
 
   const cargarPendientes = async () => {
     setLoading(true)
-    const estatusRol = estatusQueRequiereAprobacion[perfil?.rol] || []
-
-    if (estatusRol.length === 0) {
-      setLoading(false)
-      return
-    }
-
-    const estatusReq = estatusRol.filter(e => Object.keys(estatusLabelsReq).includes(e))
-    const estatusOC = estatusRol.filter(e => Object.keys(estatusLabelsOC).includes(e))
 
     const promesas = []
 
-    if (estatusReq.length > 0) {
+    // Requisiciones pendientes segun rol
+    if (['gerente_area', 'gerente_planta', 'gerente_administrativo', 'admin'].includes(perfil?.rol)) {
       promesas.push(
         supabase.from('requisiciones')
-          .select('*, usuarios(nombre), sites(nombre, codigo)')
+          .select('*, solicitante:solicitante_id(nombre, area), sites(nombre, codigo)')
           .eq('empresa_id', perfil.empresa_id)
-          .in('estatus', estatusReq)
+          .eq('estatus', 'enviada')
+          .eq('aprobador_actual_id', perfil.id)
           .order('created_at', { ascending: true })
       )
     } else {
       promesas.push(Promise.resolve({ data: [] }))
     }
 
+    // Ordenes de compra pendientes segun rol
+    let estatusOC = []
+    if (['gerente_area', 'gerente_planta', 'gerente_administrativo'].includes(perfil?.rol)) {
+      estatusOC = ['aprobacion_gerente_area', 'aprobacion_gerente_planta']
+    } else if (perfil?.rol === 'gerente_compras') {
+      estatusOC = ['aprobacion_gerente_compras']
+    } else if (perfil?.rol === 'direccion') {
+      estatusOC = ['aprobacion_direccion']
+    } else if (perfil?.rol === 'admin') {
+      estatusOC = ['aprobacion_gerente_area', 'aprobacion_gerente_planta', 'aprobacion_gerente_compras', 'aprobacion_direccion']
+    }
+
     if (estatusOC.length > 0) {
       promesas.push(
         supabase.from('ordenes_compra')
-          .select('*, proveedores(nombre), usuarios(nombre), sites(codigo), requisiciones(folio)')
+          .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio)')
           .eq('empresa_id', perfil.empresa_id)
           .in('estatus', estatusOC)
           .order('created_at', { ascending: true })
@@ -107,9 +88,6 @@ export default function Aprobaciones() {
 
   const totalPendientes = requisiciones.length + ordenes.length
 
-  const reqFiltradas = filtro === 'ordenes' ? [] : requisiciones
-  const ocsFiltradas = filtro === 'requisiciones' ? [] : ordenes
-
   return (
     <div style={styles.container}>
       <div style={styles.encabezado}>
@@ -120,18 +98,15 @@ export default function Aprobaciones() {
       </div>
 
       <div style={styles.resumenCards}>
-        <div style={{ ...styles.card, borderLeft: '4px solid #2563eb' }}
-          onClick={() => setFiltro('todos')}>
+        <div style={{ ...styles.card, borderLeft: '4px solid #2563eb' }}>
           <p style={styles.cardNumero}>{totalPendientes}</p>
           <p style={styles.cardLabel}>Total pendientes</p>
         </div>
-        <div style={{ ...styles.card, borderLeft: '4px solid #7c3aed' }}
-          onClick={() => setFiltro('requisiciones')}>
+        <div style={{ ...styles.card, borderLeft: '4px solid #7c3aed' }}>
           <p style={styles.cardNumero}>{requisiciones.length}</p>
           <p style={styles.cardLabel}>Requisiciones</p>
         </div>
-        <div style={{ ...styles.card, borderLeft: '4px solid #0891b2' }}
-          onClick={() => setFiltro('ordenes')}>
+        <div style={{ ...styles.card, borderLeft: '4px solid #0891b2' }}>
           <p style={styles.cardNumero}>{ordenes.length}</p>
           <p style={styles.cardLabel}>Ordenes de compra</p>
         </div>
@@ -146,40 +121,38 @@ export default function Aprobaciones() {
         </div>
       ) : (
         <>
-          {reqFiltradas.length > 0 && (
+          {requisiciones.length > 0 && (
             <div style={styles.seccion}>
-              <h3 style={styles.seccionTitulo}>Requisiciones pendientes</h3>
+              <h3 style={styles.seccionTitulo}>Requisiciones pendientes de tu aprobacion</h3>
               <div style={styles.tabla}>
                 <div style={styles.tablaHeader}>
                   <span style={{ flex: 1.5 }}>Folio</span>
                   <span style={{ flex: 2 }}>Solicitante</span>
+                  <span style={{ flex: 1 }}>Area</span>
                   <span style={{ flex: 1 }}>Site</span>
                   <span style={{ flex: 1 }}>Fecha req.</span>
                   <span style={{ flex: 1 }}>Criticidad</span>
-                  <span style={{ flex: 2 }}>Estatus</span>
                   <span style={{ flex: 1 }}>Dias espera</span>
                   <span style={{ flex: 1 }}>Accion</span>
                 </div>
-                {reqFiltradas.map(r => {
+                {requisiciones.map(r => {
                   const diasEspera = Math.floor((new Date() - new Date(r.created_at)) / (1000 * 60 * 60 * 24))
                   return (
                     <div key={r.id} style={styles.tablaFila}>
                       <span style={{ flex: 1.5, fontWeight: '600', color: '#2563eb', fontSize: '13px' }}>{r.folio}</span>
-                      <span style={{ flex: 2, fontSize: '13px' }}>{r.usuarios?.nombre}</span>
+                      <span style={{ flex: 2, fontSize: '13px' }}>{r.solicitante?.nombre}</span>
+                      <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{r.solicitante?.area || '-'}</span>
                       <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{r.sites?.codigo}</span>
                       <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>
                         {new Date(r.fecha_requerida).toLocaleDateString('es-MX')}
                       </span>
                       <span style={{ flex: 1 }}>
-                        <span style={{ ...styles.badge, backgroundColor: r.criticidad === 'alta' ? '#fef2f2' : r.criticidad === 'media' ? '#fef9c3' : '#f0fdf4', color: r.criticidad === 'alta' ? '#dc2626' : r.criticidad === 'media' ? '#854d0e' : '#16a34a' }}>
+                        <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '500', backgroundColor: r.criticidad === 'alta' ? '#fef2f2' : r.criticidad === 'media' ? '#fef9c3' : '#f0fdf4', color: r.criticidad === 'alta' ? '#dc2626' : r.criticidad === 'media' ? '#854d0e' : '#16a34a' }}>
                           {r.criticidad?.toUpperCase()}
                         </span>
                       </span>
-                      <span style={{ flex: 2, fontSize: '12px', color: '#666' }}>
-                        {estatusLabelsReq[r.estatus] || r.estatus}
-                      </span>
                       <span style={{ flex: 1 }}>
-                        <span style={{ ...styles.badge, backgroundColor: diasEspera > 2 ? '#fef2f2' : '#f0fdf4', color: diasEspera > 2 ? '#dc2626' : '#16a34a' }}>
+                        <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '500', backgroundColor: diasEspera > 2 ? '#fef2f2' : '#f0fdf4', color: diasEspera > 2 ? '#dc2626' : '#16a34a' }}>
                           {diasEspera} dia(s)
                         </span>
                       </span>
@@ -195,9 +168,9 @@ export default function Aprobaciones() {
             </div>
           )}
 
-          {ocsFiltradas.length > 0 && (
+          {ordenes.length > 0 && (
             <div style={styles.seccion}>
-              <h3 style={styles.seccionTitulo}>Ordenes de compra pendientes</h3>
+              <h3 style={styles.seccionTitulo}>Ordenes de compra pendientes de tu aprobacion</h3>
               <div style={styles.tabla}>
                 <div style={styles.tablaHeader}>
                   <span style={{ flex: 1.5 }}>Folio OC</span>
@@ -208,7 +181,7 @@ export default function Aprobaciones() {
                   <span style={{ flex: 1 }}>Dias espera</span>
                   <span style={{ flex: 1 }}>Accion</span>
                 </div>
-                {ocsFiltradas.map(o => {
+                {ordenes.map(o => {
                   const diasEspera = Math.floor((new Date() - new Date(o.created_at)) / (1000 * 60 * 60 * 24))
                   return (
                     <div key={o.id} style={styles.tablaFila}>
@@ -218,16 +191,15 @@ export default function Aprobaciones() {
                       <span style={{ flex: 1, fontSize: '13px', fontWeight: '500' }}>
                         ${parseFloat(o.total || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
                       </span>
-                      <span style={{ flex: 1.5, fontSize: '12px', color: '#666' }}>
-                        {estatusLabelsOC[o.estatus] || o.estatus}
-                      </span>
+                      <span style={{ flex: 1.5, fontSize: '12px', color: '#666' }}>{o.estatus}</span>
                       <span style={{ flex: 1 }}>
-                        <span style={{ ...styles.badge, backgroundColor: diasEspera > 1 ? '#fef2f2' : '#f0fdf4', color: diasEspera > 1 ? '#dc2626' : '#16a34a' }}>
+                        <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '500', backgroundColor: diasEspera > 1 ? '#fef2f2' : '#f0fdf4', color: diasEspera > 1 ? '#dc2626' : '#16a34a' }}>
                           {diasEspera} dia(s)
                         </span>
                       </span>
                       <span style={{ flex: 1 }}>
-                        <button style={{ ...styles.botonAprobar, backgroundColor: '#0891b2' }} onClick={() => abrirDetalle(o, 'orden')}>
+                        <button style={{ ...styles.botonAprobar, backgroundColor: '#0891b2' }}
+                          onClick={() => abrirDetalle(o, 'orden')}>
                           Revisar
                         </button>
                       </span>
@@ -249,7 +221,7 @@ const styles = {
   titulo: { fontSize: '18px', fontWeight: '600', color: '#1a1a2e', margin: '0' },
   botonRefrescar: { padding: '8px 16px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' },
   resumenCards: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' },
-  card: { backgroundColor: '#fff', borderRadius: '10px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', cursor: 'pointer' },
+  card: { backgroundColor: '#fff', borderRadius: '10px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   cardNumero: { fontSize: '32px', fontWeight: '700', color: '#1a1a2e', margin: '0 0 4px 0' },
   cardLabel: { fontSize: '13px', color: '#666', margin: '0' },
   sinDatos: { color: '#94a3b8', fontSize: '14px', textAlign: 'center', padding: '40px' },

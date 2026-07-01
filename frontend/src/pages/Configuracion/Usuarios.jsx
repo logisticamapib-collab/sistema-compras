@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '../../lib/supabase'
+import { supabase, supabaseAdmin } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
 const roles = [
@@ -119,7 +119,7 @@ export default function Usuarios() {
       }
       setExito('Usuario actualizado correctamente')
     } else {
-      const { data, error: errorAuth } = await supabase.auth.signUp({
+      const { data, error: errorAuth } = await supabaseAdmin.auth.signUp({
         email: form.email,
         password: form.password
       })

@@ -54,7 +54,7 @@ export default function Requisiciones() {
     setLoading(true)
     let query = supabase
       .from('requisiciones')
-      .select('*, usuarios(nombre), sites(nombre,codigo)')
+      .select('*, solicitante:solicitante_id(nombre), sites(nombre,codigo)')
       .eq('empresa_id', perfil.empresa_id)
       .order('created_at', { ascending: false })
 
@@ -62,11 +62,10 @@ export default function Requisiciones() {
       query = query.eq('solicitante_id', perfil.id)
     }
 
-    const { data } = await query
+    const { data, error } = await query
     setRequisiciones(data || [])
     setLoading(false)
   }
-
   const abrirDetalle = (req) => {
     setRequisicionSeleccionada(req)
     setVista('detalle')

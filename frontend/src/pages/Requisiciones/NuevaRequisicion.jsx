@@ -94,7 +94,26 @@ export default function NuevaRequisicion({ onVolver, onGuardado }) {
     setLoading(true)
 
     const folio = await generarFolio()
-    const estatus = enviar ? 'enviada' : 'borrador'
+
+    // Determinar estatus inicial y aprobador segun rol del solicitante
+    let estatusInicial = 'borrador'
+    let aprobadorActualId = null
+
+    if (enviar) {
+      const rolSolicitante = perfil.rol
+
+      if (['gerente_planta', 'gerente_administrativo'].includes(rolSolicitante)) {
+        // Gerente planta/adm va directo a en_proceso (compras)
+        estatusInicial = 'en_proceso'
+      } else if (rolSolicitante === 'gerente_area') {
+        // Gerente area va directo a en_proceso (compras)
+        estatusInicial = 'en_proceso'
+      } else {
+        // Solicitante normal va a su gerente directo
+        estatusInicial = 'enviada'
+        aprobadorActualId = perfil.gerente_id || null
+      }
+    }
 
     const { data: req, error: errorReq } = await supabase
       .from('requisiciones')
@@ -107,7 +126,10 @@ export default function NuevaRequisicion({ onVolver, onGuardado }) {
         criticidad: form.criticidad,
         justificacion: form.justificacion,
         notas: form.notas,
-        estatus
+        estatus: estatusInicial,
+        aprobador_actual_id: aprobadorActualId,
+        gerente_area_id: perfil.gerente_id || perfil.id,
+        paso_aprobacion: enviar ? 1 : 0
       })
       .select()
       .single()

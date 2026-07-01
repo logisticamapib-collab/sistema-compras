@@ -5,22 +5,29 @@ import EditarRequisicion from './EditarRequisicion'
 
 const estatusLabels = {
   borrador: 'Borrador',
-  enviada: 'Enviada',
-  aprobacion_gerente_area: 'En aprobacion - Gerente Area',
-  aprobacion_gerente_planta: 'En aprobacion - Gerente Planta',
-  aprobacion_compras: 'En aprobacion - Compras',
-  aprobacion_direccion: 'En aprobacion - Direccion',
-  aprobada: 'Aprobada',
-  rechazada: 'Rechazada',
-  en_proceso: 'En proceso',
+  enviada: 'Pendiente de aprobacion - Gerente Area',
+  aprobada_gerente_area: 'Aprobada - Pendiente generar OC',
+  en_proceso: 'En proceso - Compras generando OC',
   completada: 'Completada',
+  rechazada: 'Rechazada',
   cancelada: 'Cancelada',
+}
+
+const estatusColores = {
+  borrador: { backgroundColor: '#f1f5f9', color: '#64748b' },
+  enviada: { backgroundColor: '#fef9c3', color: '#854d0e' },
+  aprobada_gerente_area: { backgroundColor: '#eff6ff', color: '#2563eb' },
+  en_proceso: { backgroundColor: '#f0f9ff', color: '#0891b2' },
+  completada: { backgroundColor: '#f0fdf4', color: '#16a34a' },
+  rechazada: { backgroundColor: '#fef2f2', color: '#dc2626' },
+  cancelada: { backgroundColor: '#fef2f2', color: '#991b1b' },
 }
 
 export default function DetalleRequisicion({ requisicion, onVolver }) {
   const { perfil } = useAuth()
   const [lineas, setLineas] = useState([])
   const [aprobaciones, setAprobaciones] = useState([])
+  const [solicitante, setSolicitante] = useState(null)
   const [loading, setLoading] = useState(true)
   const [comentario, setComentario] = useState('')
   const [procesando, setProcesando] = useState(false)
@@ -30,42 +37,31 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
 
   const cargarDetalle = async () => {
     setLoading(true)
-    const [{ data: l }, { data: a }] = await Promise.all([
+    const [{ data: l }, { data: a }, { data: s }] = await Promise.all([
       supabase.from('requisicion_lineas')
         .select('*, articulos(codigo_interno, descripcion), centros_costos(codigo, nombre), cuentas_gastos(codigo, nombre), proveedores(nombre)')
         .eq('requisicion_id', requisicion.id),
       supabase.from('aprobaciones')
-        .select('*, usuarios(nombre)')
+        .select('*, aprobador:aprobador_id(nombre)')
         .eq('referencia_id', requisicion.id)
         .eq('tipo', 'requisicion')
-        .order('created_at')
+        .order('created_at'),
+      supabase.from('usuarios')
+        .select('nombre, email, area, puesto')
+        .eq('id', requisicion.solicitante_id)
+        .single()
     ])
     setLineas(l || [])
     setAprobaciones(a || [])
+    setSolicitante(s)
     setLoading(false)
   }
 
-  const determinarSiguienteEstatus = () => {
-    const { estatus, criticidad } = requisicion
-    if (estatus === 'borrador') return 'enviada'
-    if (estatus === 'enviada') return 'aprobacion_gerente_area'
-    if (estatus === 'aprobacion_gerente_area') {
-      return criticidad === 'alta' ? 'aprobacion_gerente_planta' : 'aprobacion_compras'
-    }
-    if (estatus === 'aprobacion_gerente_planta') return 'aprobacion_compras'
-    if (estatus === 'aprobacion_compras') return 'aprobacion_direccion'
-    if (estatus === 'aprobacion_direccion') return 'aprobada'
-    return null
-  }
-
   const puedeAprobar = () => {
-    const { estatus } = requisicion
-    const rol = perfil?.rol
-    if (estatus === 'enviada' && rol === 'gerente_area') return true
-    if (estatus === 'aprobacion_gerente_area' && rol === 'gerente_area') return true
-    if (estatus === 'aprobacion_gerente_planta' && ['gerente_planta', 'gerente_administrativo'].includes(rol)) return true
-    if (estatus === 'aprobacion_compras' && rol === 'compras') return true
-    if (estatus === 'aprobacion_direccion' && rol === 'direccion') return true
+    if (requisicion.estatus !== 'enviada') return false
+    if (perfil?.id === requisicion.aprobador_actual_id) return true
+    if (['gerente_area', 'gerente_planta', 'gerente_administrativo', 'admin'].includes(perfil?.rol) &&
+      perfil?.id === requisicion.gerente_area_id) return true
     return false
   }
 
@@ -76,7 +72,6 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
 
   const aprobar = async () => {
     setProcesando(true)
-    const siguienteEstatus = determinarSiguienteEstatus()
 
     await supabase.from('aprobaciones').insert({
       tipo: 'requisicion',
@@ -85,12 +80,16 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
       nivel: 1,
       rol_requerido: perfil.rol,
       decision: 'aprobada',
-      comentarios: comentario,
+      comentarios: comentario || null,
       fecha_decision: new Date().toISOString()
     })
 
     await supabase.from('requisiciones')
-      .update({ estatus: siguienteEstatus })
+      .update({
+        estatus: 'en_proceso',
+        aprobador_actual_id: null,
+        paso_aprobacion: 2
+      })
       .eq('id', requisicion.id)
 
     setProcesando(false)
@@ -135,9 +134,19 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
 
   const enviar = async () => {
     setProcesando(true)
+
+    const aprobadorId = perfil.gerente_id || null
+
     await supabase.from('requisiciones')
-      .update({ estatus: 'enviada' })
+      .update({
+        estatus: ['gerente_area', 'gerente_planta', 'gerente_administrativo'].includes(perfil.rol)
+          ? 'en_proceso' : 'enviada',
+        aprobador_actual_id: aprobadorId,
+        gerente_area_id: perfil.gerente_id || perfil.id,
+        paso_aprobacion: 1
+      })
       .eq('id', requisicion.id)
+
     setProcesando(false)
     onVolver()
   }
@@ -158,7 +167,9 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
         </button>
         <div style={styles.encabezadoInfo}>
           <h2 style={styles.titulo}>{requisicion.folio}</h2>
-          <span style={styles.estatusBadge}>{estatusLabels[requisicion.estatus]}</span>
+          <span style={{ ...styles.estatusBadge, ...estatusColores[requisicion.estatus] }}>
+            {estatusLabels[requisicion.estatus]}
+          </span>
         </div>
       </div>
 
@@ -168,7 +179,11 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
           <div style={styles.infoGrid}>
             <div style={styles.infoItem}>
               <span style={styles.infoLabel}>Solicitante</span>
-              <span style={styles.infoValor}>{requisicion.usuarios?.nombre}</span>
+              <span style={styles.infoValor}>{solicitante?.nombre || '-'}</span>
+            </div>
+            <div style={styles.infoItem}>
+              <span style={styles.infoLabel}>Area</span>
+              <span style={styles.infoValor}>{solicitante?.area || '-'}</span>
             </div>
             <div style={styles.infoItem}>
               <span style={styles.infoLabel}>Fecha de solicitud</span>
@@ -183,6 +198,10 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
               <span style={{ ...styles.infoValor, color: requisicion.criticidad === 'alta' ? '#dc2626' : requisicion.criticidad === 'media' ? '#854d0e' : '#16a34a', fontWeight: '600' }}>
                 {requisicion.criticidad?.toUpperCase()}
               </span>
+            </div>
+            <div style={styles.infoItem}>
+              <span style={styles.infoLabel}>Paso actual</span>
+              <span style={styles.infoValor}>{requisicion.paso_aprobacion || 0}</span>
             </div>
             {requisicion.justificacion && (
               <div style={{ ...styles.infoItem, gridColumn: '1 / -1' }}>
@@ -210,7 +229,7 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
                   {a.decision === 'aprobada' ? 'Aprobada' : 'Rechazada'}
                 </div>
                 <div>
-                  <p style={styles.aprobacionNombre}>{a.usuarios?.nombre}</p>
+                  <p style={styles.aprobacionNombre}>{a.aprobador?.nombre}</p>
                   <p style={styles.aprobacionFecha}>{new Date(a.fecha_decision).toLocaleString('es-MX')}</p>
                   {a.comentarios && <p style={styles.aprobacionComentario}>{a.comentarios}</p>}
                 </div>
@@ -276,6 +295,7 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
         )}
         {puedeAprobar() && (
           <div style={styles.seccionAprobacion}>
+            <h3 style={styles.seccionTitulo}>Tu aprobacion es requerida</h3>
             <textarea style={styles.textarea} value={comentario}
               onChange={e => setComentario(e.target.value)}
               placeholder="Comentarios (obligatorio al rechazar)..."
@@ -285,7 +305,7 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
                 Rechazar
               </button>
               <button style={styles.boton} onClick={aprobar} disabled={procesando}>
-                Aprobar
+                {procesando ? 'Procesando...' : 'Aprobar requisicion'}
               </button>
             </div>
           </div>
@@ -305,7 +325,7 @@ const styles = {
   encabezado: { marginBottom: '20px' },
   encabezadoInfo: { display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' },
   titulo: { fontSize: '20px', fontWeight: '600', color: '#1a1a2e', margin: '0' },
-  estatusBadge: { padding: '4px 12px', borderRadius: '20px', fontSize: '13px', fontWeight: '500', backgroundColor: '#eff6ff', color: '#2563eb' },
+  estatusBadge: { padding: '4px 12px', borderRadius: '20px', fontSize: '13px', fontWeight: '500' },
   botonVolver: { padding: '6px 14px', backgroundColor: 'transparent', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' },
   grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' },
   seccion: { backgroundColor: '#fff', borderRadius: '10px', padding: '24px', marginBottom: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },

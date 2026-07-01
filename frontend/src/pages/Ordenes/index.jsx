@@ -45,7 +45,7 @@ export default function Ordenes() {
     setLoading(true)
     const { data } = await supabase
       .from('ordenes_compra')
-      .select('*, proveedores(nombre), usuarios(nombre), sites(codigo), requisiciones(folio)')
+      .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio)')
       .eq('empresa_id', perfil.empresa_id)
       .order('created_at', { ascending: false })
     setOrdenes(data || [])

@@ -33,7 +33,7 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
       supabase.from('requisiciones')
         .select('*, usuarios(nombre), sites(nombre,codigo)')
         .eq('empresa_id', perfil.empresa_id)
-        .in('estatus', ['aprobada', 'en_proceso'])
+        .in('estatus', ['en_proceso'])
         .order('created_at', { ascending: false }),
       supabase.from('proveedores')
         .select('*')

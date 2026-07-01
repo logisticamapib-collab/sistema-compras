@@ -16,18 +16,22 @@ const estatusLabels = {
 }
 
 const siguienteEstatus = {
-  enviada_aprobacion: 'aprobada_gerente',
-  aprobada_gerente: 'aprobada_direccion',
-  aprobada_direccion: 'enviada_proveedor',
+  aprobacion_gerente_area: 'aprobacion_gerente_planta',
+  aprobacion_gerente_planta: 'aprobacion_gerente_compras',
+  aprobacion_gerente_compras: 'aprobacion_direccion',
+  aprobacion_direccion: 'aprobada',
+  aprobada: 'enviada_proveedor',
   enviada_proveedor: 'confirmada',
   confirmada: 'en_transito',
   en_transito: 'recibida',
 }
 
 const rolesQueAprueban = {
-  enviada_aprobacion: ['gerente_area', 'gerente_planta', 'gerente_administrativo'],
-  aprobada_gerente: ['direccion', 'admin'],
-  aprobada_direccion: ['compras', 'admin'],
+  aprobacion_gerente_area: ['gerente_area', 'gerente_planta', 'gerente_administrativo', 'admin'],
+  aprobacion_gerente_planta: ['gerente_planta', 'gerente_administrativo', 'admin'],
+  aprobacion_gerente_compras: ['gerente_compras', 'admin'],
+  aprobacion_direccion: ['direccion', 'admin'],
+  aprobada: ['compras', 'admin'],
   enviada_proveedor: ['compras', 'admin'],
   confirmada: ['compras', 'admin'],
   en_transito: ['compras', 'admin'],
@@ -51,7 +55,7 @@ export default function DetalleOrden({ orden, onVolver }) {
         .select('*, articulos(codigo_interno, descripcion), centros_costos(codigo, nombre), cuentas_gastos(codigo, nombre)')
         .eq('oc_id', orden.id),
       supabase.from('aprobaciones')
-        .select('*, usuarios(nombre)')
+        .select('*, aprobador:aprobador_id(nombre)')
         .eq('referencia_id', orden.id)
         .eq('tipo', 'orden_compra')
         .order('created_at')
@@ -147,7 +151,7 @@ export default function DetalleOrden({ orden, onVolver }) {
             </div>
             <div style={styles.infoItem}>
               <span style={styles.infoLabel}>Comprador</span>
-              <span style={styles.infoValor}>{orden.usuarios?.nombre}</span>
+              <span style={styles.infoValor}>{orden.comprador                                                                                                                                                                   ?.nombre}</span>
             </div>
             <div style={styles.infoItem}>
               <span style={styles.infoLabel}>Fecha emision</span>
@@ -201,7 +205,7 @@ export default function DetalleOrden({ orden, onVolver }) {
                   {a.decision === 'aprobada' ? 'Aprobada' : 'Rechazada'}
                 </div>
                 <div>
-                  <p style={styles.aprobacionNombre}>{a.usuarios?.nombre}</p>
+                  <p style={styles.aprobacionNombre}>{a.aprobador?.nombre}</p>
                   <p style={styles.aprobacionFecha}>{new Date(a.fecha_decision).toLocaleString('es-MX')}</p>
                   {a.comentarios && <p style={styles.aprobacionComentario}>{a.comentarios}</p>}
                 </div>
