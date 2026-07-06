@@ -31,7 +31,7 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
     setLoading(true)
     const [{ data: r }, { data: p }] = await Promise.all([
       supabase.from('requisiciones')
-        .select('*, usuarios(nombre), sites(nombre,codigo)')
+        .select('*, solicitante:solicitante_id(nombre), sites(nombre,codigo)')
         .eq('empresa_id', perfil.empresa_id)
         .in('estatus', ['en_proceso'])
         .order('created_at', { ascending: false }),
@@ -162,7 +162,7 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
           iva,
           total,
           notas: form.notas,
-          estatus: 'enviada_aprobacion'
+          estatus: 'aprobacion_gerente_area'
         })
         .select()
         .single()
@@ -332,7 +332,7 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
                 {requisiciones.map(r => (
                   <div key={r.id} style={styles.tablaFila}>
                     <span style={{ flex: 1.5, fontWeight: '600', color: '#2563eb', fontSize: '13px' }}>{r.folio}</span>
-                    <span style={{ flex: 2, fontSize: '13px' }}>{r.usuarios?.nombre}</span>
+                    <span style={{ flex: 2, fontSize: '13px' }}>{r.solicitante?.nombre}</span>
                     <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{r.sites?.codigo}</span>
                     <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>
                       {new Date(r.fecha_requerida).toLocaleDateString('es-MX')}

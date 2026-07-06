@@ -9,12 +9,12 @@ import Ordenes from './Ordenes/index'
 import Aprobaciones from './Aprobaciones/index'
 
 const modulos = [
-  { id: 'requisiciones', titulo: 'Requisiciones', desc: 'Crear y dar seguimiento a requisiciones', color: '#2563eb', roles: ['solicitante','gerente_area','gerente_planta','gerente_administrativo','compras','direccion','admin'] },
-  { id: 'aprobaciones', titulo: 'Aprobaciones', desc: 'Revisar y aprobar solicitudes pendientes', color: '#7c3aed', roles: ['gerente_area','gerente_planta','gerente_administrativo','compras','direccion','admin'] },
-  { id: 'ordenes', titulo: 'Ordenes de Compra', desc: 'Gestionar ordenes y seguimiento de arribo', color: '#0891b2', roles: ['compras','direccion','admin'] },
-  { id: 'articulos', titulo: 'Articulos', desc: 'Catalogo de materiales y herramientas', color: '#059669', roles: ['compras','admin'] },
-  { id: 'proveedores', titulo: 'Proveedores', desc: 'Alta y gestion de proveedores', color: '#d97706', roles: ['compras','admin'] },
-  { id: 'reportes', titulo: 'Reportes KPI', desc: 'Indicadores y metricas de compras', color: '#dc2626', roles: ['gerente_planta','gerente_administrativo','compras','direccion','admin'] },
+  { id: 'requisiciones', titulo: 'Requisiciones', desc: 'Crear y dar seguimiento a requisiciones', color: '#2563eb', roles: ['solicitante','gerente_area','gerente_planta','gerente_administrativo','compras','gerente_compras','direccion','admin'] },
+  { id: 'aprobaciones', titulo: 'Aprobaciones', desc: 'Revisar y aprobar solicitudes pendientes', color: '#7c3aed', roles: ['gerente_area','gerente_planta','gerente_administrativo','compras','gerente_compras','direccion','admin'] },
+  { id: 'ordenes', titulo: 'Ordenes de Compra', desc: 'Gestionar ordenes y seguimiento de arribo', color: '#0891b2', roles: ['compras','gerente_compras','direccion','admin'] },
+  { id: 'articulos', titulo: 'Articulos', desc: 'Catalogo de materiales y herramientas', color: '#059669', roles: ['compras','gerente_compras','admin'] },
+  { id: 'proveedores', titulo: 'Proveedores', desc: 'Alta y gestion de proveedores', color: '#d97706', roles: ['compras','gerente_compras','admin'] },
+  { id: 'reportes', titulo: 'Reportes KPI', desc: 'Indicadores y metricas de compras', color: '#dc2626', roles: ['gerente_planta','gerente_administrativo','compras','gerente_compras','direccion','admin'] },
   { id: 'configuracion', titulo: 'Configuracion', desc: 'Usuarios, sites, centros de costos y mas', color: '#475569', roles: ['admin'] },
 ]
 

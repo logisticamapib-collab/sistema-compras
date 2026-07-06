@@ -130,7 +130,7 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
         iva,
         total,
         notas: form.notas,
-        estatus: 'aprobada_gerente'
+        estatus: 'aprobacion_gerente_compras'
       })
       .select()
       .single()
