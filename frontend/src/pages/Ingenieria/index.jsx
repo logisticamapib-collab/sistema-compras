@@ -5,12 +5,16 @@ import Maquinas from './Maquinas'
 import Moldes from './Moldes'
 import RutasFabricacion from './RutasFabricacion'
 import Clientes from './Clientes'
+import Resinas from './Resinas'
+import NormasEmpaque from './NormasEmpaque'
 
 const secciones = [
   { id: 'articulos', modulo: 'articulos', titulo: 'Articulos' },
   { id: 'maquinas', modulo: 'ing_maquinas', titulo: 'Maquinas' },
   { id: 'moldes', modulo: 'ing_moldes', titulo: 'Moldes' },
   { id: 'rutas', modulo: 'ing_rutas', titulo: 'Rutas de Fabricacion' },
+  { id: 'resinas', modulo: 'ing_resinas', titulo: 'Resinas' },
+  { id: 'normas_empaque', modulo: 'ing_normas_empaque', titulo: 'Normas de Empaque' },
   { id: 'clientes', modulo: 'ing_clientes', titulo: 'Clientes' },
   // Aqui se iran agregando: BOM, Niveles de ingenieria, etc.
 ]
@@ -35,12 +39,14 @@ export default function GrupoIngenieria() {
       </div>
       <div style={styles.contenido}>
         {seccionesVisibles.length === 0 && (
-          <p style={{ color: '#666' }}>Tu rol no tiene ninguna secci\u00f3n de Ingenier\u00eda habilitada.</p>
+          <p style={{ color: '#666' }}>Tu rol no tiene ninguna seccion de Ingenieria habilitada.</p>
         )}
         {seccion === 'articulos' && <Articulos />}
         {seccion === 'maquinas' && <Maquinas />}
         {seccion === 'moldes' && <Moldes />}
         {seccion === 'rutas' && <RutasFabricacion />}
+        {seccion === 'resinas' && <Resinas />}
+        {seccion === 'normas_empaque' && <NormasEmpaque />}
         {seccion === 'clientes' && <Clientes />}
       </div>
     </div>
