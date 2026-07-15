@@ -4,15 +4,19 @@ import { useAuth } from '../../context/AuthContext'
 
 const tipos = [
   { value: 'materia_prima', label: 'Materia Prima' },
+  { value: 'empaque', label: 'Empaque' },
   { value: 'servicio', label: 'Servicio' },
   { value: 'toolcrib', label: 'ToolCrib / Herramienta' },
   { value: 'consumible', label: 'Consumible' },
   { value: 'refaccion', label: 'Refaccion' },
+  { value: 'producto_terminado', label: 'Producto Terminado' },
+  { value: 'wip', label: 'WIP (producto en proceso)' },
+  { value: 'ensamble', label: 'Ensamble' },
   { value: 'otro', label: 'Otro' },
 ]
 
 export default function Categorias() {
-  const { perfil } = useAuth()
+  const { perfil, tienePermiso } = useAuth()
   const [registros, setRegistros] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -53,9 +57,11 @@ export default function Categorias() {
     <div>
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Categorias de Articulos</h2>
-        <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
-          {mostrarForm ? 'Cancelar' : '+ Nueva categoria'}
-        </button>
+        {tienePermiso('config_categorias', 'crear') && (
+          <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
+            {mostrarForm ? 'Cancelar' : '+ Nueva categoria'}
+          </button>
+        )}
       </div>
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}

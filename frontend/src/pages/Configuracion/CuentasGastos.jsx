@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
 export default function CuentasGastos() {
-  const { perfil } = useAuth()
+  const { perfil, tienePermiso } = useAuth()
   const [registros, setRegistros] = useState([])
   const [sites, setSites] = useState([])
   const [loading, setLoading] = useState(true)
@@ -50,9 +50,11 @@ export default function CuentasGastos() {
     <div>
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Cuentas de Gastos</h2>
-        <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
-          {mostrarForm ? 'Cancelar' : '+ Nueva cuenta de gastos'}
-        </button>
+        {tienePermiso('config_cuentas_gastos', 'crear') && (
+          <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
+            {mostrarForm ? 'Cancelar' : '+ Nueva cuenta de gastos'}
+          </button>
+        )}
       </div>
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
@@ -106,9 +108,11 @@ export default function CuentasGastos() {
                 </span>
               </span>
               <span style={{ flex: 1 }}>
-                <button style={styles.botonAccion} onClick={() => toggleActivo(r)}>
-                  {r.activo ? 'Desactivar' : 'Activar'}
-                </button>
+                {tienePermiso('config_cuentas_gastos', 'editar') && (
+                  <button style={styles.botonAccion} onClick={() => toggleActivo(r)}>
+                    {r.activo ? 'Desactivar' : 'Activar'}
+                  </button>
+                )}
               </span>
             </div>
           ))}

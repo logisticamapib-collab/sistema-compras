@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
 export default function Sites() {
-  const { perfil } = useAuth()
+  const { perfil, tienePermiso } = useAuth()
   const [sites, setSites] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -58,9 +58,11 @@ export default function Sites() {
     <div>
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Sites / Plantas</h2>
-        <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
-          {mostrarForm ? 'Cancelar' : '+ Nuevo site'}
-        </button>
+        {tienePermiso('config_sites', 'crear') && (
+          <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
+            {mostrarForm ? 'Cancelar' : '+ Nuevo site'}
+          </button>
+        )}
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
@@ -164,9 +166,11 @@ export default function Sites() {
               </span>
             </span>
             <span style={{ flex: 1 }}>
-              <button style={styles.botonAccion} onClick={() => toggleActivo(s)}>
-                {s.activo ? 'Desactivar' : 'Activar'}
-              </button>
+              {tienePermiso('config_sites', 'editar') && (
+                <button style={styles.botonAccion} onClick={() => toggleActivo(s)}>
+                  {s.activo ? 'Desactivar' : 'Activar'}
+                </button>
+              )}
             </span>
           </div>
         ))}

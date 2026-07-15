@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import NuevaOrdenDirecta from './NuevaOrdenDirecta'
 
+const unidades = ['PZA','KG','LT','MT','CJ','RLL','PAR','JGO','SRV','TON','GR','ML','CM','M2','M3']
+
 export default function NuevaOrden({ onVolver, onGuardado }) {
   const { perfil } = useAuth()
   const [tipo, setTipo] = useState(null)
@@ -11,6 +13,7 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
   const [error, setError] = useState('')
   const [requisiciones, setRequisiciones] = useState([])
   const [requisicionSeleccionada, setRequisicionSeleccionada] = useState(null)
+  const [solicitanteInfo, setSolicitanteInfo] = useState(null)
   const [lineasRequisicion, setLineasRequisicion] = useState([])
   const [lineasSeleccionadas, setLineasSeleccionadas] = useState([])
   const [proveedorPorLinea, setProveedorPorLinea] = useState({})
@@ -18,6 +21,15 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
   const [articuloProveedores, setArticuloProveedores] = useState({})
   const [mostrarConfirmacion, setMostrarConfirmacion] = useState(false)
   const [ordenesAgrupadas, setOrdenesAgrupadas] = useState({})
+  const [descuentos, setDescuentos] = useState({})
+  const [cotizaciones, setCotizaciones] = useState({})
+  const [articulosCatalogo, setArticulosCatalogo] = useState([])
+  const [vinculandoLineaId, setVinculandoLineaId] = useState(null)
+  const [modoVinculo, setModoVinculo] = useState('seleccionar')
+  const [articuloSeleccionadoVinculo, setArticuloSeleccionadoVinculo] = useState('')
+  const [nuevoArticuloForm, setNuevoArticuloForm] = useState({
+    codigo_interno: '', descripcion: '', unidad_medida: 'PZA'
+  })
   const [form, setForm] = useState({
     fecha_entrega_estimada: '',
     condiciones_pago: '',
@@ -29,7 +41,7 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: r }, { data: p }] = await Promise.all([
+    const [{ data: r }, { data: p }, { data: a }] = await Promise.all([
       supabase.from('requisiciones')
         .select('*, solicitante:solicitante_id(nombre), sites(nombre,codigo)')
         .eq('empresa_id', perfil.empresa_id)
@@ -38,16 +50,143 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
       supabase.from('proveedores')
         .select('*')
         .eq('empresa_id', perfil.empresa_id)
+        .eq('activo', true),
+      supabase.from('articulos')
+        .select('*')
+        .eq('empresa_id', perfil.empresa_id)
         .eq('activo', true)
+        .order('codigo_interno')
     ])
-    setRequisiciones(r || [])
+
+    let requisicionesConPendientes = r || []
+    if (requisicionesConPendientes.length > 0) {
+      const { data: lineasPendientes } = await supabase
+        .from('requisicion_lineas')
+        .select('requisicion_id')
+        .in('requisicion_id', requisicionesConPendientes.map(x => x.id))
+        .eq('estatus_linea', 'pendiente')
+      const idsConPendientes = new Set((lineasPendientes || []).map(l => l.requisicion_id))
+      requisicionesConPendientes = requisicionesConPendientes.filter(x => idsConPendientes.has(x.id))
+    }
+
+    setRequisiciones(requisicionesConPendientes)
     setProveedores(p || [])
+    setArticulosCatalogo(a || [])
     setLoading(false)
+  }
+
+  const cargarProveedoresDeArticulo = async (articuloId, lineaId) => {
+    const { data: aps } = await supabase
+      .from('articulo_proveedor')
+      .select('*, proveedores(nombre)')
+      .eq('articulo_id', articuloId)
+      .eq('activo', true)
+    setArticuloProveedores(prev => ({ ...prev, [lineaId]: aps || [] }))
+    if (aps?.length === 1) {
+      setProveedorPorLinea(prev => ({ ...prev, [lineaId]: aps[0].proveedor_id.toString() }))
+    }
+  }
+
+  const abrirVinculo = (lineaId) => {
+    setVinculandoLineaId(lineaId)
+    setModoVinculo('seleccionar')
+    setArticuloSeleccionadoVinculo('')
+    setNuevoArticuloForm({ codigo_interno: '', descripcion: '', unidad_medida: 'PZA' })
+    setError('')
+  }
+
+  const cancelarVinculo = () => {
+    setVinculandoLineaId(null)
+    setArticuloSeleccionadoVinculo('')
+  }
+
+  const confirmarVincularExistente = async () => {
+    if (!articuloSeleccionadoVinculo) {
+      setError('Selecciona un articulo del catalogo')
+      return
+    }
+    const articuloId = parseInt(articuloSeleccionadoVinculo)
+
+    const { error: errorUpdate } = await supabase
+      .from('requisicion_lineas')
+      .update({ articulo_id: articuloId })
+      .eq('id', vinculandoLineaId)
+
+    if (errorUpdate) {
+      setError('Error al vincular articulo: ' + errorUpdate.message)
+      return
+    }
+
+    const articuloInfo = articulosCatalogo.find(a => a.id === articuloId)
+    setLineasRequisicion(prev => prev.map(l =>
+      l.id === vinculandoLineaId
+        ? { ...l, articulo_id: articuloId, articulos: articuloInfo, unidad_medida: articuloInfo?.unidad_medida || l.unidad_medida }
+        : l
+    ))
+
+    await cargarProveedoresDeArticulo(articuloId, vinculandoLineaId)
+    setError('')
+    cancelarVinculo()
+  }
+
+  const confirmarCrearYVincular = async () => {
+    if (!nuevoArticuloForm.codigo_interno || !nuevoArticuloForm.descripcion) {
+      setError('Codigo interno y descripcion son obligatorios')
+      return
+    }
+
+    const { data: nuevoArticulo, error: errorCrear } = await supabase
+      .from('articulos')
+      .insert({
+        empresa_id: perfil.empresa_id,
+        codigo_interno: nuevoArticuloForm.codigo_interno.toUpperCase(),
+        descripcion: nuevoArticuloForm.descripcion,
+        unidad_medida: nuevoArticuloForm.unidad_medida,
+        tipo_moneda: 'MXN',
+        iva_porcentaje: 16
+      })
+      .select()
+      .single()
+
+    if (errorCrear) {
+      setError(errorCrear.message.includes('unique') ? 'El codigo interno ya existe' : 'Error al crear articulo: ' + errorCrear.message)
+      return
+    }
+
+    setArticulosCatalogo(prev => [...prev, nuevoArticulo])
+
+    const { error: errorUpdate } = await supabase
+      .from('requisicion_lineas')
+      .update({ articulo_id: nuevoArticulo.id })
+      .eq('id', vinculandoLineaId)
+
+    if (errorUpdate) {
+      setError('Articulo creado pero error al vincular: ' + errorUpdate.message)
+      return
+    }
+
+    setLineasRequisicion(prev => prev.map(l =>
+      l.id === vinculandoLineaId
+        ? { ...l, articulo_id: nuevoArticulo.id, articulos: nuevoArticulo, unidad_medida: nuevoArticulo.unidad_medida }
+        : l
+    ))
+
+    setArticuloProveedores(prev => ({ ...prev, [vinculandoLineaId]: [] }))
+    setError('')
+    cancelarVinculo()
   }
 
   const seleccionarRequisicion = async (req) => {
     setRequisicionSeleccionada(req)
     setLoading(true)
+
+    const { data: solicitanteData } = await supabase
+      .from('usuarios')
+      .select('id, nombre, rol, gerente_id')
+      .eq('id', req.solicitante_id)
+      .single()
+    setSolicitanteInfo(solicitanteData)
+
     const { data: lineas } = await supabase
       .from('requisicion_lineas')
       .select('*, articulos(codigo_interno, descripcion, unidad_medida, tipo_moneda, iva_porcentaje), proveedores(nombre)')
@@ -93,6 +232,28 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
     )
   }
 
+  const calcularDescuentoMonto = (linea, precio) => {
+    const d = descuentos[linea.id]
+    if (!d || !d.valor) return 0
+    const importeBase = precio * parseFloat(linea.cantidad)
+    if (d.tipo === 'porcentaje') return importeBase * (parseFloat(d.valor) / 100)
+    return parseFloat(d.valor) || 0
+  }
+
+  const actualizarDescuento = (lineaId, campo, valor) => {
+    setDescuentos(prev => ({
+      ...prev,
+      [lineaId]: { ...(prev[lineaId] || { tipo: 'porcentaje', valor: 0 }), [campo]: valor }
+    }))
+  }
+
+  const actualizarCotizacion = (provId, campo, valor) => {
+    setCotizaciones(prev => ({
+      ...prev,
+      [provId]: { ...(prev[provId] || { referencia: '', archivo: null }), [campo]: valor }
+    }))
+  }
+
   const prepararOrdenes = () => {
     const lineasActivas = lineasRequisicion.filter(l => lineasSeleccionadas.includes(l.id))
     const sinProveedor = lineasActivas.filter(l => !proveedorPorLinea[l.id])
@@ -136,14 +297,33 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
     setLoading(true)
     setError('')
 
+    const esGerenteAlto = ['gerente_planta', 'gerente_administrativo'].includes(solicitanteInfo?.rol)
+    const estatusInicial = esGerenteAlto ? 'aprobacion_gerente_planta' : 'aprobacion_gerente_area'
+    const aprobadorInicialId = esGerenteAlto
+      ? solicitanteInfo.id
+      : (requisicionSeleccionada.gerente_area_id || solicitanteInfo?.gerente_id || null)
+
     for (const [provId, grupo] of Object.entries(ordenesAgrupadas)) {
       const folio = await generarFolioOC()
       const subtotal = grupo.lineas.reduce((sum, l) => {
         const precio = l.apData?.precio || 0
-        return sum + (precio * parseFloat(l.cantidad))
+        const importe = precio * parseFloat(l.cantidad)
+        return sum + (importe - calcularDescuentoMonto(l, precio))
       }, 0)
       const iva = subtotal * 0.16
       const total = subtotal + iva
+
+      const cot = cotizaciones[provId] || { referencia: '', archivo: null }
+      let cotizacionArchivoUrl = null
+      if (cot.archivo) {
+        const extension = cot.archivo.name.split('.').pop()
+        const ruta = `cotizaciones/${folio}-${Date.now()}.${extension}`
+        const { error: errorSubida } = await supabase.storage.from('cotizaciones').upload(ruta, cot.archivo)
+        if (!errorSubida) {
+          const { data: urlData } = supabase.storage.from('cotizaciones').getPublicUrl(ruta)
+          cotizacionArchivoUrl = urlData.publicUrl
+        }
+      }
 
       const { data: oc, error: errorOC } = await supabase
         .from('ordenes_compra')
@@ -162,7 +342,10 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
           iva,
           total,
           notas: form.notas,
-          estatus: 'aprobacion_gerente_area'
+          referencia_cotizacion: cot.referencia || null,
+          cotizacion_archivo_url: cotizacionArchivoUrl,
+          estatus: estatusInicial,
+          aprobador_actual_id: aprobadorInicialId
         })
         .select()
         .single()
@@ -173,19 +356,24 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
         return
       }
 
-      const lineasOC = grupo.lineas.map(l => ({
-        oc_id: oc.id,
-        requisicion_linea_id: l.id,
-        articulo_id: l.articulo_id,
-        descripcion: l.articulos?.descripcion || l.descripcion_libre,
-        cantidad: parseFloat(l.cantidad),
-        unidad_medida: l.unidad_medida,
-        precio_unitario: l.apData?.precio || 0,
-        iva_porcentaje: l.articulos?.iva_porcentaje || 16,
-        subtotal: (l.apData?.precio || 0) * parseFloat(l.cantidad),
-        centro_costo_id: l.centro_costo_id,
-        cuenta_gasto_id: l.cuenta_gasto_id
-      }))
+      const lineasOC = grupo.lineas.map(l => {
+        const precio = l.apData?.precio || 0
+        const montoDescuento = calcularDescuentoMonto(l, precio)
+        return {
+          oc_id: oc.id,
+          requisicion_linea_id: l.id,
+          articulo_id: l.articulo_id,
+          descripcion: l.articulos?.descripcion || l.descripcion_libre,
+          cantidad: parseFloat(l.cantidad),
+          unidad_medida: l.unidad_medida,
+          precio_unitario: precio,
+          descuento: montoDescuento,
+          iva_porcentaje: l.articulos?.iva_porcentaje || 16,
+          subtotal: (precio * parseFloat(l.cantidad)) - montoDescuento,
+          centro_costo_id: l.centro_costo_id,
+          cuenta_gasto_id: l.cuenta_gasto_id
+        }
+      })
 
       await supabase.from('oc_lineas').insert(lineasOC)
 
@@ -254,7 +442,12 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
         </div>
         {error && <p style={styles.error}>{error}</p>}
         {Object.entries(ordenesAgrupadas).map(([provId, grupo]) => {
-          const subtotal = grupo.lineas.reduce((sum, l) => sum + ((l.apData?.precio || 0) * parseFloat(l.cantidad)), 0)
+          const subtotal = grupo.lineas.reduce((sum, l) => {
+            const precio = l.apData?.precio || 0
+            const importe = precio * parseFloat(l.cantidad)
+            return sum + (importe - calcularDescuentoMonto(l, precio))
+          }, 0)
+          const cot = cotizaciones[provId] || { referencia: '', archivo: null }
           return (
             <div key={provId} style={styles.seccion}>
               <h3 style={styles.seccionTitulo}>Proveedor: {grupo.proveedor?.nombre}</h3>
@@ -264,27 +457,56 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
                   <span style={{ flex: 1 }}>Cantidad</span>
                   <span style={{ flex: 1 }}>Unidad</span>
                   <span style={{ flex: 1 }}>Precio unit.</span>
+                  <span style={{ flex: 1.5 }}>Descuento</span>
                   <span style={{ flex: 1 }}>Subtotal</span>
                 </div>
-                {grupo.lineas.map(l => (
-                  <div key={l.id} style={styles.tablaFila}>
-                    <span style={{ flex: 3, fontSize: '13px' }}>
-                      {l.articulos?.codigo_interno} - {l.articulos?.descripcion || l.descripcion_libre}
-                    </span>
-                    <span style={{ flex: 1, fontSize: '13px' }}>{l.cantidad}</span>
-                    <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{l.unidad_medida}</span>
-                    <span style={{ flex: 1, fontSize: '13px' }}>
-                      {l.apData?.precio ? `$${parseFloat(l.apData.precio).toFixed(2)}` : 'Sin precio'}
-                    </span>
-                    <span style={{ flex: 1, fontSize: '13px', fontWeight: '500' }}>
-                      {l.apData?.precio ? `$${(parseFloat(l.apData.precio) * parseFloat(l.cantidad)).toFixed(2)}` : '-'}
-                    </span>
-                  </div>
-                ))}
+                {grupo.lineas.map(l => {
+                  const precio = l.apData?.precio || 0
+                  const d = descuentos[l.id] || { tipo: 'porcentaje', valor: 0 }
+                  const montoDescuento = calcularDescuentoMonto(l, precio)
+                  const subtotalLinea = (precio * parseFloat(l.cantidad)) - montoDescuento
+                  return (
+                    <div key={l.id} style={styles.tablaFila}>
+                      <span style={{ flex: 3, fontSize: '13px' }}>
+                        {l.articulos?.codigo_interno} - {l.articulos?.descripcion || l.descripcion_libre}
+                      </span>
+                      <span style={{ flex: 1, fontSize: '13px' }}>{l.cantidad}</span>
+                      <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{l.unidad_medida}</span>
+                      <span style={{ flex: 1, fontSize: '13px' }}>
+                        {precio ? `$${parseFloat(precio).toFixed(2)}` : 'Sin precio'}
+                      </span>
+                      <span style={{ flex: 1.5, display: 'flex', gap: '4px' }}>
+                        <input style={styles.inputDescuento} type="number" min="0" value={d.valor}
+                          onChange={e => actualizarDescuento(l.id, 'valor', e.target.value)} />
+                        <select style={styles.selectDescuento} value={d.tipo}
+                          onChange={e => actualizarDescuento(l.id, 'tipo', e.target.value)}>
+                          <option value="porcentaje">%</option>
+                          <option value="monto">$</option>
+                        </select>
+                      </span>
+                      <span style={{ flex: 1, fontSize: '13px', fontWeight: '500' }}>
+                        {precio ? `$${subtotalLinea.toFixed(2)}` : '-'}
+                      </span>
+                    </div>
+                  )
+                })}
                 <div style={styles.totalFila}>
                   <span>Subtotal: ${subtotal.toFixed(2)}</span>
                   <span>IVA 16%: ${(subtotal * 0.16).toFixed(2)}</span>
                   <span style={{ fontWeight: '700' }}>Total: ${(subtotal * 1.16).toFixed(2)}</span>
+                </div>
+              </div>
+              <div style={styles.filaCotizacion}>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Referencia a cotizacion (opcional)</label>
+                  <input style={styles.input} value={cot.referencia}
+                    onChange={e => actualizarCotizacion(provId, 'referencia', e.target.value)}
+                    placeholder="Numero de cotizacion o referencia" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Adjuntar cotizacion (PDF o foto, opcional)</label>
+                  <input type="file" accept=".pdf,image/*"
+                    onChange={e => actualizarCotizacion(provId, 'archivo', e.target.files[0])} />
                 </div>
               </div>
             </div>
@@ -370,36 +592,109 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
                 <span style={{ flex: 2 }}>Proveedor</span>
               </div>
               {lineasRequisicion.map(linea => (
-                <div key={linea.id} style={{ ...styles.tablaFila, backgroundColor: lineasSeleccionadas.includes(linea.id) ? '#f0f9ff' : '#fff' }}>
-                  <span style={{ flex: 0.5 }}>
-                    <input type="checkbox"
-                      checked={lineasSeleccionadas.includes(linea.id)}
-                      onChange={() => toggleLinea(linea.id)} />
-                  </span>
-                  <span style={{ flex: 3, fontSize: '13px' }}>
-                    {linea.articulos ? `${linea.articulos.codigo_interno} - ${linea.articulos.descripcion}` : linea.descripcion_libre}
-                  </span>
-                  <span style={{ flex: 1, fontSize: '13px' }}>{linea.cantidad}</span>
-                  <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{linea.unidad_medida}</span>
-                  <span style={{ flex: 2 }}>
-                    {lineasSeleccionadas.includes(linea.id) && (
-                      <select style={styles.inputSmall}
-                        value={proveedorPorLinea[linea.id] || ''}
-                        onChange={e => setProveedorPorLinea({ ...proveedorPorLinea, [linea.id]: e.target.value })}>
-                        <option value="">Selecciona proveedor</option>
-                        {(articuloProveedores[linea.id]?.length > 0
-                          ? articuloProveedores[linea.id].map(ap => (
-                            <option key={ap.proveedor_id} value={ap.proveedor_id}>
-                              {ap.proveedores?.nombre} - ${parseFloat(ap.precio).toFixed(2)}
-                            </option>
-                          ))
-                          : proveedores.map(p => (
-                            <option key={p.id} value={p.id}>{p.nombre}</option>
-                          ))
-                        )}
-                      </select>
-                    )}
-                  </span>
+                <div key={linea.id}>
+                  <div style={{ ...styles.tablaFila, backgroundColor: lineasSeleccionadas.includes(linea.id) ? '#f0f9ff' : '#fff' }}>
+                    <span style={{ flex: 0.5 }}>
+                      <input type="checkbox"
+                        checked={lineasSeleccionadas.includes(linea.id)}
+                        onChange={() => toggleLinea(linea.id)} />
+                    </span>
+                    <span style={{ flex: 3, fontSize: '13px' }}>
+                      {linea.articulos ? (
+                        `${linea.articulos.codigo_interno} - ${linea.articulos.descripcion}`
+                      ) : (
+                        <span>
+                          <span style={{ color: '#dc2626' }}>{linea.descripcion_libre}</span>
+                          <br />
+                          <button style={styles.botonVincular} onClick={() => abrirVinculo(linea.id)}>
+                            Vincular a articulo del catalogo
+                          </button>
+                        </span>
+                      )}
+                    </span>
+                    <span style={{ flex: 1, fontSize: '13px' }}>{linea.cantidad}</span>
+                    <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{linea.unidad_medida}</span>
+                    <span style={{ flex: 2 }}>
+                      {lineasSeleccionadas.includes(linea.id) && linea.articulo_id && (
+                        <select style={styles.inputSmall}
+                          value={proveedorPorLinea[linea.id] || ''}
+                          onChange={e => setProveedorPorLinea({ ...proveedorPorLinea, [linea.id]: e.target.value })}>
+                          <option value="">Selecciona proveedor</option>
+                          {(articuloProveedores[linea.id]?.length > 0
+                            ? articuloProveedores[linea.id].map(ap => (
+                              <option key={ap.proveedor_id} value={ap.proveedor_id}>
+                                {ap.proveedores?.nombre} - ${parseFloat(ap.precio).toFixed(2)}
+                              </option>
+                            ))
+                            : proveedores.map(p => (
+                              <option key={p.id} value={p.id}>{p.nombre}</option>
+                            ))
+                          )}
+                        </select>
+                      )}
+                      {lineasSeleccionadas.includes(linea.id) && !linea.articulo_id && (
+                        <span style={{ fontSize: '12px', color: '#94a3b8' }}>Vincula un articulo primero</span>
+                      )}
+                    </span>
+                  </div>
+
+                  {vinculandoLineaId === linea.id && (
+                    <div style={styles.panelVinculo}>
+                      <div style={styles.tabsVinculo}>
+                        <button
+                          style={modoVinculo === 'seleccionar' ? styles.tabVinculoActivo : styles.tabVinculo}
+                          onClick={() => setModoVinculo('seleccionar')}>
+                          Buscar en catalogo
+                        </button>
+                        <button
+                          style={modoVinculo === 'crear' ? styles.tabVinculoActivo : styles.tabVinculo}
+                          onClick={() => setModoVinculo('crear')}>
+                          + Crear articulo nuevo
+                        </button>
+                      </div>
+
+                      {modoVinculo === 'seleccionar' ? (
+                        <div style={styles.filaVinculo}>
+                          <select style={{ ...styles.input, flex: 2 }}
+                            value={articuloSeleccionadoVinculo}
+                            onChange={e => setArticuloSeleccionadoVinculo(e.target.value)}>
+                            <option value="">Selecciona articulo del catalogo</option>
+                            {articulosCatalogo.map(a => (
+                              <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>
+                            ))}
+                          </select>
+                          <button style={styles.botonPequeno} onClick={confirmarVincularExistente}>
+                            Vincular
+                          </button>
+                          <button style={styles.botonPequenoSecundario} onClick={cancelarVinculo}>
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={styles.filaVinculo}>
+                          <input style={{ ...styles.input, flex: 1 }}
+                            value={nuevoArticuloForm.codigo_interno}
+                            onChange={e => setNuevoArticuloForm({ ...nuevoArticuloForm, codigo_interno: e.target.value.toUpperCase() })}
+                            placeholder="Codigo interno" />
+                          <input style={{ ...styles.input, flex: 2 }}
+                            value={nuevoArticuloForm.descripcion}
+                            onChange={e => setNuevoArticuloForm({ ...nuevoArticuloForm, descripcion: e.target.value })}
+                            placeholder="Descripcion" />
+                          <select style={{ ...styles.input, flex: 1 }}
+                            value={nuevoArticuloForm.unidad_medida}
+                            onChange={e => setNuevoArticuloForm({ ...nuevoArticuloForm, unidad_medida: e.target.value })}>
+                            {unidades.map(u => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                          <button style={styles.botonPequeno} onClick={confirmarCrearYVincular}>
+                            Crear y vincular
+                          </button>
+                          <button style={styles.botonPequenoSecundario} onClick={cancelarVinculo}>
+                            Cancelar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -484,8 +779,19 @@ const styles = {
   tablaHeader: { display: 'flex', padding: '10px 16px', backgroundColor: '#f8fafc', borderRadius: '7px', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' },
   tablaFila: { display: 'flex', padding: '12px 16px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
   totalFila: { display: 'flex', justifyContent: 'flex-end', gap: '24px', padding: '12px 16px', backgroundColor: '#f8fafc', fontSize: '13px', borderTop: '2px solid #e2e8f0' },
+  inputDescuento: { width: '55px', padding: '5px 6px', borderRadius: '5px', border: '1px solid #ddd', fontSize: '12px' },
+  selectDescuento: { padding: '5px 4px', borderRadius: '5px', border: '1px solid #ddd', fontSize: '12px' },
+  filaCotizacion: { display: 'flex', gap: '16px', marginTop: '12px' },
   botones: { display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' },
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonSecundario: { padding: '9px 20px', backgroundColor: '#e2e8f0', color: '#444', border: 'none', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
+  botonVincular: { padding: '4px 10px', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '5px', fontSize: '11px', cursor: 'pointer', marginTop: '4px' },
+  botonPequeno: { padding: '8px 16px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', fontWeight: '500' },
+  botonPequenoSecundario: { padding: '8px 16px', backgroundColor: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' },
+  panelVinculo: { backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '14px', margin: '4px 16px 12px 16px' },
+  tabsVinculo: { display: 'flex', gap: '8px', marginBottom: '10px' },
+  tabVinculo: { padding: '6px 12px', backgroundColor: '#fff', color: '#666', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
+  tabVinculoActivo: { padding: '6px 12px', backgroundColor: '#2563eb', color: '#fff', border: '1px solid #2563eb', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
+  filaVinculo: { display: 'flex', gap: '8px', alignItems: 'center' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
 }                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               

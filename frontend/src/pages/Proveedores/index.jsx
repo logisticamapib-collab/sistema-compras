@@ -7,14 +7,17 @@ export default function Proveedores() {
   const [proveedores, setProveedores] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
+  const [proveedorEditando, setProveedorEditando] = useState(null)
   const [busqueda, setBusqueda] = useState('')
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
-  const [form, setForm] = useState({
+  const formVacio = {
     nombre: '', razon_social: '', rfc: '', contacto: '',
     email: '', telefono: '', direccion: '', ciudad: '',
-    estado: '', cp: '', condiciones_pago: '', dias_credito: 0
-  })
+    estado: '', cp: '', condiciones_pago: '', dias_credito: 0,
+    forma_pago: '', numero_cuenta: ''
+  }
+  const [form, setForm] = useState(formVacio)
 
   useEffect(() => { cargarProveedores() }, [])
 
@@ -29,6 +32,26 @@ export default function Proveedores() {
     setLoading(false)
   }
 
+  const abrirNuevo = () => {
+    setProveedorEditando(null)
+    setForm(formVacio)
+    setMostrarForm(true)
+    setError('')
+  }
+
+  const abrirEditar = (p) => {
+    setProveedorEditando(p)
+    setForm({
+      nombre: p.nombre || '', razon_social: p.razon_social || '', rfc: p.rfc || '',
+      contacto: p.contacto || '', email: p.email || '', telefono: p.telefono || '',
+      direccion: p.direccion || '', ciudad: p.ciudad || '', estado: p.estado || '', cp: p.cp || '',
+      condiciones_pago: p.condiciones_pago || '', dias_credito: p.dias_credito || 0,
+      forma_pago: p.forma_pago || '', numero_cuenta: p.numero_cuenta || ''
+    })
+    setMostrarForm(true)
+    setError('')
+  }
+
   const guardar = async () => {
     if (!form.nombre) {
       setError('El nombre del proveedor es obligatorio')
@@ -37,8 +60,16 @@ export default function Proveedores() {
     setError('')
     setLoading(true)
 
-    const { error } = await supabase.from('proveedores')
-      .insert({ ...form, empresa_id: perfil.empresa_id, dias_credito: parseInt(form.dias_credito) || 0 })
+    const payload = { ...form, dias_credito: parseInt(form.dias_credito) || 0 }
+
+    let error
+    if (proveedorEditando) {
+      const resultado = await supabase.from('proveedores').update(payload).eq('id', proveedorEditando.id)
+      error = resultado.error
+    } else {
+      const resultado = await supabase.from('proveedores').insert({ ...payload, empresa_id: perfil.empresa_id })
+      error = resultado.error
+    }
 
     if (error) {
       setError('Error al guardar: ' + error.message)
@@ -46,9 +77,10 @@ export default function Proveedores() {
       return
     }
 
-    setExito('Proveedor guardado correctamente')
+    setExito(proveedorEditando ? 'Proveedor actualizado correctamente' : 'Proveedor guardado correctamente')
     setMostrarForm(false)
-    setForm({ nombre: '', razon_social: '', rfc: '', contacto: '', email: '', telefono: '', direccion: '', ciudad: '', estado: '', cp: '', condiciones_pago: '', dias_credito: 0 })
+    setProveedorEditando(null)
+    setForm(formVacio)
     await cargarProveedores()
     setLoading(false)
     setTimeout(() => setExito(''), 3000)
@@ -68,7 +100,7 @@ export default function Proveedores() {
     <div style={styles.container}>
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Proveedores</h2>
-        <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
+        <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
           {mostrarForm ? 'Cancelar' : '+ Nuevo proveedor'}
         </button>
       </div>
@@ -78,7 +110,7 @@ export default function Proveedores() {
 
       {mostrarForm && (
         <div style={styles.form}>
-          <h3 style={styles.formTitulo}>Nuevo proveedor</h3>
+          <h3 style={styles.formTitulo}>{proveedorEditando ? `Editando: ${proveedorEditando.nombre}` : 'Nuevo proveedor'}</h3>
           <div style={styles.fila}>
             <div style={styles.campo}>
               <label style={styles.label}>Nombre comercial *</label>
@@ -165,6 +197,20 @@ export default function Proveedores() {
                 placeholder="0" min="0" />
             </div>
           </div>
+          <div style={styles.fila}>
+            <div style={styles.campo}>
+              <label style={styles.label}>Forma de pago</label>
+              <input style={styles.input} value={form.forma_pago}
+                onChange={e => setForm({ ...form, forma_pago: e.target.value })}
+                placeholder="Ej: Transferencia, 03" />
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Numero de cuenta</label>
+              <input style={styles.input} value={form.numero_cuenta}
+                onChange={e => setForm({ ...form, numero_cuenta: e.target.value })}
+                placeholder="Cuenta o CLABE del proveedor" />
+            </div>
+          </div>
           <div style={styles.botones}>
             <button style={styles.botonSecundario} onClick={() => setMostrarForm(false)}>Cancelar</button>
             <button style={styles.boton} onClick={guardar} disabled={loading}>
@@ -211,7 +257,10 @@ export default function Proveedores() {
                 </span>
               </span>
               <span style={{ flex: 1 }}>
-                <button style={styles.botonAccion} onClick={() => toggleActivo(p)}>
+                <button style={styles.botonAccion} onClick={() => abrirEditar(p)}>
+                  Editar
+                </button>
+                <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => toggleActivo(p)}>
                   {p.activo ? 'Desactivar' : 'Activar'}
                 </button>
               </span>

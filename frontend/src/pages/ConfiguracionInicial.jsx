@@ -116,7 +116,7 @@ export default function ConfiguracionInicial() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        <h1 style={styles.titulo}>Bienvenido al Sistema de Compras</h1>
+        <h1 style={styles.titulo}>Bienvenido a SYNTIA</h1>
         <p style={styles.subtitulo}>Configura tu empresa para comenzar</p>
 
         <div style={styles.pasos}>

@@ -35,28 +35,36 @@ export default function Aprobaciones() {
     }
 
     // Ordenes de compra pendientes segun rol
-    let estatusOC = []
+    let queryOC = null
     if (['gerente_area', 'gerente_planta', 'gerente_administrativo'].includes(perfil?.rol)) {
-      estatusOC = ['aprobacion_gerente_area', 'aprobacion_gerente_planta']
+      // Estos niveles solo ven la OC si son especificamente la persona asignada como aprobador actual
+      queryOC = supabase.from('ordenes_compra')
+        .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
+        .eq('empresa_id', perfil.empresa_id)
+        .in('estatus', ['aprobacion_gerente_area', 'aprobacion_gerente_planta'])
+        .eq('aprobador_actual_id', perfil.id)
+        .order('created_at', { ascending: true })
     } else if (perfil?.rol === 'gerente_compras') {
-      estatusOC = ['aprobacion_gerente_compras']
+      queryOC = supabase.from('ordenes_compra')
+        .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
+        .eq('empresa_id', perfil.empresa_id)
+        .eq('estatus', 'aprobacion_gerente_compras')
+        .order('created_at', { ascending: true })
     } else if (perfil?.rol === 'direccion') {
-      estatusOC = ['aprobacion_direccion']
+      queryOC = supabase.from('ordenes_compra')
+        .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
+        .eq('empresa_id', perfil.empresa_id)
+        .eq('estatus', 'aprobacion_direccion')
+        .order('created_at', { ascending: true })
     } else if (perfil?.rol === 'admin') {
-      estatusOC = ['aprobacion_gerente_area', 'aprobacion_gerente_planta', 'aprobacion_gerente_compras', 'aprobacion_direccion']
+      queryOC = supabase.from('ordenes_compra')
+        .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
+        .eq('empresa_id', perfil.empresa_id)
+        .in('estatus', ['aprobacion_gerente_area', 'aprobacion_gerente_planta', 'aprobacion_gerente_compras', 'aprobacion_direccion'])
+        .order('created_at', { ascending: true })
     }
 
-    if (estatusOC.length > 0) {
-      promesas.push(
-        supabase.from('ordenes_compra')
-          .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio)')
-          .eq('empresa_id', perfil.empresa_id)
-          .in('estatus', estatusOC)
-          .order('created_at', { ascending: true })
-      )
-    } else {
-      promesas.push(Promise.resolve({ data: [] }))
-    }
+    promesas.push(queryOC ? queryOC : Promise.resolve({ data: [] }))
 
     const [{ data: reqs }, { data: ocs }] = await Promise.all(promesas)
     setRequisiciones(reqs || [])

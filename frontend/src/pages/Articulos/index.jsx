@@ -5,15 +5,42 @@ import { useAuth } from '../../context/AuthContext'
 const unidades = ['PZA','KG','LT','MT','CJ','RLL','PAR','JGO','SRV','TON','GR','ML','CM','M2','M3']
 const monedas = ['MXN','USD','EUR']
 
+const tiposProceso = [
+  { value: 'solo_inyeccion', label: 'Solo Inyeccion' },
+  { value: 'solo_ensamble', label: 'Solo Ensamble' },
+  { value: 'inyeccion_y_ensamble', label: 'Inyeccion + Ensamble' },
+  { value: 'doble_inyeccion', label: 'Doble Inyeccion' },
+]
+
+const tiposCategoriaComprado = ['materia_prima', 'empaque', 'servicio', 'toolcrib', 'consumible', 'refaccion', 'otro']
+const tiposCategoriaFabricado = ['producto_terminado', 'wip', 'ensamble']
+
+const formVacio = {
+  codigo_interno: '', descripcion: '', unidad_medida: 'PZA',
+  categoria_id: '', tipo_moneda: 'MXN', iva_porcentaje: 16,
+  retencion_iva: 0,
+  origen: 'comprado', es_consigna: false,
+  tipo_proceso: 'solo_inyeccion', articulo_wip_origen_id: '',
+  peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
+  pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
+  site_id: '', sites_destino: [],
+}
+
 export default function Articulos() {
-  const { perfil } = useAuth()
+  const { perfil, tienePermiso } = useAuth()
   const [articulos, setArticulos] = useState([])
   const [categorias, setCategorias] = useState([])
   const [proveedores, setProveedores] = useState([])
+  const [clientes, setClientes] = useState([])
+  const [sites, setSites] = useState([])
+  const [sitesDestinoPorArticulo, setSitesDestinoPorArticulo] = useState({})
+  const [siteFiltro, setSiteFiltro] = useState('propio')
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
+  const [articuloEditando, setArticuloEditando] = useState(null)
   const [articuloSeleccionado, setArticuloSeleccionado] = useState(null)
   const [mostrarProveedores, setMostrarProveedores] = useState(false)
+  const [mostrarClientes, setMostrarClientes] = useState(false)
   const [busqueda, setBusqueda] = useState('')
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -21,25 +48,80 @@ export default function Articulos() {
     proveedor_id: '', codigo_proveedor: '', precio: '',
     minimo_compra: 1, tiempo_entrega_dias: '', tiempo_trayecto_dias: ''
   })
-  const [form, setForm] = useState({
-    codigo_interno: '', descripcion: '', unidad_medida: 'PZA',
-    categoria_id: '', tipo_moneda: 'MXN', iva_porcentaje: 16,
-    retencion_iva: 0
-  })
+  const [formCliente, setFormCliente] = useState({ cliente_id: '', codigo_cliente: '', precio: '' })
+  const [form, setForm] = useState(formVacio)
+
+  const puedeCrear = tienePermiso('articulos', 'crear')
+  const puedeEditar = tienePermiso('articulos', 'editar')
+  const puedeEliminar = tienePermiso('articulos', 'eliminar')
+  const puedeVerTodosLosSites = ['admin', 'gerente_compras', 'direccion'].includes(perfil?.rol)
 
   useEffect(() => { cargarDatos() }, [])
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: a }, { data: c }, { data: p }] = await Promise.all([
-      supabase.from('articulos').select('*, categorias(nombre)').eq('empresa_id', perfil.empresa_id).order('codigo_interno'),
+    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }] = await Promise.all([
+      supabase.from('articulos').select('*, categorias(nombre), sites(nombre, codigo)').eq('empresa_id', perfil.empresa_id).order('codigo_interno'),
       supabase.from('categorias').select('*').eq('empresa_id', perfil.empresa_id),
-      supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true)
+      supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+      supabase.from('clientes').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+      supabase.from('sites').select('id, nombre').eq('empresa_id', perfil.empresa_id),
+      supabase.from('articulo_sites_destino').select('articulo_id, site_id'),
     ])
     setArticulos(a || [])
     setCategorias(c || [])
     setProveedores(p || [])
+    setClientes(cl || [])
+    setSites(s || [])
+    const mapaDestinos = {}
+    for (const d of destinos || []) {
+      if (!mapaDestinos[d.articulo_id]) mapaDestinos[d.articulo_id] = []
+      mapaDestinos[d.articulo_id].push(d.site_id)
+    }
+    setSitesDestinoPorArticulo(mapaDestinos)
     setLoading(false)
+  }
+
+  const abrirNuevo = () => {
+    setArticuloEditando(null)
+    setForm({ ...formVacio, site_id: perfil.site_id?.toString() || '' })
+    setMostrarForm(true)
+    setError('')
+  }
+
+  const abrirEditar = async (articulo) => {
+    setArticuloEditando(articulo)
+    const { data: destinos } = await supabase.from('articulo_sites_destino').select('site_id').eq('articulo_id', articulo.id)
+    setForm({
+      codigo_interno: articulo.codigo_interno,
+      descripcion: articulo.descripcion,
+      unidad_medida: articulo.unidad_medida,
+      categoria_id: articulo.categoria_id?.toString() || '',
+      tipo_moneda: articulo.tipo_moneda,
+      iva_porcentaje: articulo.iva_porcentaje,
+      retencion_iva: articulo.retencion_iva,
+      origen: articulo.origen || 'comprado',
+      es_consigna: articulo.es_consigna || false,
+      tipo_proceso: articulo.tipo_proceso || 'solo_inyeccion',
+      articulo_wip_origen_id: articulo.articulo_wip_origen_id?.toString() || '',
+      peso_pieza_g: articulo.peso_pieza_g ?? '',
+      peso_colada_g: articulo.peso_colada_g ?? '',
+      peso_purga_g: articulo.peso_purga_g ?? '',
+      pct_scrap_aprobado: articulo.pct_scrap_aprobado ?? 0,
+      admite_molido: articulo.admite_molido || false,
+      pct_molido_max: articulo.pct_molido_max ?? 0,
+      site_id: articulo.site_id?.toString() || '',
+      sites_destino: (destinos || []).map(d => d.site_id.toString()),
+    })
+    setMostrarForm(true)
+    setError('')
+  }
+
+  const cancelarForm = () => {
+    setMostrarForm(false)
+    setArticuloEditando(null)
+    setForm(formVacio)
+    setError('')
   }
 
   const guardarArticulo = async () => {
@@ -50,13 +132,39 @@ export default function Articulos() {
     setError('')
     setLoading(true)
 
-    const { error } = await supabase.from('articulos').insert({
-      ...form,
-      empresa_id: perfil.empresa_id,
+    const esFabricado = form.origen === 'fabricado'
+
+    const payload = {
+      codigo_interno: form.codigo_interno,
+      descripcion: form.descripcion,
+      unidad_medida: form.unidad_medida,
       categoria_id: form.categoria_id ? parseInt(form.categoria_id) : null,
+      tipo_moneda: form.tipo_moneda,
       iva_porcentaje: parseFloat(form.iva_porcentaje),
-      retencion_iva: parseFloat(form.retencion_iva)
-    })
+      retencion_iva: parseFloat(form.retencion_iva),
+      origen: form.origen,
+      es_consigna: !esFabricado ? form.es_consigna : false,
+      tipo_proceso: esFabricado ? form.tipo_proceso : null,
+      articulo_wip_origen_id: esFabricado && form.articulo_wip_origen_id ? parseInt(form.articulo_wip_origen_id) : null,
+      peso_pieza_g: esFabricado && form.peso_pieza_g !== '' ? parseFloat(form.peso_pieza_g) : null,
+      peso_colada_g: esFabricado && form.peso_colada_g !== '' ? parseFloat(form.peso_colada_g) : null,
+      peso_purga_g: esFabricado && form.peso_purga_g !== '' ? parseFloat(form.peso_purga_g) : null,
+      pct_scrap_aprobado: esFabricado ? (parseFloat(form.pct_scrap_aprobado) || 0) : 0,
+      admite_molido: esFabricado ? form.admite_molido : false,
+      pct_molido_max: esFabricado && form.admite_molido ? (parseFloat(form.pct_molido_max) || 0) : 0,
+      site_id: form.site_id ? parseInt(form.site_id) : null,
+    }
+
+    let error, articuloId
+    if (articuloEditando) {
+      const resultado = await supabase.from('articulos').update(payload).eq('id', articuloEditando.id)
+      error = resultado.error
+      articuloId = articuloEditando.id
+    } else {
+      const resultado = await supabase.from('articulos').insert({ ...payload, empresa_id: perfil.empresa_id }).select().single()
+      error = resultado.error
+      articuloId = resultado.data?.id
+    }
 
     if (error) {
       setError(error.message.includes('unique') ? 'El codigo interno ya existe' : error.message)
@@ -64,17 +172,63 @@ export default function Articulos() {
       return
     }
 
-    setExito('Articulo guardado correctamente')
-    setMostrarForm(false)
-    setForm({ codigo_interno: '', descripcion: '', unidad_medida: 'PZA', categoria_id: '', tipo_moneda: 'MXN', iva_porcentaje: 16, retencion_iva: 0 })
+    // Sincronizar sites de destino (transferencia interplanta) solo si es fabricado
+    if (articuloId) {
+      await supabase.from('articulo_sites_destino').delete().eq('articulo_id', articuloId)
+      if (esFabricado && form.sites_destino.length > 0) {
+        await supabase.from('articulo_sites_destino').insert(
+          form.sites_destino.map(sid => ({ articulo_id: articuloId, site_id: parseInt(sid) }))
+        )
+      }
+    }
+
+    setExito(articuloEditando ? 'Articulo actualizado correctamente' : 'Articulo guardado correctamente')
+    cancelarForm()
     await cargarDatos()
     setLoading(false)
+    setTimeout(() => setExito(''), 3000)
+  }
+
+  // Revisa si el articulo tiene algun movimiento asociado (requisiciones, ordenes de compra o precios de proveedor).
+  // Si tiene movimientos, solo se puede desactivar, nunca borrar.
+  const tieneMovimientos = async (articuloId) => {
+    const [{ count: c1 }, { count: c2 }, { count: c3 }] = await Promise.all([
+      supabase.from('requisicion_lineas').select('id', { count: 'exact', head: true }).eq('articulo_id', articuloId),
+      supabase.from('oc_lineas').select('id', { count: 'exact', head: true }).eq('articulo_id', articuloId),
+      supabase.from('articulo_proveedor').select('id', { count: 'exact', head: true }).eq('articulo_id', articuloId)
+    ])
+    return (c1 || 0) > 0 || (c2 || 0) > 0 || (c3 || 0) > 0
+  }
+
+  const eliminarArticulo = async (articulo) => {
+    setError('')
+    const tieneMov = await tieneMovimientos(articulo.id)
+
+    if (tieneMov) {
+      setError(`"${articulo.codigo_interno}" ya tiene movimientos asociados (requisiciones, ordenes de compra o proveedores). No se puede eliminar, solo desactivar.`)
+      return
+    }
+
+    if (!confirm(`Seguro que deseas eliminar permanentemente "${articulo.codigo_interno}"? Esta accion no se puede deshacer.`)) return
+
+    const { error } = await supabase.from('articulos').delete().eq('id', articulo.id)
+    if (error) {
+      setError('Error al eliminar: ' + error.message)
+      return
+    }
+    setExito('Articulo eliminado correctamente')
+    await cargarDatos()
     setTimeout(() => setExito(''), 3000)
   }
 
   const abrirProveedores = async (articulo) => {
     setArticuloSeleccionado(articulo)
     setMostrarProveedores(true)
+  }
+
+  const abrirClientes = async (articulo) => {
+    setArticuloSeleccionado(articulo)
+    setMostrarClientes(true)
   }
 
   const guardarProveedorArticulo = async () => {
@@ -104,15 +258,46 @@ export default function Articulos() {
     setTimeout(() => setExito(''), 3000)
   }
 
+  const guardarClienteArticulo = async () => {
+    if (!formCliente.cliente_id) {
+      setError('El cliente es obligatorio')
+      return
+    }
+    setError('')
+
+    const { error } = await supabase.from('articulo_cliente').insert({
+      articulo_id: articuloSeleccionado.id,
+      cliente_id: parseInt(formCliente.cliente_id),
+      codigo_cliente: formCliente.codigo_cliente,
+      precio: formCliente.precio ? parseFloat(formCliente.precio) : null,
+    })
+
+    if (error) {
+      setError(error.message.includes('unique') ? 'Este cliente ya esta asignado al articulo' : error.message)
+      return
+    }
+
+    setExito('Cliente asignado correctamente')
+    setFormCliente({ cliente_id: '', codigo_cliente: '', precio: '' })
+    setTimeout(() => setExito(''), 3000)
+  }
+
   const toggleActivo = async (a) => {
     await supabase.from('articulos').update({ activo: !a.activo }).eq('id', a.id)
     await cargarDatos()
   }
 
-  const articulosFiltrados = articulos.filter(a =>
-    a.codigo_interno.toLowerCase().includes(busqueda.toLowerCase()) ||
-    a.descripcion.toLowerCase().includes(busqueda.toLowerCase())
-  )
+  const articulosFiltrados = articulos.filter(a => {
+    const matchBusqueda = a.codigo_interno.toLowerCase().includes(busqueda.toLowerCase()) ||
+      a.descripcion.toLowerCase().includes(busqueda.toLowerCase())
+    if (!matchBusqueda) return false
+
+    if (puedeVerTodosLosSites) {
+      return siteFiltro === 'todos' || (siteFiltro === 'propio' ? true : a.site_id?.toString() === siteFiltro)
+    }
+    // Usuario normal: solo su site, articulos compartidos (sin site), o donde su site sea destino de transferencia
+    return !a.site_id || a.site_id === perfil.site_id || (sitesDestinoPorArticulo[a.id] || []).includes(perfil.site_id)
+  })
 
   if (mostrarProveedores && articuloSeleccionado) {
     return <VistaProveedoresArticulo
@@ -127,13 +312,28 @@ export default function Articulos() {
     />
   }
 
+  if (mostrarClientes && articuloSeleccionado) {
+    return <VistaClientesArticulo
+      articulo={articuloSeleccionado}
+      clientes={clientes}
+      formCliente={formCliente}
+      setFormCliente={setFormCliente}
+      guardarClienteArticulo={guardarClienteArticulo}
+      error={error}
+      exito={exito}
+      onVolver={() => { setMostrarClientes(false); setArticuloSeleccionado(null); setError(''); setExito('') }}
+    />
+  }
+
   return (
     <div style={styles.container}>
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Articulos</h2>
-        <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
-          {mostrarForm ? 'Cancelar' : '+ Nuevo articulo'}
-        </button>
+        {puedeCrear && (
+          <button style={styles.boton} onClick={() => mostrarForm ? cancelarForm() : abrirNuevo()}>
+            {mostrarForm ? 'Cancelar' : '+ Nuevo articulo'}
+          </button>
+        )}
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
@@ -141,7 +341,70 @@ export default function Articulos() {
 
       {mostrarForm && (
         <div style={styles.form}>
-          <h3 style={styles.formTitulo}>Nuevo articulo</h3>
+          <h3 style={styles.formTitulo}>{articuloEditando ? `Editando: ${articuloEditando.codigo_interno}` : 'Nuevo articulo'}</h3>
+
+          <div style={styles.origenBox}>
+            <label style={styles.label}>Origen del articulo *</label>
+            <div style={styles.origenOpciones}>
+              <button type="button"
+                style={form.origen === 'comprado' ? styles.origenBotonActivo : styles.origenBoton}
+                onClick={() => setForm({ ...form, origen: 'comprado' })}>
+                Comprado / Consigna
+              </button>
+              <button type="button"
+                style={form.origen === 'fabricado' ? styles.origenBotonActivo : styles.origenBoton}
+                onClick={() => setForm({ ...form, origen: 'fabricado', categoria_id: '' })}>
+                Fabricado (se inyecta y/o ensambla)
+              </button>
+            </div>
+            {form.origen === 'comprado' && (
+              <div style={styles.filaCheckbox}>
+                <input type="checkbox" id="esConsigna" checked={form.es_consigna}
+                  onChange={e => setForm({ ...form, es_consigna: e.target.checked })} />
+                <label htmlFor="esConsigna" style={styles.labelCheckbox}>
+                  Es material a consigna (el cliente lo suministra, sin costo)
+                </label>
+              </div>
+            )}
+          </div>
+
+          <div style={styles.fila}>
+            <div style={styles.campo}>
+              <label style={styles.label}>Site *</label>
+              <select style={styles.input} value={form.site_id} onChange={e => setForm({ ...form, site_id: e.target.value })}>
+                <option value="">Selecciona el site (o vacio si es compartido entre todos)</option>
+                {sites.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {form.origen === 'fabricado' && sites.length > 1 && (
+            <div style={styles.transferenciaBox}>
+              <label style={styles.label}>Se transfiere/usa como componente en estos otros sites (opcional)</label>
+              <p style={styles.transferenciaDesc}>
+                Marca los sites donde este producto terminado se recibe como materia prima/componente para otro proceso.
+              </p>
+              <div style={styles.transferenciaOpciones}>
+                {sites.filter(s => s.id.toString() !== form.site_id).map(s => (
+                  <label key={s.id} style={styles.checkboxTransferencia}>
+                    <input type="checkbox"
+                      checked={form.sites_destino.includes(s.id.toString())}
+                      onChange={e => {
+                        const marcado = e.target.checked
+                        setForm({
+                          ...form,
+                          sites_destino: marcado
+                            ? [...form.sites_destino, s.id.toString()]
+                            : form.sites_destino.filter(x => x !== s.id.toString())
+                        })
+                      }} />
+                    {s.nombre}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div style={styles.fila}>
             <div style={styles.campo}>
               <label style={styles.label}>Codigo interno *</label>
@@ -169,7 +432,9 @@ export default function Articulos() {
               <select style={styles.input} value={form.categoria_id}
                 onChange={e => setForm({ ...form, categoria_id: e.target.value })}>
                 <option value="">Sin categoria</option>
-                {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                {categorias
+                  .filter(c => (form.origen === 'fabricado' ? tiposCategoriaFabricado : tiposCategoriaComprado).includes(c.tipo))
+                  .map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
             </div>
             <div style={styles.campo}>
@@ -194,10 +459,74 @@ export default function Articulos() {
                 placeholder="0" min="0" max="100" />
             </div>
           </div>
+
+          {form.origen === 'fabricado' && (
+            <>
+              <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
+                Datos de Ingenieria
+              </h3>
+              <div style={styles.fila}>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Tipo de proceso</label>
+                  <select style={styles.input} value={form.tipo_proceso}
+                    onChange={e => setForm({ ...form, tipo_proceso: e.target.value })}>
+                    {tiposProceso.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                </div>
+                {['inyeccion_y_ensamble', 'doble_inyeccion'].includes(form.tipo_proceso) && (
+                  <div style={styles.campo}>
+                    <label style={styles.label}>Articulo WIP de origen</label>
+                    <select style={styles.input} value={form.articulo_wip_origen_id}
+                      onChange={e => setForm({ ...form, articulo_wip_origen_id: e.target.value })}>
+                      <option value="">Selecciona el articulo WIP previo</option>
+                      {articulos.filter(a => a.id !== articuloEditando?.id).map(a => (
+                        <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div style={styles.fila}>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Peso de pieza (g)</label>
+                  <input style={styles.input} type="number" step="0.01" value={form.peso_pieza_g}
+                    onChange={e => setForm({ ...form, peso_pieza_g: e.target.value })} placeholder="0.00" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Peso de colada (g)</label>
+                  <input style={styles.input} type="number" step="0.01" value={form.peso_colada_g}
+                    onChange={e => setForm({ ...form, peso_colada_g: e.target.value })} placeholder="0.00" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Peso de purga por arranque (g)</label>
+                  <input style={styles.input} type="number" step="0.01" value={form.peso_purga_g}
+                    onChange={e => setForm({ ...form, peso_purga_g: e.target.value })} placeholder="0.00" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>% Scrap aprobado</label>
+                  <input style={styles.input} type="number" step="0.01" value={form.pct_scrap_aprobado}
+                    onChange={e => setForm({ ...form, pct_scrap_aprobado: e.target.value })} placeholder="0" min="0" max="100" />
+                </div>
+              </div>
+              <div style={styles.filaCheckbox}>
+                <input type="checkbox" id="admiteMolido" checked={form.admite_molido}
+                  onChange={e => setForm({ ...form, admite_molido: e.target.checked })} />
+                <label htmlFor="admiteMolido" style={styles.labelCheckbox}>Admite molido en la mezcla</label>
+                {form.admite_molido && (
+                  <input style={{ ...styles.input, width: '90px', marginLeft: '10px' }} type="number" min="0" max="100"
+                    value={form.pct_molido_max}
+                    onChange={e => setForm({ ...form, pct_molido_max: e.target.value })}
+                    placeholder="% max" />
+                )}
+              </div>
+            </>
+          )}
+
           <div style={styles.botones}>
-            <button style={styles.botonSecundario} onClick={() => setMostrarForm(false)}>Cancelar</button>
+            <button style={styles.botonSecundario} onClick={cancelarForm}>Cancelar</button>
             <button style={styles.boton} onClick={guardarArticulo} disabled={loading}>
-              {loading ? 'Guardando...' : 'Guardar articulo'}
+              {loading ? 'Guardando...' : articuloEditando ? 'Actualizar articulo' : 'Guardar articulo'}
             </button>
           </div>
         </div>
@@ -207,17 +536,23 @@ export default function Articulos() {
         <input style={styles.inputBusqueda} value={busqueda}
           onChange={e => setBusqueda(e.target.value)}
           placeholder="Buscar por codigo o descripcion..." />
+        {puedeVerTodosLosSites && (
+          <select style={styles.selectSite} value={siteFiltro} onChange={e => setSiteFiltro(e.target.value)}>
+            <option value="todos">Todos los sites</option>
+            {sites.map(s => <option key={s.id} value={s.id.toString()}>{s.nombre}</option>)}
+          </select>
+        )}
       </div>
 
       <div style={styles.tabla}>
         <div style={styles.tablaHeader}>
           <span style={{ flex: 1 }}>Codigo</span>
           <span style={{ flex: 3 }}>Descripcion</span>
+          <span style={{ flex: 1 }}>Site</span>
           <span style={{ flex: 1 }}>Unidad</span>
           <span style={{ flex: 1 }}>Moneda</span>
-          <span style={{ flex: 1 }}>IVA</span>
           <span style={{ flex: 1 }}>Estatus</span>
-          <span style={{ flex: 2 }}>Acciones</span>
+          <span style={{ flex: 3 }}>Acciones</span>
         </div>
         {loading ? (
           <p style={{ padding: '20px', color: '#666' }}>Cargando...</p>
@@ -231,21 +566,39 @@ export default function Articulos() {
                 <p style={{ margin: '0', fontWeight: '500', fontSize: '14px' }}>{a.descripcion}</p>
                 <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>{a.categorias?.nombre}</p>
               </span>
+              <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{a.sites?.nombre || 'Compartido'}</span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{a.unidad_medida}</span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{a.tipo_moneda}</span>
-              <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{a.iva_porcentaje}%</span>
               <span style={{ flex: 1 }}>
                 <span style={{ ...styles.badge, backgroundColor: a.activo ? '#f0fdf4' : '#fef2f2', color: a.activo ? '#16a34a' : '#dc2626' }}>
                   {a.activo ? 'Activo' : 'Inactivo'}
                 </span>
               </span>
-              <span style={{ flex: 2, display: 'flex', gap: '6px' }}>
-                <button style={styles.botonAccion} onClick={() => abrirProveedores(a)}>
-                  Proveedores
-                </button>
-                <button style={styles.botonAccion} onClick={() => toggleActivo(a)}>
-                  {a.activo ? 'Desactivar' : 'Activar'}
-                </button>
+              <span style={{ flex: 3, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {a.origen === 'fabricado' ? (
+                  <button style={styles.botonAccion} onClick={() => abrirClientes(a)}>
+                    Clientes
+                  </button>
+                ) : (
+                  <button style={styles.botonAccion} onClick={() => abrirProveedores(a)}>
+                    Proveedores
+                  </button>
+                )}
+                {puedeEditar && (
+                  <button style={styles.botonAccion} onClick={() => abrirEditar(a)}>
+                    Editar
+                  </button>
+                )}
+                {puedeEditar && (
+                  <button style={styles.botonAccion} onClick={() => toggleActivo(a)}>
+                    {a.activo ? 'Desactivar' : 'Activar'}
+                  </button>
+                )}
+                {puedeEliminar && (
+                  <button style={styles.botonAccionEliminar} onClick={() => eliminarArticulo(a)}>
+                    Eliminar
+                  </button>
+                )}
               </span>
             </div>
           ))
@@ -384,7 +737,120 @@ function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFor
   )
 }
 
+function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente, guardarClienteArticulo, error, exito, onVolver }) {
+  const [clientesAsignados, setClientesAsignados] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => { cargarClientesAsignados() }, [])
+
+  const cargarClientesAsignados = async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('articulo_cliente')
+      .select('*, clientes(nombre)')
+      .eq('articulo_id', articulo.id)
+    setClientesAsignados(data || [])
+    setLoading(false)
+  }
+
+  const toggleActivoCliente = async (ac) => {
+    await supabase.from('articulo_cliente').update({ activo: !ac.activo }).eq('id', ac.id)
+    await cargarClientesAsignados()
+  }
+
+  return (
+    <div style={styles.container}>
+      <div style={styles.encabezado}>
+        <div>
+          <button style={styles.botonVolver} onClick={onVolver}>
+            &larr; Volver a articulos
+          </button>
+          <h2 style={styles.titulo}>Clientes del articulo</h2>
+          <p style={styles.subtituloArticulo}>{articulo.codigo_interno} - {articulo.descripcion}</p>
+        </div>
+      </div>
+
+      {error && <p style={styles.error}>{error}</p>}
+      {exito && <p style={styles.exito}>{exito}</p>}
+
+      <div style={styles.form}>
+        <h3 style={styles.formTitulo}>Asignar cliente</h3>
+        <div style={styles.fila}>
+          <div style={styles.campo}>
+            <label style={styles.label}>Cliente *</label>
+            <select style={styles.input} value={formCliente.cliente_id}
+              onChange={e => setFormCliente({ ...formCliente, cliente_id: e.target.value })}>
+              <option value="">Selecciona cliente</option>
+              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+          </div>
+          <div style={styles.campo}>
+            <label style={styles.label}>Codigo del cliente para este articulo</label>
+            <input style={styles.input} value={formCliente.codigo_cliente}
+              onChange={e => setFormCliente({ ...formCliente, codigo_cliente: e.target.value })}
+              placeholder="Numero de parte segun el cliente" />
+          </div>
+          <div style={styles.campo}>
+            <label style={styles.label}>Precio de venta</label>
+            <input style={styles.input} type="number" value={formCliente.precio}
+              onChange={e => setFormCliente({ ...formCliente, precio: e.target.value })}
+              placeholder="0.00" min="0" step="0.01" />
+          </div>
+        </div>
+        <div style={styles.botones}>
+          <button style={styles.boton} onClick={async () => { await guardarClienteArticulo(); await cargarClientesAsignados() }}>
+            Asignar cliente
+          </button>
+        </div>
+      </div>
+
+      <div style={styles.tabla}>
+        <div style={styles.tablaHeader}>
+          <span style={{ flex: 2 }}>Cliente</span>
+          <span style={{ flex: 1 }}>Codigo cliente</span>
+          <span style={{ flex: 1 }}>Precio</span>
+          <span style={{ flex: 1 }}>Estatus</span>
+          <span style={{ flex: 1 }}>Acciones</span>
+        </div>
+        {loading ? (
+          <p style={{ padding: '20px', color: '#666' }}>Cargando...</p>
+        ) : clientesAsignados.length === 0 ? (
+          <p style={{ padding: '20px', color: '#666' }}>No hay clientes asignados a este articulo</p>
+        ) : (
+          clientesAsignados.map(ac => (
+            <div key={ac.id} style={styles.tablaFila}>
+              <span style={{ flex: 2, fontWeight: '500' }}>{ac.clientes?.nombre}</span>
+              <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{ac.codigo_cliente}</span>
+              <span style={{ flex: 1, fontSize: '13px' }}>{ac.precio ? `$${parseFloat(ac.precio).toFixed(2)}` : '-'}</span>
+              <span style={{ flex: 1 }}>
+                <span style={{ ...styles.badge, backgroundColor: ac.activo ? '#f0fdf4' : '#fef2f2', color: ac.activo ? '#16a34a' : '#dc2626' }}>
+                  {ac.activo ? 'Activo' : 'Inactivo'}
+                </span>
+              </span>
+              <span style={{ flex: 1 }}>
+                <button style={styles.botonAccion} onClick={() => toggleActivoCliente(ac)}>
+                  {ac.activo ? 'Desactivar' : 'Activar'}
+                </button>
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 const styles = {
+  filaCheckbox: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' },
+  labelCheckbox: { fontSize: '13px', color: '#444' },
+  origenBox: { marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #f1f5f9' },
+  transferenciaBox: { backgroundColor: '#f8fafc', borderRadius: '8px', padding: '14px', marginBottom: '16px' },
+  transferenciaDesc: { fontSize: '11px', color: '#94a3b8', margin: '2px 0 10px 0' },
+  transferenciaOpciones: { display: 'flex', gap: '16px', flexWrap: 'wrap' },
+  checkboxTransferencia: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#444', cursor: 'pointer' },
+  origenOpciones: { display: 'flex', gap: '10px', marginTop: '6px' },
+  origenBoton: { padding: '10px 18px', backgroundColor: '#f8fafc', color: '#444', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' },
+  origenBotonActivo: { padding: '10px 18px', backgroundColor: '#eff6ff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' },
   container: { padding: '28px' },
   encabezado: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
   titulo: { fontSize: '18px', fontWeight: '600', color: '#1a1a2e', margin: '0' },
@@ -395,13 +861,15 @@ const styles = {
   campo: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 },
   label: { fontSize: '12px', fontWeight: '500', color: '#444' },
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none' },
-  buscador: { marginBottom: '16px' },
+  buscador: { marginBottom: '16px', display: 'flex', gap: '10px', alignItems: 'center' },
+  selectSite: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '13px', backgroundColor: '#fff' },
   inputBusqueda: { padding: '9px 14px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', width: '300px' },
   botones: { display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' },
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonSecundario: { padding: '9px 20px', backgroundColor: '#e2e8f0', color: '#444', border: 'none', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
   botonVolver: { padding: '6px 14px', backgroundColor: 'transparent', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', marginBottom: '8px' },
   botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
+  botonAccionEliminar: { padding: '4px 10px', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '14px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },

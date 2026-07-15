@@ -21,9 +21,10 @@ export default function Login() {
     <div style={styles.container}>
       <div style={styles.card}>
         <div style={styles.logo}>
-          <div style={styles.logoCirculo}>SC</div>
+          <img src="/syntia-logo.png" alt="SYNTIA" style={styles.logoImagen} />
         </div>
-        <h1 style={styles.titulo}>Sistema de Compras</h1>
+        <h1 style={styles.titulo}>SYNTIA</h1>
+        <p style={styles.tagline}>Synchronized Injection &amp; Logistics Intelligence Assistant</p>
         <p style={styles.subtitulo}>Inicia sesion para continuar</p>
 
         <form onSubmit={handleLogin} style={styles.form}>
@@ -68,8 +69,9 @@ export default function Login() {
 const styles = {
   container: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f0f2f5' },
   card: { backgroundColor: '#fff', padding: '40px', borderRadius: '12px', boxShadow: '0 2px 16px rgba(0,0,0,0.1)', width: '100%', maxWidth: '380px' },
-  logo: { display: 'flex', justifyContent: 'center', marginBottom: '16px' },
-  logoCirculo: { width: '56px', height: '56px', borderRadius: '50%', backgroundColor: '#2563eb', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: '700' },
+  logo: { display: 'flex', justifyContent: 'center', marginBottom: '12px' },
+  logoImagen: { width: '96px', height: '96px', objectFit: 'contain' },
+  tagline: { fontSize: '11px', color: '#94a3b8', textAlign: 'center', margin: '0 0 16px 0', fontStyle: 'italic' },
   titulo: { fontSize: '20px', fontWeight: '600', color: '#1a1a2e', textAlign: 'center', margin: '0 0 4px 0' },
   subtitulo: { fontSize: '13px', color: '#666', textAlign: 'center', margin: '0 0 28px 0' },
   form: { display: 'flex', flexDirection: 'column', gap: '16px' },

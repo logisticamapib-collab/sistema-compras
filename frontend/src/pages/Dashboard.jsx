@@ -2,33 +2,42 @@ import { useState } from 'react'
 import Configuracion from './Configuracion/index'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import Proveedores from './Proveedores/index'
-import Articulos from './Articulos/index'
-import Requisiciones from './Requisiciones/index'
-import Ordenes from './Ordenes/index'
-import Aprobaciones from './Aprobaciones/index'
+import GrupoCompras from './Compras/index'
+import GrupoIngenieria from './Ingenieria/index'
+import GrupoLogistica from './Logistica/index'
+import ModuloPendiente from './ModuloPendiente'
 
-const modulos = [
-  { id: 'requisiciones', titulo: 'Requisiciones', desc: 'Crear y dar seguimiento a requisiciones', color: '#2563eb', roles: ['solicitante','gerente_area','gerente_planta','gerente_administrativo','compras','gerente_compras','direccion','admin'] },
-  { id: 'aprobaciones', titulo: 'Aprobaciones', desc: 'Revisar y aprobar solicitudes pendientes', color: '#7c3aed', roles: ['gerente_area','gerente_planta','gerente_administrativo','compras','gerente_compras','direccion','admin'] },
-  { id: 'ordenes', titulo: 'Ordenes de Compra', desc: 'Gestionar ordenes y seguimiento de arribo', color: '#0891b2', roles: ['compras','gerente_compras','direccion','admin'] },
-  { id: 'articulos', titulo: 'Articulos', desc: 'Catalogo de materiales y herramientas', color: '#059669', roles: ['compras','gerente_compras','admin'] },
-  { id: 'proveedores', titulo: 'Proveedores', desc: 'Alta y gestion de proveedores', color: '#d97706', roles: ['compras','gerente_compras','admin'] },
-  { id: 'reportes', titulo: 'Reportes KPI', desc: 'Indicadores y metricas de compras', color: '#dc2626', roles: ['gerente_planta','gerente_administrativo','compras','gerente_compras','direccion','admin'] },
-  { id: 'configuracion', titulo: 'Configuracion', desc: 'Usuarios, sites, centros de costos y mas', color: '#475569', roles: ['admin'] },
+// Modulos "contenedor" -- agrupan varias pantallas y dependen de permisos granulares internos
+const modulosGrupo = [
+  { id: 'compras', titulo: 'Compras', desc: 'Requisiciones, ordenes, proveedores y KPI', color: '#2563eb' },
+  { id: 'ingenieria', titulo: 'Ingenieria', desc: 'Articulos, rutas, BOM y niveles de ingenieria', color: '#059669' },
+  { id: 'logistica', titulo: 'Logistica', desc: 'Almacen, Embarques, Customer Service y Clientes', color: '#0891b2' },
+]
+
+// Configuracion es su propio modulo principal (no vive dentro de ningun grupo)
+const moduloConfiguracion = { id: 'configuracion', titulo: 'Configuracion', desc: 'Usuarios, sites, permisos y mas', color: '#475569' }
+
+// Modulos del roadmap de MRP, todavia sin funcionalidad interna -- visibles para todos como referencia del plan
+const modulosPendientes = [
+  { id: 'planeacion', titulo: 'Planeacion de Produccion', desc: 'Motor MRP: plan de produccion y necesidades', color: '#9333ea' },
+  { id: 'produccion', titulo: 'Produccion', desc: 'Ordenes de trabajo y consumo de materiales', color: '#c2410c' },
+  { id: 'calidad', titulo: 'Calidad', desc: 'Liberacion, cuarentena y no conformidades', color: '#b91c1c' },
+  { id: 'moldes', titulo: 'Mantenimiento de Moldes', desc: 'Conteo de shots y mantenimiento preventivo', color: '#a16207' },
+  { id: 'mantenimiento', titulo: 'Mantenimiento', desc: 'Ordenes de mantenimiento general', color: '#57534e' },
 ]
 
 export default function Dashboard() {
-  const { perfil } = useAuth()
+  const { perfil, tienePermiso } = useAuth()
   const [moduloActivo, setModuloActivo] = useState(null)
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
   }
 
-  const modulosVisibles = modulos.filter(m =>
-    perfil?.rol && m.roles.includes(perfil.rol)
-  )
+  const gruposVisibles = modulosGrupo.filter(m => tienePermiso(m.id, 'ver'))
+  const configVisible = tienePermiso('configuracion', 'ver')
+
+  const pendienteActivo = modulosPendientes.find(m => m.id === moduloActivo)
 
   if (moduloActivo) {
     return (
@@ -43,17 +52,11 @@ export default function Dashboard() {
           </div>
         </header>
         <div>
+          {moduloActivo === 'compras' && <GrupoCompras />}
+          {moduloActivo === 'ingenieria' && <GrupoIngenieria />}
+          {moduloActivo === 'logistica' && <GrupoLogistica />}
           {moduloActivo === 'configuracion' && <Configuracion />}
-          {moduloActivo === 'proveedores' && <Proveedores />}
-          {moduloActivo === 'articulos' && <Articulos />}
-          {moduloActivo === 'requisiciones' && <Requisiciones />}
-          {moduloActivo === 'ordenes' && <Ordenes />}
-          {moduloActivo === 'aprobaciones' && <Aprobaciones />}
-          {moduloActivo !== 'configuracion' && moduloActivo !== 'proveedores' && moduloActivo !== 'articulos' && moduloActivo !== 'requisiciones' && moduloActivo !== 'ordenes' && moduloActivo !== 'aprobaciones' && (
-            <div style={styles.contenido}>
-              <h2>Modulo: {moduloActivo} - En construccion</h2>
-            </div>
-          )}
+          {pendienteActivo && <ModuloPendiente titulo={pendienteActivo.titulo} />}
         </div>
       </div>
     )
@@ -62,11 +65,14 @@ export default function Dashboard() {
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <div>
-          <h1 style={styles.titulo}>Sistema de Compras</h1>
-          <p style={styles.subtitulo}>
-            {perfil?.sites?.nombre} - {perfil?.empresas?.nombre}
-          </p>
+        <div style={styles.headerIzquierdo}>
+          <img src="/syntia-logo.png" alt="SYNTIA" style={styles.logoHeader} />
+          <div>
+            <h1 style={styles.titulo}>SYNTIA</h1>
+            <p style={styles.subtitulo}>
+              {perfil?.sites?.nombre} - {perfil?.empresas?.nombre}
+            </p>
+          </div>
         </div>
         <div style={styles.headerDerecho}>
           <span style={styles.usuario}>{perfil?.nombre} - <strong>{perfil?.rol}</strong></span>
@@ -81,22 +87,39 @@ export default function Dashboard() {
         </div>
 
         <div style={styles.grid}>
-          {modulosVisibles.map(modulo => (
-            <div
-              key={modulo.id}
-              style={styles.tarjeta}
-              onClick={() => setModuloActivo(modulo.id)}
-              onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-3px)'}
-              onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
-            >
-              <div style={{ ...styles.tarjetaBarra, backgroundColor: modulo.color }}></div>
-              <div style={styles.tarjetaContenido}>
-                <p style={styles.tarjetaTitulo}>{modulo.titulo}</p>
-                <p style={styles.tarjetaDesc}>{modulo.desc}</p>
-              </div>
-            </div>
+          {gruposVisibles.map(modulo => (
+            <Tarjeta key={modulo.id} modulo={modulo} onClick={() => setModuloActivo(modulo.id)} />
           ))}
+          {configVisible && (
+            <Tarjeta modulo={moduloConfiguracion} onClick={() => setModuloActivo(moduloConfiguracion.id)} />
+          )}
         </div>
+
+        <div style={styles.seccionPendientes}>
+          <p style={styles.pendientesTitulo}>Roadmap MRP (en desarrollo)</p>
+          <div style={styles.grid}>
+            {modulosPendientes.map(modulo => (
+              <Tarjeta key={modulo.id} modulo={modulo} atenuada onClick={() => setModuloActivo(modulo.id)} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Tarjeta({ modulo, onClick, atenuada }) {
+  return (
+    <div
+      style={{ ...styles.tarjeta, opacity: atenuada ? 0.75 : 1 }}
+      onClick={onClick}
+      onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-3px)'}
+      onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+    >
+      <div style={{ ...styles.tarjetaBarra, backgroundColor: modulo.color }}></div>
+      <div style={styles.tarjetaContenido}>
+        <p style={styles.tarjetaTitulo}>{modulo.titulo}</p>
+        <p style={styles.tarjetaDesc}>{modulo.desc}</p>
       </div>
     </div>
   )
@@ -104,7 +127,9 @@ export default function Dashboard() {
 
 const styles = {
   container: { minHeight: '100vh', backgroundColor: '#f0f2f5' },
-  header: { backgroundColor: '#1a1a2e', padding: '14px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  header: { backgroundColor: '#1a1a2e', padding: '10px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  headerIzquierdo: { display: 'flex', alignItems: 'center', gap: '12px' },
+  logoHeader: { width: '52px', height: '52px', objectFit: 'contain' },
   titulo: { color: '#fff', fontSize: '17px', fontWeight: '600', margin: '0' },
   subtitulo: { color: '#94a3b8', fontSize: '11px', margin: '2px 0 0 0' },
   headerDerecho: { display: 'flex', alignItems: 'center', gap: '16px' },
@@ -116,6 +141,8 @@ const styles = {
   bienvenidaTitulo: { fontSize: '20px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 4px 0' },
   bienvenidaDesc: { fontSize: '13px', color: '#666', margin: '0' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '16px' },
+  seccionPendientes: { marginTop: '36px' },
+  pendientesTitulo: { fontSize: '12px', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 14px 0' },
   tarjeta: { backgroundColor: '#fff', borderRadius: '10px', boxShadow: '0 1px 6px rgba(0,0,0,0.07)', cursor: 'pointer', transition: 'transform 0.2s, box-shadow 0.2s', overflow: 'hidden' },
   tarjetaBarra: { height: '5px', width: '100%' },
   tarjetaContenido: { padding: '20px' },

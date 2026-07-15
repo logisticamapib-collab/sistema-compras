@@ -12,6 +12,8 @@ function lineaVacia() {
     unidad_medida: 'PZA',
     precio_unitario: '',
     iva_porcentaje: 16,
+    descuento_tipo: 'porcentaje',
+    descuento_valor: '',
     centro_costo_id: '',
     cuenta_gasto_id: ''
   }
@@ -25,6 +27,7 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
   const [proveedores, setProveedores] = useState([])
   const [centrosCostos, setCentrosCostos] = useState([])
   const [cuentasGastos, setCuentasGastos] = useState([])
+  const [gerentesArea, setGerentesArea] = useState([])
   const [lineas, setLineas] = useState([lineaVacia()])
   const [form, setForm] = useState({
     proveedor_id: '',
@@ -32,23 +35,29 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
     condiciones_pago: '',
     moneda: 'MXN',
     justificacion: '',
-    notas: ''
+    notas: '',
+    gerente_area_id: '',
+    referencia_cotizacion: ''
   })
+  const [archivoCotizacion, setArchivoCotizacion] = useState(null)
 
   useEffect(() => { cargarCatalogos() }, [])
 
   const cargarCatalogos = async () => {
     setLoading(true)
-    const [{ data: a }, { data: p }, { data: cc }, { data: cg }] = await Promise.all([
+    const [{ data: a }, { data: p }, { data: cc }, { data: cg }, { data: ga }] = await Promise.all([
       supabase.from('articulos').select('*, articulo_proveedor(proveedor_id, precio)').eq('empresa_id', perfil.empresa_id).eq('activo', true),
       supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
       supabase.from('centros_costos').select('*').eq('site_id', perfil.site_id).eq('activo', true),
-      supabase.from('cuentas_gastos').select('*').eq('site_id', perfil.site_id).eq('activo', true)
+      supabase.from('cuentas_gastos').select('*').eq('site_id', perfil.site_id).eq('activo', true),
+      supabase.from('usuarios').select('id, nombre, area, rol').eq('empresa_id', perfil.empresa_id).eq('activo', true)
+        .in('rol', ['gerente_area', 'gerente_planta', 'gerente_administrativo'])
     ])
     setArticulos(a || [])
     setProveedores(p || [])
     setCentrosCostos(cc || [])
     setCuentasGastos(cg || [])
+    setGerentesArea(ga || [])
     setLoading(false)
   }
 
@@ -73,17 +82,27 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
     setLineas(lineas.filter((_, idx) => idx !== i))
   }
 
+  const calcularDescuentoLinea = (l) => {
+    const precio = parseFloat(l.precio_unitario) || 0
+    const cantidad = parseFloat(l.cantidad) || 0
+    const valor = parseFloat(l.descuento_valor) || 0
+    if (!valor) return 0
+    if (l.descuento_tipo === 'porcentaje') return (precio * cantidad) * (valor / 100)
+    return valor
+  }
+
   const calcularTotales = () => {
     const subtotal = lineas.reduce((sum, l) => {
       const precio = parseFloat(l.precio_unitario) || 0
       const cantidad = parseFloat(l.cantidad) || 0
-      return sum + (precio * cantidad)
+      return sum + (precio * cantidad) - calcularDescuentoLinea(l)
     }, 0)
     const iva = lineas.reduce((sum, l) => {
       const precio = parseFloat(l.precio_unitario) || 0
       const cantidad = parseFloat(l.cantidad) || 0
       const ivaP = parseFloat(l.iva_porcentaje) || 0
-      return sum + (precio * cantidad * ivaP / 100)
+      const importeConDescuento = (precio * cantidad) - calcularDescuentoLinea(l)
+      return sum + (importeConDescuento * ivaP / 100)
     }, 0)
     return { subtotal, iva, total: subtotal + iva }
   }
@@ -113,6 +132,21 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
     const folio = await generarFolioOC()
     const { subtotal, iva, total } = calcularTotales()
 
+    const requiereGerenteArea = !!form.gerente_area_id
+    const estatusInicial = requiereGerenteArea ? 'aprobacion_gerente_area' : 'aprobacion_gerente_compras'
+    const aprobadorInicialId = requiereGerenteArea ? form.gerente_area_id : null
+
+    let cotizacionArchivoUrl = null
+    if (archivoCotizacion) {
+      const extension = archivoCotizacion.name.split('.').pop()
+      const ruta = `cotizaciones/${folio}-${Date.now()}.${extension}`
+      const { error: errorSubida } = await supabase.storage.from('cotizaciones').upload(ruta, archivoCotizacion)
+      if (!errorSubida) {
+        const { data: urlData } = supabase.storage.from('cotizaciones').getPublicUrl(ruta)
+        cotizacionArchivoUrl = urlData.publicUrl
+      }
+    }
+
     const { data: oc, error: errorOC } = await supabase
       .from('ordenes_compra')
       .insert({
@@ -130,7 +164,10 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
         iva,
         total,
         notas: form.notas,
-        estatus: 'aprobacion_gerente_compras'
+        referencia_cotizacion: form.referencia_cotizacion || null,
+        cotizacion_archivo_url: cotizacionArchivoUrl,
+        estatus: estatusInicial,
+        aprobador_actual_id: aprobadorInicialId
       })
       .select()
       .single()
@@ -148,8 +185,9 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
       cantidad: parseFloat(l.cantidad),
       unidad_medida: l.unidad_medida,
       precio_unitario: parseFloat(l.precio_unitario),
+      descuento: calcularDescuentoLinea(l),
       iva_porcentaje: parseFloat(l.iva_porcentaje),
-      subtotal: parseFloat(l.precio_unitario) * parseFloat(l.cantidad),
+      subtotal: (parseFloat(l.precio_unitario) * parseFloat(l.cantidad)) - calcularDescuentoLinea(l),
       centro_costo_id: l.centro_costo_id ? parseInt(l.centro_costo_id) : null,
       cuenta_gasto_id: l.cuenta_gasto_id ? parseInt(l.cuenta_gasto_id) : null
     }))
@@ -169,8 +207,9 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
         </button>
         <h2 style={styles.titulo}>Orden de compra directa</h2>
         <div style={styles.alertaDirecta}>
-          Esta orden va directo a aprobacion de Direccion sin pasar por flujo de requisicion.
-          Justificacion obligatoria.
+          Esta orden no viene de una requisicion previa. Justificacion obligatoria.
+          Si eliges un Gerente de area, el flujo sera: Gerente de area &rarr; Gerente de Compras &rarr; Direccion.
+          Si no eliges ninguno: Gerente de Compras &rarr; Direccion.
         </div>
       </div>
 
@@ -217,6 +256,19 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
           </div>
         </div>
         <div style={styles.campo}>
+          <label style={styles.label}>Requiere aprobacion previa de un Gerente de area (opcional)</label>
+          <select style={styles.input} value={form.gerente_area_id}
+            onChange={e => setForm({ ...form, gerente_area_id: e.target.value })}>
+            <option value="">No, enviar directo a Gerente de Compras</option>
+            {gerentesArea.map(g => (
+              <option key={g.id} value={g.id}>{g.nombre} - {g.area || g.rol}</option>
+            ))}
+          </select>
+          <p style={styles.inputDesc}>
+            Si esta compra es para un area especifica (ej. Logistica), selecciona al Gerente de esa area para que la apruebe primero. Si no aplica, se enviara directo al Gerente de Compras.
+          </p>
+        </div>
+        <div style={styles.campo}>
           <label style={styles.label}>Justificacion *</label>
           <textarea style={styles.textarea} value={form.justificacion}
             onChange={e => setForm({ ...form, justificacion: e.target.value })}
@@ -229,6 +281,19 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
             onChange={e => setForm({ ...form, notas: e.target.value })}
             placeholder="Instrucciones para el proveedor..."
             rows={2} />
+        </div>
+        <div style={styles.fila}>
+          <div style={styles.campo}>
+            <label style={styles.label}>Referencia a cotizacion (opcional)</label>
+            <input style={styles.input} value={form.referencia_cotizacion}
+              onChange={e => setForm({ ...form, referencia_cotizacion: e.target.value })}
+              placeholder="Numero de cotizacion o referencia" />
+          </div>
+          <div style={styles.campo}>
+            <label style={styles.label}>Adjuntar cotizacion (PDF o foto, opcional)</label>
+            <input type="file" accept=".pdf,image/*"
+              onChange={e => setArchivoCotizacion(e.target.files[0])} />
+          </div>
         </div>
       </div>
 
@@ -287,6 +352,19 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
                     placeholder="16" min="0" max="100" />
                 </div>
                 <div style={styles.campo}>
+                  <label style={styles.label}>Descuento</label>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <input style={styles.input} type="number" value={linea.descuento_valor}
+                      onChange={e => actualizarLinea(i, 'descuento_valor', e.target.value)}
+                      placeholder="0" min="0" />
+                    <select style={{ ...styles.input, width: '60px' }} value={linea.descuento_tipo}
+                      onChange={e => actualizarLinea(i, 'descuento_tipo', e.target.value)}>
+                      <option value="porcentaje">%</option>
+                      <option value="monto">$</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={styles.campo}>
                   <label style={styles.label}>Subtotal</label>
                   <input style={{ ...styles.input, backgroundColor: '#f8fafc', color: '#666' }}
                     value={((parseFloat(linea.precio_unitario) || 0) * (parseFloat(linea.cantidad) || 0)).toFixed(2)}
@@ -343,7 +421,7 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
       <div style={styles.botones}>
         <button style={styles.botonSecundario} onClick={onVolver}>Cancelar</button>
         <button style={styles.boton} onClick={guardar} disabled={loading}>
-          {loading ? 'Guardando...' : 'Enviar a aprobacion de Direccion'}
+          {loading ? 'Guardando...' : 'Enviar a aprobacion'}
         </button>
       </div>
     </div>
@@ -363,6 +441,7 @@ const styles = {
   campo: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 },
   campoEliminar: { display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: '4px' },
   label: { fontSize: '12px', fontWeight: '500', color: '#444' },
+  inputDesc: { fontSize: '11px', color: '#94a3b8', margin: '4px 0 0 0' },
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none' },
   textarea: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', resize: 'vertical', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' },
   linea: { display: 'flex', gap: '12px', backgroundColor: '#f8fafc', borderRadius: '8px', padding: '16px', marginBottom: '12px', border: '1px solid #e2e8f0' },

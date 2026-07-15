@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase, supabaseAdmin } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import PermisosUsuario from './PermisosUsuario'
 
 const roles = [
   { value: 'solicitante', label: 'Solicitante' },
@@ -9,6 +10,8 @@ const roles = [
   { value: 'gerente_administrativo', label: 'Gerente Administrativo' },
   { value: 'compras', label: 'Compras' },
   { value: 'gerente_compras', label: 'Gerente de Compras' },
+  { value: 'gerente_ingenieria', label: 'Gerente de Ingenieria' },
+  { value: 'ingeniero_nuevos_proyectos', label: 'Ingeniero de Nuevos Proyectos' },
   { value: 'direccion', label: 'Direccion / Director' },
   { value: 'admin', label: 'Administrador' },
 ]
@@ -23,12 +26,13 @@ const niveles = [
 ]
 
 export default function Usuarios() {
-  const { perfil } = useAuth()
+  const { perfil, tienePermiso } = useAuth()
   const [usuarios, setUsuarios] = useState([])
   const [sites, setSites] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [usuarioEditando, setUsuarioEditando] = useState(null)
+  const [usuarioPermisos, setUsuarioPermisos] = useState(null)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [form, setForm] = useState({
@@ -167,16 +171,22 @@ export default function Usuarios() {
       'gerente_compras', 'direccion', 'admin'].includes(u.rol)
   )
 
+  if (usuarioPermisos) {
+    return <PermisosUsuario usuario={usuarioPermisos} onVolver={() => setUsuarioPermisos(null)} />
+  }
+
   return (
     <div>
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Usuarios del sistema</h2>
-        <button style={styles.boton} onClick={() => {
-          setUsuarioEditando(null)
-          setMostrarForm(!mostrarForm)
-        }}>
-          {mostrarForm ? 'Cancelar' : '+ Nuevo usuario'}
-        </button>
+        {tienePermiso('config_usuarios', 'crear') && (
+          <button style={styles.boton} onClick={() => {
+            setUsuarioEditando(null)
+            setMostrarForm(!mostrarForm)
+          }}>
+            {mostrarForm ? 'Cancelar' : '+ Nuevo usuario'}
+          </button>
+        )}
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
@@ -350,12 +360,21 @@ export default function Usuarios() {
                 </span>
               </span>
               <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <button style={styles.botonAccion} onClick={() => abrirEditar(u)}>
-                  Editar
-                </button>
-                <button style={styles.botonAccion} onClick={() => toggleActivo(u)}>
-                  {u.activo ? 'Desactivar' : 'Activar'}
-                </button>
+                {tienePermiso('config_usuarios', 'editar') && (
+                  <button style={styles.botonAccion} onClick={() => abrirEditar(u)}>
+                    Editar
+                  </button>
+                )}
+                {tienePermiso('config_usuarios', 'editar') && (
+                  <button style={styles.botonAccion} onClick={() => toggleActivo(u)}>
+                    {u.activo ? 'Desactivar' : 'Activar'}
+                  </button>
+                )}
+                {perfil?.rol === 'admin' && (
+                  <button style={styles.botonAccionPermisos} onClick={() => setUsuarioPermisos(u)}>
+                    Permisos
+                  </button>
+                )}
               </span>
             </div>
           ))
@@ -382,6 +401,7 @@ const styles = {
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonSecundario: { padding: '9px 20px', backgroundColor: '#e2e8f0', color: '#444', border: 'none', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
   botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
+  botonAccionPermisos: { padding: '4px 10px', backgroundColor: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '14px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },

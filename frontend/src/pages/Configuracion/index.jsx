@@ -1,28 +1,47 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useAuth } from '../../context/AuthContext'
 import Usuarios from './Usuarios'
 import Sites from './Sites'
 import CentrosCostos from './CentrosCostos'
 import CuentasGastos from './CuentasGastos'
 import Categorias from './Categorias'
 import Delegaciones from './Delegaciones'
+import Permisos from './Permisos'
+import Notificaciones from './Notificaciones'
+import DatosEmpresa from './DatosEmpresa'
 
 const secciones = [
-  { id: 'usuarios', titulo: 'Usuarios' },
-  { id: 'sites', titulo: 'Sites / Plantas' },
-  { id: 'centros', titulo: 'Centros de Costos' },
-  { id: 'cuentas', titulo: 'Cuentas de Gastos' },
-  { id: 'categorias', titulo: 'Categorias' },
-  { id: 'delegaciones', titulo: 'Delegacion de Autoridad' },
+  { id: 'empresa', modulo: 'config_empresa', titulo: 'Datos de la Empresa' },
+  { id: 'usuarios', modulo: 'config_usuarios', titulo: 'Usuarios' },
+  { id: 'sites', modulo: 'config_sites', titulo: 'Sites / Plantas' },
+  { id: 'centros', modulo: 'config_centros_costos', titulo: 'Centros de Costos' },
+  { id: 'cuentas', modulo: 'config_cuentas_gastos', titulo: 'Cuentas de Gastos' },
+  { id: 'categorias', modulo: 'config_categorias', titulo: 'Categorias' },
+  { id: 'delegaciones', modulo: 'config_delegaciones', titulo: 'Delegacion de Autoridad' },
+  { id: 'permisos', modulo: 'config_permisos', titulo: 'Permisos por Rol' },
+  { id: 'notificaciones', modulo: 'config_notificaciones', titulo: 'Notificaciones' },
 ]
 
 export default function Configuracion() {
-  const [seccion, setSeccion] = useState('usuarios')
+  const { perfil, tienePermiso } = useAuth()
+
+  // Cada seccion ahora es su propio modulo de permisos: se muestra solo si el rol
+  // tiene "ver" habilitado para ese submodulo especifico (ajustable en Permisos por Rol).
+  const seccionesVisibles = secciones.filter(s => tienePermiso(s.modulo, 'ver'))
+
+  const [seccion, setSeccion] = useState(seccionesVisibles[0]?.id || '')
+
+  useEffect(() => {
+    if (!seccionesVisibles.find(s => s.id === seccion)) {
+      setSeccion(seccionesVisibles[0]?.id || '')
+    }
+  }, [perfil?.rol, seccionesVisibles.length])
 
   return (
     <div style={styles.container}>
       <div style={styles.sidebar}>
         <p style={styles.sidebarTitulo}>Configuracion</p>
-        {secciones.map(s => (
+        {seccionesVisibles.map(s => (
           <button
             key={s.id}
             style={seccion === s.id ? styles.itemActivo : styles.item}
@@ -32,12 +51,20 @@ export default function Configuracion() {
         ))}
       </div>
       <div style={styles.contenido}>
+        {seccionesVisibles.length === 0 && (
+          <p style={{ color: '#666' }}>
+            Tu rol no tiene ninguna seccion de Configuracion habilitada. Pide a un Administrador que te asigne acceso desde Permisos por Rol.
+          </p>
+        )}
+        {seccion === 'empresa' && <DatosEmpresa />}
         {seccion === 'usuarios' && <Usuarios />}
         {seccion === 'sites' && <Sites />}
         {seccion === 'centros' && <CentrosCostos />}
         {seccion === 'cuentas' && <CuentasGastos />}
         {seccion === 'categorias' && <Categorias />}
         {seccion === 'delegaciones' && <Delegaciones />}
+        {seccion === 'permisos' && <Permisos />}
+        {seccion === 'notificaciones' && <Notificaciones />}
       </div>
     </div>
   )

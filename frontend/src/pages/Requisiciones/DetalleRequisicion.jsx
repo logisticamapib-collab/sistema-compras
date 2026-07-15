@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import EditarRequisicion from './EditarRequisicion'
+import ImprimirRequisicion from './ImprimirRequisicion'
+import { enviarCorreo, obtenerInvolucrados } from '../../lib/email'
 
 const estatusLabels = {
   borrador: 'Borrador',
@@ -23,21 +25,51 @@ const estatusColores = {
   cancelada: { backgroundColor: '#fef2f2', color: '#991b1b' },
 }
 
+const ocEstatusLabels = {
+  aprobacion_gerente_area: 'OC pendiente - Gerente de Area',
+  aprobacion_gerente_planta: 'OC pendiente - Gerente de Planta/Adm',
+  aprobacion_gerente_compras: 'OC pendiente - Gerente de Compras',
+  aprobacion_direccion: 'OC pendiente - Direccion',
+  aprobada: 'OC Aprobada',
+  enviada_proveedor: 'OC enviada a proveedor',
+  confirmada: 'OC confirmada por proveedor',
+  en_transito: 'OC en transito',
+  recibida_parcial: 'OC recibida parcial',
+  recibida: 'OC recibida',
+  cancelada: 'OC cancelada',
+}
+
+const ocEstatusColores = {
+  aprobacion_gerente_area: { backgroundColor: '#fef9c3', color: '#854d0e' },
+  aprobacion_gerente_planta: { backgroundColor: '#fef9c3', color: '#854d0e' },
+  aprobacion_gerente_compras: { backgroundColor: '#fde68a', color: '#854d0e' },
+  aprobacion_direccion: { backgroundColor: '#f5f3ff', color: '#7c3aed' },
+  aprobada: { backgroundColor: '#f0fdf4', color: '#16a34a' },
+  enviada_proveedor: { backgroundColor: '#f0f9ff', color: '#0891b2' },
+  confirmada: { backgroundColor: '#eff6ff', color: '#2563eb' },
+  en_transito: { backgroundColor: '#fef3c7', color: '#c2410c' },
+  recibida_parcial: { backgroundColor: '#fff7ed', color: '#c2410c' },
+  recibida: { backgroundColor: '#f0fdf4', color: '#16a34a' },
+  cancelada: { backgroundColor: '#fef2f2', color: '#dc2626' },
+}
+
 export default function DetalleRequisicion({ requisicion, onVolver }) {
   const { perfil } = useAuth()
   const [lineas, setLineas] = useState([])
   const [aprobaciones, setAprobaciones] = useState([])
   const [solicitante, setSolicitante] = useState(null)
+  const [ordenesGeneradas, setOrdenesGeneradas] = useState([])
   const [loading, setLoading] = useState(true)
   const [comentario, setComentario] = useState('')
   const [procesando, setProcesando] = useState(false)
   const [editando, setEditando] = useState(false)
+  const [imprimiendo, setImprimiendo] = useState(false)
 
   useEffect(() => { cargarDetalle() }, [])
 
   const cargarDetalle = async () => {
     setLoading(true)
-    const [{ data: l }, { data: a }, { data: s }] = await Promise.all([
+    const [{ data: l }, { data: a }, { data: s }, { data: ocs }] = await Promise.all([
       supabase.from('requisicion_lineas')
         .select('*, articulos(codigo_interno, descripcion), centros_costos(codigo, nombre), cuentas_gastos(codigo, nombre), proveedores(nombre)')
         .eq('requisicion_id', requisicion.id),
@@ -49,12 +81,33 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
       supabase.from('usuarios')
         .select('nombre, email, area, puesto')
         .eq('id', requisicion.solicitante_id)
-        .single()
+        .single(),
+      supabase.from('ordenes_compra')
+        .select('id, folio, estatus, proveedores(nombre), total, moneda')
+        .eq('requisicion_id', requisicion.id)
+        .order('created_at')
     ])
     setLineas(l || [])
     setAprobaciones(a || [])
     setSolicitante(s)
+    setOrdenesGeneradas(ocs || [])
     setLoading(false)
+  }
+
+  // Si la requisicion sigue en_proceso y ya hay OC generada, se muestra el avance real de la OC.
+  // Si la requisicion ya quedo completada/rechazada/cancelada, se respeta ese estatus final.
+  const estatusMostrado = () => {
+    if (requisicion.estatus === 'en_proceso' && ordenesGeneradas.length > 0) {
+      const activas = ordenesGeneradas.filter(o => o.estatus !== 'cancelada')
+      const relevantes = activas.length > 0 ? activas : ordenesGeneradas
+      const primero = relevantes[0].estatus
+      const todasIguales = relevantes.every(o => o.estatus === primero)
+      if (todasIguales) {
+        return { label: ocEstatusLabels[primero] || primero, colores: ocEstatusColores[primero] || {} }
+      }
+      return { label: `${relevantes.length} ordenes generadas (estatus mixto)`, colores: { backgroundColor: '#f1f5f9', color: '#64748b' } }
+    }
+    return { label: estatusLabels[requisicion.estatus] || requisicion.estatus, colores: estatusColores[requisicion.estatus] || {} }
   }
 
   const puedeAprobar = () => {
@@ -118,6 +171,18 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
       .update({ estatus: 'rechazada' })
       .eq('id', requisicion.id)
 
+    const involucrados = await obtenerInvolucrados({ requisicionId: requisicion.id })
+    await enviarCorreo({
+      to: involucrados.map(u => u.email),
+      subject: `Requisicion ${requisicion.folio} fue rechazada`,
+      html: `
+        <p>La requisicion <strong>${requisicion.folio}</strong> fue <strong style="color:#dc2626">rechazada</strong> por ${perfil.nombre}.</p>
+        <p><strong>Comentario:</strong> ${comentario}</p>
+        <p>Puedes revisar el detalle completo dentro del sistema SYNTIA.</p>
+      `,
+      perfilQuienActua: perfil
+    })
+
     setProcesando(false)
     onVolver()
   }
@@ -159,6 +224,13 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
     />
   }
 
+  if (imprimiendo) {
+    return <ImprimirRequisicion
+      requisicion={requisicion}
+      onVolver={() => setImprimiendo(false)}
+    />
+  }
+
   return (
     <div style={styles.container}>
       <div style={styles.encabezado}>
@@ -167,9 +239,12 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
         </button>
         <div style={styles.encabezadoInfo}>
           <h2 style={styles.titulo}>{requisicion.folio}</h2>
-          <span style={{ ...styles.estatusBadge, ...estatusColores[requisicion.estatus] }}>
-            {estatusLabels[requisicion.estatus]}
+          <span style={{ ...styles.estatusBadge, ...estatusMostrado().colores }}>
+            {estatusMostrado().label}
           </span>
+          <button style={styles.botonImprimir} onClick={() => setImprimiendo(true)}>
+            Imprimir
+          </button>
         </div>
       </div>
 
@@ -238,6 +313,22 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
           )}
         </div>
       </div>
+
+      {ordenesGeneradas.length > 0 && (
+        <div style={styles.seccion}>
+          <h3 style={styles.seccionTitulo}>Ordenes de compra generadas</h3>
+          {ordenesGeneradas.map(oc => (
+            <div key={oc.id} style={styles.ocGeneradaItem}>
+              <span style={styles.ocGeneradaFolio}>{oc.folio}</span>
+              <span style={styles.ocGeneradaProveedor}>{oc.proveedores?.nombre}</span>
+              <span style={styles.ocGeneradaTotal}>
+                ${parseFloat(oc.total || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} {oc.moneda}
+              </span>
+              <span style={styles.ocGeneradaEstatus}>{oc.estatus}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={styles.seccion}>
         <h3 style={styles.seccionTitulo}>Lineas de requisicion</h3>
@@ -321,11 +412,17 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
 }
 
 const styles = {
+  ocGeneradaItem: { display: 'flex', gap: '16px', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f1f5f9', fontSize: '13px' },
+  ocGeneradaFolio: { fontWeight: '600', color: '#0891b2', minWidth: '160px' },
+  ocGeneradaProveedor: { flex: 1, color: '#444' },
+  ocGeneradaTotal: { fontWeight: '500', minWidth: '120px' },
+  ocGeneradaEstatus: { fontSize: '11px', color: '#666', textTransform: 'uppercase' },
   container: { padding: '28px' },
   encabezado: { marginBottom: '20px' },
   encabezadoInfo: { display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' },
   titulo: { fontSize: '20px', fontWeight: '600', color: '#1a1a2e', margin: '0' },
   estatusBadge: { padding: '4px 12px', borderRadius: '20px', fontSize: '13px', fontWeight: '500' },
+  botonImprimir: { padding: '6px 14px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', marginLeft: 'auto' },
   botonVolver: { padding: '6px 14px', backgroundColor: 'transparent', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' },
   grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' },
   seccion: { backgroundColor: '#fff', borderRadius: '10px', padding: '24px', marginBottom: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },

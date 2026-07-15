@@ -6,12 +6,14 @@ import DetalleOrden from './DetalleOrden'
 
 const estatusColores = {
   borrador: { bg: '#f1f5f9', color: '#64748b' },
-  enviada_aprobacion: { bg: '#fef9c3', color: '#854d0e' },
-  aprobada_gerente: { bg: '#eff6ff', color: '#2563eb' },
-  aprobada_direccion: { bg: '#f0fdf4', color: '#16a34a' },
+  aprobacion_gerente_area: { bg: '#fef9c3', color: '#854d0e' },
+  aprobacion_gerente_planta: { bg: '#fef9c3', color: '#854d0e' },
+  aprobacion_gerente_compras: { bg: '#fde68a', color: '#854d0e' },
+  aprobacion_direccion: { bg: '#f5f3ff', color: '#7c3aed' },
+  aprobada: { bg: '#f0fdf4', color: '#16a34a' },
   enviada_proveedor: { bg: '#f0f9ff', color: '#0891b2' },
   confirmada: { bg: '#eff6ff', color: '#2563eb' },
-  en_transito: { bg: '#fef9c3', color: '#854d0e' },
+  en_transito: { bg: '#fef3c7', color: '#c2410c' },
   recibida_parcial: { bg: '#fff7ed', color: '#c2410c' },
   recibida: { bg: '#f0fdf4', color: '#16a34a' },
   cancelada: { bg: '#fef2f2', color: '#dc2626' },
@@ -19,11 +21,13 @@ const estatusColores = {
 
 const estatusLabels = {
   borrador: 'Borrador',
-  enviada_aprobacion: 'En aprobacion',
-  aprobada_gerente: 'Aprobada - Gerente',
-  aprobada_direccion: 'Aprobada - Direccion',
+  aprobacion_gerente_area: 'Pendiente - Gerente de Area',
+  aprobacion_gerente_planta: 'Pendiente - Gerente de Planta/Adm',
+  aprobacion_gerente_compras: 'Pendiente - Gerente de Compras',
+  aprobacion_direccion: 'Pendiente - Direccion',
+  aprobada: 'Aprobada',
   enviada_proveedor: 'Enviada a proveedor',
-  confirmada: 'Confirmada',
+  confirmada: 'Confirmada por proveedor',
   en_transito: 'En transito',
   recibida_parcial: 'Recibida parcial',
   recibida: 'Recibida',
@@ -45,7 +49,7 @@ export default function Ordenes() {
     setLoading(true)
     const { data } = await supabase
       .from('ordenes_compra')
-      .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio)')
+      .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
       .eq('empresa_id', perfil.empresa_id)
       .order('created_at', { ascending: false })
     setOrdenes(data || [])
@@ -77,7 +81,7 @@ export default function Ordenes() {
     <div style={styles.container}>
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Ordenes de Compra</h2>
-        {['compras', 'admin'].includes(perfil?.rol) && (
+        {['compras', 'gerente_compras', 'admin'].includes(perfil?.rol) && (
           <button style={styles.boton} onClick={() => setVista('nueva')}>
             + Nueva orden de compra
           </button>
