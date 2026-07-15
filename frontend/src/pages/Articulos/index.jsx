@@ -20,6 +20,7 @@ const formVacio = {
   categoria_id: '', tipo_moneda: 'MXN', iva_porcentaje: 16,
   retencion_iva: 0,
   origen: 'comprado', es_consigna: false,
+  lead_time_dias: '', moq: '', tiempo_transito_dias: '',
   tipo_proceso: 'solo_inyeccion', articulo_wip_origen_id: '',
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
@@ -102,6 +103,9 @@ export default function Articulos() {
       retencion_iva: articulo.retencion_iva,
       origen: articulo.origen || 'comprado',
       es_consigna: articulo.es_consigna || false,
+      lead_time_dias: articulo.lead_time_dias ?? '',
+      moq: articulo.moq ?? '',
+      tiempo_transito_dias: articulo.tiempo_transito_dias ?? '',
       tipo_proceso: articulo.tipo_proceso || 'solo_inyeccion',
       articulo_wip_origen_id: articulo.articulo_wip_origen_id?.toString() || '',
       peso_pieza_g: articulo.peso_pieza_g ?? '',
@@ -144,6 +148,9 @@ export default function Articulos() {
       retencion_iva: parseFloat(form.retencion_iva),
       origen: form.origen,
       es_consigna: !esFabricado ? form.es_consigna : false,
+      lead_time_dias: !esFabricado && form.lead_time_dias !== '' ? parseInt(form.lead_time_dias) : 0,
+      moq: !esFabricado && form.moq !== '' ? parseFloat(form.moq) : 0,
+      tiempo_transito_dias: !esFabricado && form.tiempo_transito_dias !== '' ? parseInt(form.tiempo_transito_dias) : 0,
       tipo_proceso: esFabricado ? form.tipo_proceso : null,
       articulo_wip_origen_id: esFabricado && form.articulo_wip_origen_id ? parseInt(form.articulo_wip_origen_id) : null,
       peso_pieza_g: esFabricado && form.peso_pieza_g !== '' ? parseFloat(form.peso_pieza_g) : null,
@@ -459,6 +466,31 @@ export default function Articulos() {
                 placeholder="0" min="0" max="100" />
             </div>
           </div>
+
+          {form.origen === 'comprado' && (
+            <>
+              <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
+                Datos de abastecimiento (planeacion MRP)
+              </h3>
+              <div style={styles.fila}>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Lead time (dias)</label>
+                  <input style={styles.input} type="number" min="0" value={form.lead_time_dias}
+                    onChange={e => setForm({ ...form, lead_time_dias: e.target.value })} placeholder="0" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>MOQ (minimo de compra)</label>
+                  <input style={styles.input} type="number" min="0" step="0.01" value={form.moq}
+                    onChange={e => setForm({ ...form, moq: e.target.value })} placeholder="0" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Tiempo de transito (dias)</label>
+                  <input style={styles.input} type="number" min="0" value={form.tiempo_transito_dias}
+                    onChange={e => setForm({ ...form, tiempo_transito_dias: e.target.value })} placeholder="0" />
+                </div>
+              </div>
+            </>
+          )}
 
           {form.origen === 'fabricado' && (
             <>
