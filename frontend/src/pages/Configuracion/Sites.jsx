@@ -92,7 +92,7 @@ export default function Sites() {
       {exito && <p style={styles.exito}>{exito}</p>}
 
       {mostrarForm && (
-        <div style={styles.form}>
+        <div style={styles.form} className="aparecer">
           <h3 style={styles.formTitulo}>{editando ? `Editando: ${editando.nombre}` : 'Nuevo site'}</h3>
           <div style={styles.fila}>
             <div style={styles.campo}>
@@ -179,7 +179,7 @@ export default function Sites() {
         {loading ? (
           <p style={{ padding: '20px', color: '#666' }}>Cargando...</p>
         ) : sites.map(s => (
-          <div key={s.id} style={styles.tablaFila}>
+          <div key={s.id} style={styles.tablaFila} className="fila-hover">
             <span style={{ flex: 1, fontWeight: '600', color: '#2563eb' }}>{s.codigo}</span>
             <span style={{ flex: 2, fontWeight: '500' }}>{s.nombre}</span>
             <span style={{ flex: 2, color: '#666', fontSize: '13px' }}>{s.ciudad}{s.estado ? `, ${s.estado}` : ''}</span>

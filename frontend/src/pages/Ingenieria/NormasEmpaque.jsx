@@ -103,7 +103,7 @@ export default function NormasEmpaque() {
       {exito && <p style={styles.exito}>{exito}</p>}
 
       {mostrarForm && (
-        <div style={styles.form}>
+        <div style={styles.form} className="aparecer">
           <h3 style={styles.formTitulo}>{editando ? 'Editando norma de empaque' : 'Nueva norma de empaque'}</h3>
           <div style={styles.fila}>
             <div style={{ ...styles.campo, flex: 2 }}>
@@ -160,7 +160,7 @@ export default function NormasEmpaque() {
         {loading ? <p style={{ padding: 20, color: '#666' }}>Cargando...</p> : normasFiltradas.length === 0 ? (
           <p style={{ padding: 20, color: '#666' }}>No hay normas de empaque registradas</p>
         ) : normasFiltradas.map(n => (
-          <div key={n.id} style={{ ...styles.tablaFila, opacity: n.activa ? 1 : 0.5 }}>
+          <div key={n.id} className="fila-hover" style={{ ...styles.tablaFila, opacity: n.activa ? 1 : 0.5 }}>
             <span style={{ flex: 2, fontSize: '13px' }}>
               <span style={{ fontWeight: '600', color: '#2563eb' }}>{n.articulos?.codigo_interno}</span>
               <span style={{ color: '#666' }}> — {n.articulos?.descripcion}</span>

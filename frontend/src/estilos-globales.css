@@ -1,0 +1,158 @@
+/* ============================================================
+   SYNTIA - Estilos globales
+   Tipografia, transiciones y estados hover/focus para todo el
+   sistema. CSS puro, sin librerias.
+   ============================================================ */
+
+:root {
+  --azul: #2563eb;
+  --azul-suave: #eff6ff;
+  --tinta: #1a1a2e;
+  --gris-texto: #444;
+  --gris-suave: #64748b;
+  --fondo: #f8fafc;
+  --borde: #e2e8f0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', sans-serif;
+  color: var(--tinta);
+  background-color: var(--fondo);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3 {
+  letter-spacing: -0.01em;
+}
+
+/* ---------- Botones: transicion suave en todo el sistema ---------- */
+button {
+  font-family: inherit;
+  transition: background-color 0.15s ease, color 0.15s ease,
+    border-color 0.15s ease, box-shadow 0.15s ease,
+    transform 0.1s ease, filter 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(0.94);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
+  filter: brightness(0.9);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ---------- Campos de captura: foco visible y transicion ---------- */
+input, select, textarea {
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--azul) !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  outline: none;
+}
+
+input:hover:not(:focus), select:hover:not(:focus) {
+  border-color: #b6c2d4 !important;
+}
+
+/* ---------- Navegacion lateral tipo fichero (grupos de modulos) ---------- */
+.nav-item {
+  position: relative;
+  border-radius: 0 20px 20px 0;
+  margin-right: 10px;
+  transition: background-color 0.15s ease, color 0.15s ease,
+    padding-left 0.15s ease;
+}
+
+.nav-item:hover {
+  background-color: #f1f5f9 !important;
+  color: var(--tinta) !important;
+  padding-left: 20px !important;
+}
+
+.nav-item-activo:hover {
+  background-color: var(--azul-suave) !important;
+  color: var(--azul) !important;
+  padding-left: 16px !important;
+}
+
+/* ---------- Aparicion suave de formularios y paneles ---------- */
+@keyframes aparecer {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.aparecer {
+  animation: aparecer 0.2s ease;
+}
+
+/* ---------- Filas de tabla con hover ---------- */
+.fila-hover {
+  transition: background-color 0.12s ease;
+}
+
+.fila-hover:hover {
+  background-color: #f8fafc;
+}
+
+/* ---------- Tarjetas del Dashboard ---------- */
+.tarjeta-modulo {
+  transition: box-shadow 0.18s ease, transform 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.tarjeta-modulo:hover {
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1) !important;
+  transform: translateY(-2px);
+}
+
+/* ---------- Barra de desplazamiento discreta ---------- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 6px;
+  border: 2px solid var(--fondo);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8;
+}
+
+/* ---------- Seleccion de texto ---------- */
+::selection {
+  background-color: rgba(37, 99, 235, 0.18);
+}

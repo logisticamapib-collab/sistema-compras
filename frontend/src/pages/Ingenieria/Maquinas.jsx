@@ -99,7 +99,7 @@ export default function Maquinas() {
       {exito && <p style={styles.exito}>{exito}</p>}
 
       {mostrarForm && (
-        <div style={styles.form}>
+        <div style={styles.form} className="aparecer">
           <h3 style={styles.formTitulo}>{editando ? `Editando: ${editando.clave}` : 'Nueva maquina'}</h3>
           <div style={styles.fila}>
             <div style={styles.campo}>
@@ -166,7 +166,7 @@ export default function Maquinas() {
         {loading ? <p style={{ padding: 20, color: '#666' }}>Cargando...</p> : maquinas.length === 0 ? (
           <p style={{ padding: 20, color: '#666' }}>No hay maquinas registradas</p>
         ) : maquinas.map(m => (
-          <div key={m.id} style={styles.tablaFila}>
+          <div key={m.id} style={styles.tablaFila} className="fila-hover">
             <span style={{ flex: 1, fontWeight: '600', color: '#2563eb', fontSize: '13px' }}>{m.clave}</span>
             <span style={{ flex: 2, fontSize: '14px' }}>{m.nombre}</span>
             <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>

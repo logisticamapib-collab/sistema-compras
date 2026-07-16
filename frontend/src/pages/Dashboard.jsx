@@ -111,10 +111,9 @@ export default function Dashboard() {
 function Tarjeta({ modulo, onClick, atenuada }) {
   return (
     <div
+      className="tarjeta-modulo"
       style={{ ...styles.tarjeta, opacity: atenuada ? 0.75 : 1 }}
       onClick={onClick}
-      onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-3px)'}
-      onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
     >
       <div style={{ ...styles.tarjetaBarra, backgroundColor: modulo.color }}></div>
       <div style={styles.tarjetaContenido}>

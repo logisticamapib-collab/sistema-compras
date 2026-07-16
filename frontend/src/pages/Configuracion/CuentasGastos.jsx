@@ -76,7 +76,7 @@ export default function CuentasGastos() {
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
       {mostrarForm && (
-        <div style={styles.form}>
+        <div style={styles.form} className="aparecer">
           <h3 style={styles.formTitulo}>{editando ? `Editando: ${editando.codigo}` : 'Nueva cuenta de gastos'}</h3>
           <div style={styles.fila}>
             <div style={styles.campo}>
@@ -116,7 +116,7 @@ export default function CuentasGastos() {
         </div>
         {loading ? <p style={{ padding: '20px', color: '#666' }}>Cargando...</p>
           : registros.map(r => (
-            <div key={r.id} style={styles.tablaFila}>
+            <div key={r.id} style={styles.tablaFila} className="fila-hover">
               <span style={{ flex: 1, fontWeight: '600', color: '#2563eb' }}>{r.codigo}</span>
               <span style={{ flex: 2 }}>{r.nombre}</span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{r.sites?.nombre}</span>

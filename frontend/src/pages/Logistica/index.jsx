@@ -22,6 +22,7 @@ export default function GrupoLogistica() {
         {seccionesVisibles.map(s => (
           <button
             key={s.id}
+            className={seccion === s.id ? 'nav-item nav-item-activo' : 'nav-item'}
             style={seccion === s.id ? styles.itemActivo : styles.item}
             onClick={() => setSeccion(s.id)}>
             {s.titulo}

@@ -82,7 +82,7 @@ export default function Categorias() {
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
       {mostrarForm && (
-        <div style={styles.form}>
+        <div style={styles.form} className="aparecer">
           <h3 style={styles.formTitulo}>{editando ? `Editando: ${editando.nombre}` : 'Nueva categoria'}</h3>
           <div style={styles.fila}>
             <div style={styles.campo}>
@@ -114,7 +114,7 @@ export default function Categorias() {
         {loading ? <p style={{ padding: '20px', color: '#666' }}>Cargando...</p>
           : registros.length === 0 ? <p style={{ padding: '20px', color: '#666' }}>No hay categorias registradas</p>
           : registros.map(r => (
-            <div key={r.id} style={styles.tablaFila}>
+            <div key={r.id} style={styles.tablaFila} className="fila-hover">
               <span style={{ flex: 2, fontWeight: '500' }}>{r.nombre}</span>
               <span style={{ flex: 1 }}>
                 <span style={styles.badge}>

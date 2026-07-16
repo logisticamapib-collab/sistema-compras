@@ -133,7 +133,7 @@ export default function Moldes() {
             <span style={{ flex: 3 }}>Articulo que produce</span>
           </div>
           {moldeCavidades.cavidades.map(c => (
-            <div key={c.id} style={styles.tablaFila}>
+            <div key={c.id} style={styles.tablaFila} className="fila-hover">
               <span style={{ flex: 1, fontWeight: '600' }}>#{c.numero_cavidad}</span>
               <span style={{ flex: 3 }}>
                 <select style={styles.input} value={c.articulo_id || ''} onChange={e => actualizarCavidad(c.numero_cavidad, e.target.value)}>
@@ -166,7 +166,7 @@ export default function Moldes() {
       {exito && <p style={styles.exito}>{exito}</p>}
 
       {mostrarForm && (
-        <div style={styles.form}>
+        <div style={styles.form} className="aparecer">
           <h3 style={styles.formTitulo}>{editando ? `Editando: ${editando.clave}` : 'Nuevo molde'}</h3>
           <div style={styles.fila}>
             <div style={styles.campo}>
@@ -217,7 +217,7 @@ export default function Moldes() {
           const cercaDeAlerta = m.shots_alerta_max && m.shots_acumulados >= m.shots_alerta_max
           const enRangoAlerta = m.shots_alerta_min && m.shots_acumulados >= m.shots_alerta_min && !cercaDeAlerta
           return (
-            <div key={m.id} style={styles.tablaFila}>
+            <div key={m.id} style={styles.tablaFila} className="fila-hover">
               <span style={{ flex: 1, fontWeight: '600', color: '#2563eb', fontSize: '13px' }}>{m.clave}</span>
               <span style={{ flex: 2, fontSize: '14px' }}>{m.nombre}</span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{m.num_cavidades}</span>

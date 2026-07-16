@@ -256,7 +256,7 @@ export default function BOM() {
                   {arbolP.map((n, i) => {
                     const tipo = etiquetaTipo(n)
                     return (
-                      <div key={`${n.id}-${i}`} style={styles.tablaFila}>
+                      <div key={`${n.id}-${i}`} style={styles.tablaFila} className="fila-hover">
                         <span style={{ flex: 4, fontSize: '13px', paddingLeft: `${n.nivel * 26}px` }}>
                           {n.nivel > 0 && <span style={{ color: '#94a3b8' }}>└ </span>}
                           {nombreArticulo(n.componente_articulo_id)}
@@ -277,7 +277,7 @@ export default function BOM() {
         )
       ) : (
       <>
-      <div style={styles.selectorBox} className="no-imprimir">
+      <div style={styles.selectorBox} className="no-imprimir aparecer">
         <label style={styles.label}>Articulo fabricado (padre)</label>
         <select style={{ ...styles.input, maxWidth: '480px' }} value={padreId}
           onChange={e => { setPadreId(e.target.value); setMostrarForm(false); setError('') }}>
@@ -292,7 +292,7 @@ export default function BOM() {
       </div>
 
       {mostrarForm && padreId && (
-        <div style={styles.form}>
+        <div style={styles.form} className="aparecer">
           <h3 style={styles.formTitulo}>{editando ? 'Editando componente' : `Nuevo componente para ${padre?.codigo_interno}`}</h3>
           <div style={styles.fila}>
             <div style={{ ...styles.campo, flex: 3 }}>
@@ -367,7 +367,7 @@ export default function BOM() {
               const tipo = etiquetaTipo(l)
               const norma = normas.find(n => n.id === l.norma_empaque_id)
               return (
-                <div key={l.id} style={styles.tablaFila}>
+                <div key={l.id} style={styles.tablaFila} className="fila-hover">
                   <span style={{ flex: 3, fontSize: '13px' }}>{nombreArticulo(l.componente_articulo_id)}</span>
                   <span style={{ flex: 1 }}>
                     <span style={{ ...styles.badge, backgroundColor: tipo.fondo, color: tipo.color }}>{tipo.texto}</span>
@@ -394,7 +394,7 @@ export default function BOM() {
                   <span style={{ flex: 1 }}>Unidad</span>
                 </div>
                 {arbol.map((n, i) => (
-                  <div key={`${n.id}-${i}`} style={styles.tablaFila}>
+                  <div key={`${n.id}-${i}`} style={styles.tablaFila} className="fila-hover">
                     <span style={{ flex: 4, fontSize: '13px', paddingLeft: `${n.nivel * 26}px` }}>
                       {n.nivel > 0 && <span style={{ color: '#94a3b8' }}>└ </span>}
                       {nombreArticulo(n.componente_articulo_id)}
