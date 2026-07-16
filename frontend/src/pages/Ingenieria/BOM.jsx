@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
@@ -10,6 +11,7 @@ export default function BOM() {
   const [normas, setNormas] = useState([])
   const [bomCompleto, setBomCompleto] = useState([]) // todas las lineas de BOM (para explosion multinivel)
   const [padreId, setPadreId] = useState('')
+  const [vista, setVista] = useState('individual') // 'individual' | 'todos'
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [editando, setEditando] = useState(null)
@@ -25,7 +27,7 @@ export default function BOM() {
   const cargarDatos = async () => {
     setLoading(true)
     const [{ data: a }, { data: n }, { data: b }] = await Promise.all([
-      supabase.from('articulos').select('id, codigo_interno, descripcion, origen, unidad_medida, categorias(tipo)')
+      supabase.from('articulos').select('id, codigo_interno, descripcion, origen, es_consigna, unidad_medida, categorias(tipo)')
         .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
       supabase.from('normas_empaque').select('id, articulo_id, nombre, piezas_por_empaque, piezas_por_tarima').eq('activa', true),
       supabase.from('bom').select('*'),
@@ -161,21 +163,121 @@ export default function BOM() {
     return { texto: 'Materia prima', color: '#16a34a', fondo: '#f0fdf4' }
   }
 
+  // --- Vista general: todos los BOMs ---
+  const padresConBom = fabricados.filter(f => bomCompleto.some(l => l.articulo_padre_id === f.id))
+
+  const filasExportacion = () => {
+    const filas = []
+    for (const p of padresConBom) {
+      const arbolP = explotar(p.id)
+      for (const n of arbolP) {
+        const comp = infoArticulo(n.componente_articulo_id)
+        const tipo = etiquetaTipo(n)
+        filas.push({
+          Articulo_Padre: p.codigo_interno,
+          Descripcion_Padre: p.descripcion,
+          Nivel: n.nivel + 1,
+          Componente: comp?.codigo_interno || `#${n.componente_articulo_id}`,
+          Descripcion_Componente: comp?.descripcion || '',
+          Tipo: tipo.texto,
+          Cantidad_por_unidad: parseFloat(n.cantidad_por_unidad),
+          Cantidad_acumulada: Number(n.cantidadTotal.toFixed(6)),
+          Unidad: n.unidad_medida || '',
+        })
+      }
+    }
+    return filas
+  }
+
+  const exportarExcel = () => {
+    const filas = filasExportacion()
+    if (filas.length === 0) return
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'BOMs')
+    XLSX.writeFile(wb, `BOMs_${new Date().toISOString().split('T')[0]}.xlsx`)
+  }
+
+  const exportarPDF = () => {
+    window.print()
+  }
+
   return (
     <div style={styles.container}>
+      <style>{`@media print { .no-imprimir { display: none !important; } }`}</style>
+
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>BOM — Lista de Materiales</h2>
-        {puedeCrear && padreId && (
-          <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
-            {mostrarForm ? 'Cancelar' : '+ Agregar componente'}
+        <div style={{ display: 'flex', gap: '10px' }} className="no-imprimir">
+          <button style={vista === 'todos' ? styles.botonSecundarioActivo : styles.botonSecundario}
+            onClick={() => { setVista(vista === 'todos' ? 'individual' : 'todos'); setMostrarForm(false); setError('') }}>
+            {vista === 'todos' ? 'Vista individual' : 'Ver todos los BOMs'}
           </button>
-        )}
+          {vista === 'todos' && padresConBom.length > 0 && (
+            <>
+              <button style={styles.botonExportar} onClick={exportarExcel}>Exportar Excel</button>
+              <button style={styles.botonExportarPDF} onClick={exportarPDF}>Exportar PDF</button>
+            </>
+          )}
+          {vista === 'individual' && puedeCrear && padreId && (
+            <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
+              {mostrarForm ? 'Cancelar' : '+ Agregar componente'}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
 
-      <div style={styles.selectorBox}>
+      {vista === 'todos' ? (
+        loading ? <p style={{ color: '#666' }}>Cargando...</p> : padresConBom.length === 0 ? (
+          <p style={{ color: '#666', fontSize: '14px' }}>Aun no hay articulos con BOM capturado.</p>
+        ) : (
+          <>
+            <p style={styles.subtituloVista} className="no-imprimir">
+              {padresConBom.length} articulo{padresConBom.length !== 1 ? 's' : ''} con BOM capturado. Las cantidades acumuladas son por 1 unidad del articulo padre.
+            </p>
+            {padresConBom.map(p => {
+              const arbolP = explotar(p.id)
+              return (
+                <div key={p.id} style={styles.bloquePadre}>
+                  <div style={styles.bloquePadreHeader}>
+                    <span style={{ fontWeight: '700', color: '#2563eb' }}>{p.codigo_interno}</span>
+                    <span style={{ color: '#1a1a2e' }}> — {p.descripcion}</span>
+                    <span style={{ color: '#94a3b8', fontSize: '12px', marginLeft: '8px' }}>({arbolP.length} componente{arbolP.length !== 1 ? 's' : ''}, unidad: {p.unidad_medida})</span>
+                  </div>
+                  <div style={styles.tablaHeader}>
+                    <span style={{ flex: 4 }}>Componente</span>
+                    <span style={{ flex: 1 }}>Tipo</span>
+                    <span style={{ flex: 1 }}>Cant/unidad</span>
+                    <span style={{ flex: 1 }}>Cant. acumulada</span>
+                    <span style={{ flex: 1 }}>Unidad</span>
+                  </div>
+                  {arbolP.map((n, i) => {
+                    const tipo = etiquetaTipo(n)
+                    return (
+                      <div key={`${n.id}-${i}`} style={styles.tablaFila}>
+                        <span style={{ flex: 4, fontSize: '13px', paddingLeft: `${n.nivel * 26}px` }}>
+                          {n.nivel > 0 && <span style={{ color: '#94a3b8' }}>└ </span>}
+                          {nombreArticulo(n.componente_articulo_id)}
+                        </span>
+                        <span style={{ flex: 1 }}>
+                          <span style={{ ...styles.badge, backgroundColor: tipo.fondo, color: tipo.color }}>{tipo.texto}</span>
+                        </span>
+                        <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{n.cantidad_por_unidad}</span>
+                        <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{Number(n.cantidadTotal.toFixed(6))}</span>
+                        <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{n.unidad_medida || '-'}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </>
+        )
+      ) : (
+      <>
+      <div style={styles.selectorBox} className="no-imprimir">
         <label style={styles.label}>Articulo fabricado (padre)</label>
         <select style={{ ...styles.input, maxWidth: '480px' }} value={padreId}
           onChange={e => { setPadreId(e.target.value); setMostrarForm(false); setError('') }}>
@@ -245,7 +347,7 @@ export default function BOM() {
       )}
 
       {!padreId ? (
-        <p style={{ color: '#666', fontSize: '14px' }}>Selecciona un articulo fabricado para ver o capturar su lista de materiales.</p>
+        <p style={{ color: '#666', fontSize: '14px' }}>Selecciona un articulo fabricado para ver o capturar su lista de materiales, o usa "Ver todos los BOMs" para una revision rapida.</p>
       ) : loading ? (
         <p style={{ color: '#666' }}>Cargando...</p>
       ) : (
@@ -273,7 +375,7 @@ export default function BOM() {
                   <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{l.cantidad_por_unidad}</span>
                   <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{l.unidad_medida || '-'}</span>
                   <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{norma ? (norma.nombre || `#${norma.id}`) : '-'}</span>
-                  <span style={{ flex: 1 }}>
+                  <span style={{ flex: 1 }} className="no-imprimir">
                     {puedeEditar && <button style={styles.botonAccion} onClick={() => abrirEditar(l)}>Editar</button>}
                     {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px', color: '#dc2626' }} onClick={() => eliminarLinea(l)}>Quitar</button>}
                   </span>
@@ -306,6 +408,8 @@ export default function BOM() {
           )}
         </>
       )}
+      </>
+      )}
     </div>
   )
 }
@@ -315,6 +419,7 @@ const styles = {
   encabezado: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
   titulo: { fontSize: '18px', fontWeight: '600', color: '#1a1a2e', margin: '0' },
   subtitulo: { fontSize: '14px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 10px 0' },
+  subtituloVista: { fontSize: '13px', color: '#666', margin: '0 0 16px 0' },
   selectorBox: { backgroundColor: '#fff', borderRadius: '10px', padding: '18px 24px', marginBottom: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   infoPadre: { fontSize: '12px', color: '#94a3b8', margin: '8px 0 0 0' },
   avisoNorma: { fontSize: '11px', color: '#b45309', margin: '4px 0 0 0' },
@@ -326,7 +431,13 @@ const styles = {
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none' },
   botones: { display: 'flex', justifyContent: 'flex-end' },
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
+  botonSecundario: { padding: '9px 20px', backgroundColor: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
+  botonSecundarioActivo: { padding: '9px 20px', backgroundColor: '#eff6ff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
+  botonExportar: { padding: '9px 20px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
+  botonExportarPDF: { padding: '9px 20px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
+  bloquePadre: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '18px' },
+  bloquePadreHeader: { padding: '14px 20px', borderBottom: '2px solid #e2e8f0', fontSize: '14px', backgroundColor: '#f8fafc' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '12px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' },
