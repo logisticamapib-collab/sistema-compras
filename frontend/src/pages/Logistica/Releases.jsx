@@ -4,7 +4,12 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
 // Capa 2 - Customer Service: releases de clientes (firme/forecast) cargados via Excel.
-// - Reemplazo POR ARTICULO: solo los articulos incluidos en el archivo nuevo sustituyen su release.
+// - Reemplazo POR ARTICULO + FECHA: solo las lineas incluidas en el archivo sustituyen
+//   a la linea vigente de esa misma fecha; las fechas no incluidas siguen vigentes
+//   (aunque esten atrasadas o incompletas).
+// - Al reemplazar una fecha, las entregas ya registradas se HEREDAN a la linea nueva:
+//   CS captura la cantidad original del pedido y el sistema descuenta lo entregado.
+// - Solo se acepta UNA linea por codigo y fecha (candado tambien en BD).
 // - Entregas por linea (manuales por ahora; en Capas 3/4 las alimentara Almacen/Embarques).
 // - Estatus por linea: cubierta / parcial / pendiente / vencida (fecha pasada sin cubrir).
 
@@ -169,7 +174,7 @@ export default function Releases() {
       }
 
       const partesCliente = articulosCliente.filter(a => a.cliente_id === Number(clienteId))
-      const lineas = []
+      let lineas = []
       const errs = []
       for (let i = idxHeader + 1; i < filas.length; i++) {
         const fila = filas[i]
@@ -186,6 +191,20 @@ export default function Releases() {
         if (!tipo) { errs.push(`Fila ${numFila}: tipo invalido "${fila[colTipo]}" (usa firme o forecast)`); continue }
         lineas.push({ articulo_id: rel.articulo_id, codigo_cliente: rel.codigo_cliente, fecha_requerida: fecha, cantidad, tipo })
       }
+
+      // Candado: solo UNA linea por codigo y fecha
+      const conteo = {}
+      lineas.forEach(l => { const k = `${l.articulo_id}|${l.fecha_requerida}`; conteo[k] = (conteo[k] || 0) + 1 })
+      const duplicados = Object.keys(conteo).filter(k => conteo[k] > 1)
+      if (duplicados.length > 0) {
+        duplicados.forEach(k => {
+          const [aid, f] = k.split('|')
+          const l = lineas.find(x => `${x.articulo_id}|${x.fecha_requerida}` === k)
+          errs.push(`El codigo "${l?.codigo_cliente}" aparece ${conteo[k]} veces con la fecha ${fmtFecha(f)}; deja una sola fila por codigo y fecha (se excluyeron todas)`)
+        })
+        lineas = lineas.filter(l => !duplicados.includes(`${l.articulo_id}|${l.fecha_requerida}`))
+      }
+
       setErroresArchivo(errs)
       if (lineas.length === 0) { setError('No se pudo leer ninguna linea valida del archivo'); return }
       setLineasNuevas(lineas)
@@ -196,23 +215,27 @@ export default function Releases() {
   }
 
   // ---------- Comparativo incrementos / decrementos ----------
+  // Compara SOLO las fechas incluidas en el archivo; las demas fechas del articulo
+  // permanecen vigentes sin cambios.
   const construirDiff = () => {
     const articuloIds = [...new Set(lineasNuevas.map(l => l.articulo_id))]
     return articuloIds.map(id => {
       const nuevas = lineasNuevas.filter(l => l.articulo_id === id)
-      const anteriores = vigentes.filter(v => v.cliente_id === Number(clienteId) && v.articulo_id === id)
+      const fechasArchivo = nuevas.map(l => l.fecha_requerida)
+      const vigentesArt = vigentes.filter(v => v.cliente_id === Number(clienteId) && v.articulo_id === id)
+      const anteriores = vigentesArt.filter(v => fechasArchivo.includes(v.fecha_requerida))
+      const intactas = vigentesArt.length - anteriores.length
       const totalNuevo = nuevas.reduce((s, l) => s + Number(l.cantidad), 0)
       const totalAnterior = anteriores.reduce((s, l) => s + Number(l.cantidad), 0)
-      const fechas = [...new Set([...nuevas.map(l => l.fecha_requerida), ...anteriores.map(l => l.fecha_requerida)])].sort()
-      const detalle = fechas.map(f => {
+      const detalle = fechasArchivo.sort().map(f => {
         const cn = nuevas.filter(l => l.fecha_requerida === f).reduce((s, l) => s + Number(l.cantidad), 0)
-        const ca = anteriores.filter(l => l.fecha_requerida === f).reduce((s, l) => s + Number(l.cantidad), 0)
+        const ant = anteriores.find(a => a.fecha_requerida === f)
+        const ca = ant ? Number(ant.cantidad) : 0
+        const entregado = ant ? entregadoDe(ant.id) : 0
         const tipos = [...new Set(nuevas.filter(l => l.fecha_requerida === f).map(l => l.tipo))].join(', ')
-        return { fecha: f, anterior: ca, nueva: cn, delta: cn - ca, tipos }
+        return { fecha: f, anterior: ca, nueva: cn, delta: cn - ca, entregado, tipos }
       })
-      // Aviso si hay lineas anteriores sin cubrir que desapareceran
-      const sinCubrir = anteriores.filter(a => estatusDe(a) !== 'cubierta' && !nuevas.some(n => n.fecha_requerida === a.fecha_requerida))
-      return { articulo_id: id, articulo: articuloDe(id), esNuevo: anteriores.length === 0, totalNuevo, totalAnterior, delta: totalNuevo - totalAnterior, detalle, sinCubrir: sinCubrir.length }
+      return { articulo_id: id, articulo: articuloDe(id), esNuevo: vigentesArt.length === 0, totalNuevo, totalAnterior, delta: totalNuevo - totalAnterior, detalle, intactas }
     }).sort((a, b) => (a.articulo?.codigo_interno || '').localeCompare(b.articulo?.codigo_interno || ''))
   }
 
@@ -234,19 +257,43 @@ export default function Releases() {
       }).select().single()
       if (e1) throw e1
 
-      // Solo los articulos incluidos en el archivo pierden su release anterior
-      const { error: e2 } = await supabase.from('release_lineas')
-        .update({ vigente: false })
+      // Lineas vigentes actuales de los articulos del archivo (frescas de BD)
+      const { data: actuales, error: e2 } = await supabase.from('release_lineas')
+        .select('id, articulo_id, fecha_requerida')
         .eq('cliente_id', Number(clienteId)).eq('vigente', true).in('articulo_id', articuloIds)
       if (e2) throw e2
 
-      const filas = lineasNuevas.map(l => ({ ...l, carga_id: carga.id, cliente_id: Number(clienteId), vigente: true }))
-      for (let i = 0; i < filas.length; i += 500) {
-        const { error: e3 } = await supabase.from('release_lineas').insert(filas.slice(i, i + 500))
+      // Solo se reemplazan las lineas cuyo articulo+fecha viene en el archivo
+      const reemplazadas = (actuales || []).filter(a =>
+        lineasNuevas.some(n => n.articulo_id === a.articulo_id && n.fecha_requerida === a.fecha_requerida))
+      if (reemplazadas.length > 0) {
+        const { error: e3 } = await supabase.from('release_lineas')
+          .update({ vigente: false }).in('id', reemplazadas.map(r => r.id))
         if (e3) throw e3
       }
 
-      setExito(`Release cargado: ${lineasNuevas.length} lineas de ${articuloIds.length} articulo(s)`)
+      // Insertar lineas nuevas (recuperando ids para heredar entregas)
+      const filas = lineasNuevas.map(l => ({ ...l, carga_id: carga.id, cliente_id: Number(clienteId), vigente: true }))
+      const insertadas = []
+      for (let i = 0; i < filas.length; i += 500) {
+        const { data, error: e4 } = await supabase.from('release_lineas')
+          .insert(filas.slice(i, i + 500)).select('id, articulo_id, fecha_requerida')
+        if (e4) throw e4
+        insertadas.push(...(data || []))
+      }
+
+      // Heredar entregas de la linea reemplazada a la nueva (mismo articulo+fecha),
+      // para que el pendiente se calcule contra la cantidad original sin perder historial
+      for (const old of reemplazadas) {
+        const nueva = insertadas.find(n => n.articulo_id === old.articulo_id && n.fecha_requerida === old.fecha_requerida)
+        if (nueva) {
+          const { error: e5 } = await supabase.from('release_entregas')
+            .update({ linea_id: nueva.id }).eq('linea_id', old.id)
+          if (e5) throw e5
+        }
+      }
+
+      setExito(`Release cargado: ${lineasNuevas.length} lineas (${reemplazadas.length} reemplazadas con entregas heredadas, ${lineasNuevas.length - reemplazadas.length} nuevas)`)
       setLineasNuevas([]); setErroresArchivo([]); setArchivoNombre(''); setNotas(''); setDetalleDiff(null)
       await cargarDatos()
       setVista('vigente')
@@ -356,7 +403,9 @@ export default function Releases() {
           <h3 style={styles.formTitulo}>Cargar release desde Excel</h3>
           <p style={styles.ayuda}>
             El Excel debe tener columnas: <b>Numero de Parte</b> (del cliente), <b>Fecha Requerida</b>, <b>Cantidad</b> y <b>Tipo</b> (firme/forecast; si falta, se asume firme).
-            Solo los articulos incluidos en el archivo reemplazan su release anterior; si el cliente omitio un codigo que debe quedar en ceros, incluyelo con cantidad 0.
+            <br />Solo se reemplazan las lineas de <b>articulo + fecha</b> incluidas en el archivo (con la <b>cantidad original</b> del pedido: lo ya entregado se hereda y se descuenta).
+            Las fechas no incluidas siguen vigentes aunque esten atrasadas. Para cancelar una fecha, incluyela con cantidad 0.
+            Solo se acepta una fila por codigo y fecha.
             {' '}<button style={styles.link} onClick={descargarPlantilla}>Descargar plantilla</button>
           </p>
           <div style={styles.fila}>
@@ -379,7 +428,7 @@ export default function Releases() {
 
           {erroresArchivo.length > 0 && (
             <div style={styles.cajaErrores}>
-              <p style={{ margin: '0 0 6px 0', fontWeight: '600', fontSize: '13px' }}>{erroresArchivo.length} fila(s) con problemas (no se cargaran):</p>
+              <p style={{ margin: '0 0 6px 0', fontWeight: '600', fontSize: '13px' }}>{erroresArchivo.length} problema(s) encontrados (esas filas no se cargaran):</p>
               {erroresArchivo.slice(0, 15).map((e, i) => <p key={i} style={{ margin: '2px 0', fontSize: '12px' }}>{e}</p>)}
               {erroresArchivo.length > 15 && <p style={{ margin: '2px 0', fontSize: '12px' }}>... y {erroresArchivo.length - 15} mas</p>}
             </div>
@@ -388,15 +437,7 @@ export default function Releases() {
           {/* Comparativo antes de confirmar */}
           {diff.length > 0 && (
             <>
-              <h3 style={{ ...styles.formTitulo, marginTop: '20px' }}>Analisis de cambios vs release vigente</h3>
-              {diff.some(d => d.sinCubrir > 0) && (
-                <div style={styles.cajaErrores}>
-                  <p style={{ margin: 0, fontSize: '13px' }}>
-                    Atencion: hay fechas del release anterior <b>sin cubrir</b> que no aparecen en el archivo nuevo y seran reemplazadas.
-                    Revisa el detalle de los articulos marcados antes de confirmar.
-                  </p>
-                </div>
-              )}
+              <h3 style={{ ...styles.formTitulo, marginTop: '20px' }}>Analisis de cambios (solo fechas incluidas en el archivo)</h3>
               <div style={styles.tabla}>
                 <div style={styles.tablaHeader}>
                   <span style={{ flex: 2.5 }}>Articulo</span>
@@ -412,7 +453,7 @@ export default function Releases() {
                       <span style={{ flex: 2.5 }}>
                         <b>{d.articulo?.codigo_interno}</b>
                         <span style={{ color: '#64748b', fontSize: '13px' }}> - {d.articulo?.descripcion}</span>
-                        {d.sinCubrir > 0 && <span style={{ ...styles.badge, ...styles.badgeRojo, marginLeft: '8px' }}>{d.sinCubrir} fecha(s) sin cubrir se reemplazan</span>}
+                        {d.intactas > 0 && <span style={{ ...styles.badge, ...styles.badgeGris, marginLeft: '8px' }}>{d.intactas} fecha(s) previas se conservan</span>}
                       </span>
                       <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(d.totalAnterior)}</span>
                       <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(d.totalNuevo)}</span>
@@ -437,7 +478,8 @@ export default function Releases() {
                           <span style={{ flex: 1, textAlign: 'right' }}>Anterior</span>
                           <span style={{ flex: 1, textAlign: 'right' }}>Nueva</span>
                           <span style={{ flex: 1, textAlign: 'right' }}>Delta</span>
-                          <span style={{ flex: 1, textAlign: 'center' }}>Tipo</span>
+                          <span style={{ flex: 1, textAlign: 'right' }}>Entregado (se hereda)</span>
+                          <span style={{ flex: 0.8, textAlign: 'center' }}>Tipo</span>
                         </div>
                         {d.detalle.map(l => (
                           <div key={l.fecha} style={{ ...styles.tablaFila, padding: '8px 20px', fontSize: '13px' }}>
@@ -447,7 +489,8 @@ export default function Releases() {
                             <span style={{ flex: 1, textAlign: 'right', color: l.delta > 0 ? '#16a34a' : l.delta < 0 ? '#dc2626' : '#64748b' }}>
                               {l.delta > 0 ? '+' : ''}{fmtNum(l.delta)}
                             </span>
-                            <span style={{ flex: 1, textAlign: 'center', color: '#64748b' }}>{l.tipos || '(se elimina)'}</span>
+                            <span style={{ flex: 1, textAlign: 'right', color: '#16a34a' }}>{fmtNum(l.entregado)}</span>
+                            <span style={{ flex: 0.8, textAlign: 'center', color: '#64748b' }}>{l.tipos}</span>
                           </div>
                         ))}
                       </div>
@@ -458,7 +501,7 @@ export default function Releases() {
               <div style={{ ...styles.botones, marginTop: '16px' }}>
                 <button style={styles.botonSec} onClick={() => { setLineasNuevas([]); setErroresArchivo([]); setArchivoNombre('') }} disabled={guardando}>Cancelar</button>
                 <button style={styles.boton} onClick={confirmarCarga} disabled={guardando}>
-                  {guardando ? 'Guardando...' : `Confirmar y reemplazar (${lineasNuevas.length} lineas)`}
+                  {guardando ? 'Guardando...' : `Confirmar (${lineasNuevas.length} lineas)`}
                 </button>
               </div>
             </>
