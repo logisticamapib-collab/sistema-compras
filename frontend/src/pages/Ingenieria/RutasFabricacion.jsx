@@ -23,6 +23,7 @@ export default function RutasFabricacion() {
   const [pasos, setPasos] = useState([])
   const [alternasPorPaso, setAlternasPorPaso] = useState({})
   const [mostrarForm, setMostrarForm] = useState(false)
+  const [editandoPaso, setEditandoPaso] = useState(null)
   const [nuevoPaso, setNuevoPaso] = useState(pasoVacio)
   const [nuevasAlternas, setNuevasAlternas] = useState([])
   const [loading, setLoading] = useState(false)
@@ -84,6 +85,32 @@ export default function RutasFabricacion() {
     setNuevasAlternas(nuevasAlternas.filter((_, idx) => idx !== i))
   }
 
+  const abrirNuevoPaso = () => {
+    setEditandoPaso(null)
+    setNuevoPaso(pasoVacio)
+    setNuevasAlternas([])
+    setMostrarForm(true)
+    setError('')
+  }
+
+  const abrirEditarPaso = (p) => {
+    setEditandoPaso(p)
+    setNuevoPaso({
+      site_id: p.site_id?.toString() || '',
+      tipo_operacion: p.tipo_operacion,
+      maquina_principal_id: p.maquina_principal_id?.toString() || '',
+      molde_id: p.molde_id?.toString() || '',
+      personal_requerido: p.personal_requerido || 1,
+      tiempo_estandar_seg: p.tiempo_estandar_seg?.toString() || '',
+    })
+    setNuevasAlternas((alternasPorPaso[p.id] || []).map(a => ({
+      maquina_id: a.maquina_id?.toString() || '',
+      aprobada_por_cliente: a.aprobada_por_cliente || false,
+    })))
+    setMostrarForm(true)
+    setError('')
+  }
+
   const guardarPaso = async () => {
     if (!nuevoPaso.tipo_operacion || !nuevoPaso.maquina_principal_id) {
       setError('Tipo de operacion y maquina principal son obligatorios')
@@ -92,37 +119,47 @@ export default function RutasFabricacion() {
     setError('')
     setLoading(true)
 
-    const siguienteSecuencia = pasos.length > 0 ? Math.max(...pasos.map(p => p.secuencia)) + 1 : 1
+    const payload = {
+      site_id: nuevoPaso.site_id ? parseInt(nuevoPaso.site_id) : null,
+      tipo_operacion: nuevoPaso.tipo_operacion,
+      maquina_principal_id: parseInt(nuevoPaso.maquina_principal_id),
+      molde_id: nuevoPaso.molde_id ? parseInt(nuevoPaso.molde_id) : null,
+      personal_requerido: parseInt(nuevoPaso.personal_requerido) || 1,
+      tiempo_estandar_seg: nuevoPaso.tiempo_estandar_seg ? parseFloat(nuevoPaso.tiempo_estandar_seg) : null,
+    }
 
-    const { data: ruta, error: errorRuta } = await supabase.from('rutas_fabricacion')
-      .insert({
-        articulo_id: parseInt(articuloId),
-        site_id: nuevoPaso.site_id ? parseInt(nuevoPaso.site_id) : null,
-        secuencia: siguienteSecuencia,
-        tipo_operacion: nuevoPaso.tipo_operacion,
-        maquina_principal_id: parseInt(nuevoPaso.maquina_principal_id),
-        molde_id: nuevoPaso.molde_id ? parseInt(nuevoPaso.molde_id) : null,
-        personal_requerido: parseInt(nuevoPaso.personal_requerido) || 1,
-        tiempo_estandar_seg: nuevoPaso.tiempo_estandar_seg ? parseFloat(nuevoPaso.tiempo_estandar_seg) : null,
-      })
-      .select()
-      .single()
-
-    if (errorRuta) { setError(errorRuta.message); setLoading(false); return }
+    let rutaId
+    if (editandoPaso) {
+      const { error: errorRuta } = await supabase.from('rutas_fabricacion')
+        .update(payload).eq('id', editandoPaso.id)
+      if (errorRuta) { setError(errorRuta.message); setLoading(false); return }
+      rutaId = editandoPaso.id
+      // Reemplazar las maquinas alternas con la lista del formulario
+      await supabase.from('ruta_maquinas_alternas').delete().eq('ruta_id', rutaId)
+    } else {
+      const siguienteSecuencia = pasos.length > 0 ? Math.max(...pasos.map(p => p.secuencia)) + 1 : 1
+      const { data: ruta, error: errorRuta } = await supabase.from('rutas_fabricacion')
+        .insert({ articulo_id: parseInt(articuloId), secuencia: siguienteSecuencia, ...payload })
+        .select()
+        .single()
+      if (errorRuta) { setError(errorRuta.message); setLoading(false); return }
+      rutaId = ruta.id
+    }
 
     const alternasValidas = nuevasAlternas.filter(a => a.maquina_id)
     if (alternasValidas.length > 0) {
       await supabase.from('ruta_maquinas_alternas').insert(
         alternasValidas.map(a => ({
-          ruta_id: ruta.id,
+          ruta_id: rutaId,
           maquina_id: parseInt(a.maquina_id),
           aprobada_por_cliente: a.aprobada_por_cliente,
         }))
       )
     }
 
-    setExito(`Paso ${siguienteSecuencia} agregado correctamente`)
+    setExito(editandoPaso ? `Paso ${editandoPaso.secuencia} actualizado` : 'Paso agregado correctamente')
     setMostrarForm(false)
+    setEditandoPaso(null)
     setNuevoPaso(pasoVacio)
     setNuevasAlternas([])
     await cargarRuta()
@@ -132,6 +169,7 @@ export default function RutasFabricacion() {
 
   const eliminarPaso = async (paso) => {
     if (!confirm(`Eliminar el paso ${paso.secuencia} de la ruta?`)) return
+    await supabase.from('ruta_maquinas_alternas').delete().eq('ruta_id', paso.id)
     await supabase.from('rutas_fabricacion').delete().eq('id', paso.id)
     await cargarRuta()
   }
@@ -152,7 +190,7 @@ export default function RutasFabricacion() {
 
       <div style={styles.selectorArticulo}>
         <label style={styles.label}>Articulo</label>
-        <select style={styles.input} value={articuloId} onChange={e => setArticuloId(e.target.value)}>
+        <select style={styles.input} value={articuloId} onChange={e => { setArticuloId(e.target.value); setMostrarForm(false); setEditandoPaso(null) }}>
           <option value="">Selecciona un articulo fabricado</option>
           {articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>)}
         </select>
@@ -195,19 +233,26 @@ export default function RutasFabricacion() {
                   )}
                 </div>
                 {puedeEditar && (
-                  <button style={styles.botonEliminar} onClick={() => eliminarPaso(p)}>Eliminar</button>
+                  <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                    <button style={styles.botonEditar} onClick={() => abrirEditarPaso(p)}>Editar</button>
+                    <button style={styles.botonEliminar} onClick={() => eliminarPaso(p)}>Eliminar</button>
+                  </div>
                 )}
               </div>
             ))}
           </div>
 
-          {puedeCrear && (
+          {(puedeCrear || (puedeEditar && editandoPaso)) && (
             <div style={styles.seccionAgregar}>
               {!mostrarForm ? (
-                <button style={styles.boton} onClick={() => setMostrarForm(true)}>+ Agregar paso a la ruta</button>
+                puedeCrear && <button style={styles.boton} onClick={abrirNuevoPaso}>+ Agregar paso a la ruta</button>
               ) : (
-                <div style={styles.form}>
-                  <h3 style={styles.formTitulo}>Nuevo paso (secuencia {pasos.length > 0 ? Math.max(...pasos.map(p => p.secuencia)) + 1 : 1})</h3>
+                <div style={styles.form} className="aparecer">
+                  <h3 style={styles.formTitulo}>
+                    {editandoPaso
+                      ? `Editando paso ${editandoPaso.secuencia}`
+                      : `Nuevo paso (secuencia ${pasos.length > 0 ? Math.max(...pasos.map(p => p.secuencia)) + 1 : 1})`}
+                  </h3>
                   <div style={styles.fila}>
                     <div style={styles.campo}>
                       <label style={styles.label}>Tipo de operacion *</label>
@@ -275,8 +320,10 @@ export default function RutasFabricacion() {
                   </div>
 
                   <div style={styles.botones}>
-                    <button style={styles.botonSecundario} onClick={() => { setMostrarForm(false); setNuevoPaso(pasoVacio); setNuevasAlternas([]) }}>Cancelar</button>
-                    <button style={styles.boton} onClick={guardarPaso} disabled={loading}>{loading ? 'Guardando...' : 'Guardar paso'}</button>
+                    <button style={styles.botonSecundario} onClick={() => { setMostrarForm(false); setEditandoPaso(null); setNuevoPaso(pasoVacio); setNuevasAlternas([]) }}>Cancelar</button>
+                    <button style={styles.boton} onClick={guardarPaso} disabled={loading}>
+                      {loading ? 'Guardando...' : editandoPaso ? 'Actualizar paso' : 'Guardar paso'}
+                    </button>
                   </div>
                 </div>
               )}
@@ -305,7 +352,8 @@ const styles = {
   alternaItem: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', marginBottom: '4px' },
   badgeAprobada: { padding: '2px 8px', borderRadius: '20px', fontSize: '11px', backgroundColor: '#f0fdf4', color: '#16a34a', border: 'none', cursor: 'pointer' },
   badgePendiente: { padding: '2px 8px', borderRadius: '20px', fontSize: '11px', backgroundColor: '#fef9c3', color: '#854d0e', border: 'none', cursor: 'pointer' },
-  botonEliminar: { padding: '6px 12px', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', flexShrink: 0 },
+  botonEditar: { padding: '6px 12px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
+  botonEliminar: { padding: '6px 12px', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
   seccionAgregar: { marginTop: '10px' },
   boton: { padding: '10px 22px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonSecundario: { padding: '10px 22px', backgroundColor: '#e2e8f0', color: '#444', border: 'none', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
