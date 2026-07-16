@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
+const DIAS_AVISO_VENCIMIENTO = 30
+
 export default function LiberacionesCalidad() {
   const { perfil, tienePermiso } = useAuth()
   const [articulos, setArticulos] = useState([])
@@ -31,7 +33,7 @@ export default function LiberacionesCalidad() {
       supabase.from('bom').select('articulo_padre_id'),
       supabase.from('articulo_cliente').select('articulo_id').eq('activo', true),
       supabase.from('normas_empaque').select('articulo_id').eq('activa', true).eq('tipo', 'oficial'),
-      supabase.from('niveles_ingenieria').select('articulo_id, estatus').eq('estatus', 'vigente'),
+      supabase.from('niveles_ingenieria').select('articulo_id, estatus, vigente_hasta').eq('estatus', 'vigente'),
       supabase.from('rutas_fabricacion').select('articulo_id'),
       supabase.from('molde_cavidades').select('articulo_id').eq('activa', true),
       supabase.from('liberaciones_calidad').select('*, liberador:usuarios!liberaciones_calidad_liberado_por_fkey(nombre)'),
@@ -47,12 +49,29 @@ export default function LiberacionesCalidad() {
     setLoading(false)
   }
 
+  const hoy = new Date().toISOString().split('T')[0]
+  const fechaAviso = new Date(Date.now() + DIAS_AVISO_VENCIMIENTO * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+
   const liberacionDe = (id) => liberaciones.find(l => l.articulo_id === id)
+
+  // Estado de vigencia de los documentos PSW/PPAP
+  const estadoDocumentos = (lib) => {
+    const docs = [
+      { nombre: 'PSW', vigencia: lib?.psw_vigencia },
+      { nombre: 'PPAP', vigencia: lib?.ppap_vigencia },
+    ]
+    const vencidos = docs.filter(d => d.vigencia && d.vigencia < hoy).map(d => d.nombre)
+    const porVencer = docs.filter(d => d.vigencia && d.vigencia >= hoy && d.vigencia <= fechaAviso).map(d => d.nombre)
+    return { vencidos, porVencer }
+  }
 
   // Los 8 puntos de verificacion para que un articulo este listo para produccion
   const checksDe = (a) => {
     const lib = liberacionDe(a.id)
+    const { vencidos, porVencer } = estadoDocumentos(lib)
     const requiereMolde = ['solo_inyeccion', 'inyeccion_y_ensamble', 'doble_inyeccion'].includes(a.tipo_proceso)
+    const nivelVig = niveles.find(n => n.articulo_id === a.id)
+    const nivelVencido = nivelVig?.vigente_hasta && nivelVig.vigente_hasta < hoy
     return [
       {
         clave: 'alta', nombre: 'Alta de articulo completa',
@@ -65,14 +84,22 @@ export default function LiberacionesCalidad() {
         detalle: bom.some(l => l.articulo_padre_id === a.id) ? 'Tiene lista de materiales' : 'Sin componentes en BOM',
       },
       {
-        clave: 'documentos', nombre: 'PSW y PPAP cargados',
-        ok: !!(lib?.psw_url && lib?.ppap_url),
-        detalle: !lib?.psw_url && !lib?.ppap_url ? 'Faltan ambos documentos' : !lib?.psw_url ? 'Falta PSW' : !lib?.ppap_url ? 'Falta PPAP' : 'Documentos completos',
+        clave: 'documentos', nombre: 'PSW y PPAP cargados y vigentes',
+        ok: !!(lib?.psw_url && lib?.ppap_url) && vencidos.length === 0,
+        detalle: !lib?.psw_url && !lib?.ppap_url ? 'Faltan ambos documentos'
+          : !lib?.psw_url ? 'Falta PSW'
+          : !lib?.ppap_url ? 'Falta PPAP'
+          : vencidos.length > 0 ? `Documentos vencidos: ${vencidos.join(', ')}`
+          : porVencer.length > 0 ? `Vigentes, pero por vencer en ${DIAS_AVISO_VENCIMIENTO} dias o menos: ${porVencer.join(', ')}`
+          : 'Documentos completos y vigentes',
+        advertencia: vencidos.length === 0 && porVencer.length > 0,
       },
       {
         clave: 'liberado', nombre: 'Liberado por Calidad',
-        ok: !!lib?.liberado,
-        detalle: lib?.liberado ? `Liberado por ${lib.liberador?.nombre || 'Calidad'}` : 'Pendiente de liberacion',
+        ok: !!lib?.liberado && vencidos.length === 0,
+        detalle: !lib?.liberado ? 'Pendiente de liberacion'
+          : vencidos.length > 0 ? 'Liberado, pero con documentos vencidos — pendiente renovar'
+          : `Liberado por ${lib.liberador?.nombre || 'Calidad'}`,
       },
       {
         clave: 'cliente', nombre: 'Cliente asignado',
@@ -86,8 +113,8 @@ export default function LiberacionesCalidad() {
       },
       {
         clave: 'nivel', nombre: 'Nivel de ingenieria vigente',
-        ok: niveles.some(n => n.articulo_id === a.id),
-        detalle: niveles.some(n => n.articulo_id === a.id) ? 'Con revision vigente' : 'Sin nivel registrado',
+        ok: !!nivelVig && !nivelVencido,
+        detalle: !nivelVig ? 'Sin nivel registrado' : nivelVencido ? 'El nivel vigente ya vencio — requiere revision' : 'Con revision vigente',
       },
       {
         clave: 'ruta', nombre: 'Ruta de fabricacion' + (requiereMolde ? ' y molde' : ''),
@@ -102,6 +129,19 @@ export default function LiberacionesCalidad() {
   const articulo = articulos.find(a => a.id === parseInt(articuloId))
   const lib = articulo ? liberacionDe(articulo.id) : null
   const checks = articulo ? checksDe(articulo) : []
+  const estadoDocs = articulo ? estadoDocumentos(lib) : { vencidos: [], porVencer: [] }
+
+  const guardarCampos = async (campos) => {
+    let errG
+    if (lib) {
+      const r = await supabase.from('liberaciones_calidad').update(campos).eq('id', lib.id)
+      errG = r.error
+    } else {
+      const r = await supabase.from('liberaciones_calidad').insert({ articulo_id: articulo.id, ...campos })
+      errG = r.error
+    }
+    return errG
+  }
 
   const subirDocumento = async (tipo, archivo) => {
     if (!archivo || !articulo) return
@@ -113,21 +153,25 @@ export default function LiberacionesCalidad() {
     const { data: urlData } = supabase.storage.from('calidad').getPublicUrl(ruta)
 
     const campos = tipo === 'PSW'
-      ? { psw_url: urlData.publicUrl, psw_nombre: archivo.name }
-      : { ppap_url: urlData.publicUrl, ppap_nombre: archivo.name }
+      ? { psw_url: urlData.publicUrl, psw_nombre: archivo.name, subido_por: perfil.id }
+      : { ppap_url: urlData.publicUrl, ppap_nombre: archivo.name, subido_por: perfil.id }
 
-    let errG
-    if (lib) {
-      const r = await supabase.from('liberaciones_calidad').update({ ...campos, subido_por: perfil.id }).eq('id', lib.id)
-      errG = r.error
-    } else {
-      const r = await supabase.from('liberaciones_calidad').insert({ articulo_id: articulo.id, ...campos, subido_por: perfil.id })
-      errG = r.error
-    }
+    const errG = await guardarCampos(campos)
     if (errG) { setError(errG.message); setSubiendo(''); return }
 
-    setExito(`${tipo} cargado correctamente`)
+    setExito(`${tipo} cargado correctamente — captura su vigencia`)
     setSubiendo('')
+    await cargarDatos()
+    setTimeout(() => setExito(''), 4000)
+  }
+
+  const guardarVigencia = async (tipo, fecha) => {
+    if (!articulo) return
+    setError('')
+    const campos = tipo === 'PSW' ? { psw_vigencia: fecha || null } : { ppap_vigencia: fecha || null }
+    const errG = await guardarCampos(campos)
+    if (errG) { setError(errG.message); return }
+    setExito(`Vigencia de ${tipo} actualizada`)
     await cargarDatos()
     setTimeout(() => setExito(''), 3000)
   }
@@ -135,6 +179,10 @@ export default function LiberacionesCalidad() {
   const liberar = async () => {
     if (!lib?.psw_url || !lib?.ppap_url) {
       setError('No se puede liberar sin PSW y PPAP cargados')
+      return
+    }
+    if (estadoDocs.vencidos.length > 0) {
+      setError('No se puede liberar con documentos vencidos: ' + estadoDocs.vencidos.join(', '))
       return
     }
     if (!confirm(`Confirmas la liberacion de "${articulo.codigo_interno}"? Quedara registrado a tu nombre.`)) return
@@ -157,6 +205,50 @@ export default function LiberacionesCalidad() {
     setExito('Liberacion revocada')
     await cargarDatos()
     setTimeout(() => setExito(''), 3000)
+  }
+
+  const badgeCalidad = (a) => {
+    const libA = liberacionDe(a.id)
+    const { vencidos, porVencer } = estadoDocumentos(libA)
+    if (libA?.liberado && vencidos.length > 0) return { texto: 'Documentos vencidos', fondo: '#fef2f2', color: '#dc2626' }
+    if (libA?.liberado && porVencer.length > 0) return { texto: 'Por vencer', fondo: '#fef9c3', color: '#854d0e' }
+    if (libA?.liberado) return { texto: 'Liberado', fondo: '#f0fdf4', color: '#16a34a' }
+    if (vencidos.length > 0) return { texto: 'Pendiente — docs vencidos', fondo: '#fef2f2', color: '#dc2626' }
+    return { texto: 'Pendiente', fondo: '#fef9c3', color: '#854d0e' }
+  }
+
+  const fmtFecha = (f) => f ? new Date(f + 'T00:00:00').toLocaleDateString('es-MX') : ''
+
+  const BloqueDocumento = ({ tipo, url, nombre, vigencia }) => {
+    const vencido = vigencia && vigencia < hoy
+    const porVencer = vigencia && !vencido && vigencia <= fechaAviso
+    return (
+      <div style={styles.campo}>
+        <label style={styles.label}>{tipo === 'PSW' ? 'PSW (Part Submission Warrant)' : 'PPAP (Production Part Approval Process)'}</label>
+        {url
+          ? <p style={styles.docCargado}>✓ <a href={url} target="_blank" rel="noreferrer" style={styles.enlace}>{nombre || 'Ver documento'}</a></p>
+          : <p style={styles.docFaltante}>Sin documento</p>}
+        {puedeSubir && !lib?.liberado && (
+          <input style={styles.inputArchivo} type="file" accept=".pdf,.jpg,.jpeg,.png"
+            disabled={subiendo === tipo}
+            onChange={e => subirDocumento(tipo, e.target.files[0])} />
+        )}
+        {subiendo === tipo && <p style={{ fontSize: '12px', color: '#666' }}>Subiendo...</p>}
+        {url && (
+          <div style={{ marginTop: '6px' }}>
+            <label style={{ ...styles.label, color: vencido ? '#dc2626' : porVencer ? '#b45309' : '#444' }}>
+              Vigente hasta {vencido ? '(VENCIDO)' : porVencer ? '(por vencer)' : ''}
+            </label>
+            {puedeSubir ? (
+              <input style={{ ...styles.input, maxWidth: '170px' }} type="date" defaultValue={vigencia || ''}
+                onBlur={e => e.target.value !== (vigencia || '') && guardarVigencia(tipo, e.target.value)} />
+            ) : (
+              <p style={{ fontSize: '13px', color: '#666', margin: 0 }}>{vigencia ? fmtFecha(vigencia) : 'Sin capturar'}</p>
+            )}
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -182,14 +274,14 @@ export default function LiberacionesCalidad() {
           <div style={styles.tablaHeader}>
             <span style={{ flex: 3 }}>Articulo</span>
             <span style={{ flex: 2 }}>Preparacion</span>
-            <span style={{ flex: 1 }}>Calidad</span>
+            <span style={{ flex: 2 }}>Calidad</span>
             <span style={{ flex: 2 }}>Faltantes</span>
           </div>
           {articulos.map(a => {
             const ch = checksDe(a)
             const okCount = ch.filter(c => c.ok).length
             const completo = okCount === ch.length
-            const libA = liberacionDe(a.id)
+            const badge = badgeCalidad(a)
             const faltantes = ch.filter(c => !c.ok).map(c => c.nombre)
             return (
               <div key={a.id} style={styles.tablaFila} className="fila-hover">
@@ -202,10 +294,8 @@ export default function LiberacionesCalidad() {
                     {completo ? 'Listo para produccion' : `${okCount}/${ch.length} completos`}
                   </span>
                 </span>
-                <span style={{ flex: 1 }}>
-                  <span style={{ ...styles.badge, ...(libA?.liberado ? { backgroundColor: '#f0fdf4', color: '#16a34a' } : { backgroundColor: '#fef9c3', color: '#854d0e' }) }}>
-                    {libA?.liberado ? 'Liberado' : 'Pendiente'}
-                  </span>
+                <span style={{ flex: 2 }}>
+                  <span style={{ ...styles.badge, backgroundColor: badge.fondo, color: badge.color }}>{badge.texto}</span>
                 </span>
                 <span style={{ flex: 2, fontSize: '11px', color: '#dc2626' }}>
                   {faltantes.length === 0 ? '' : faltantes.slice(0, 3).join(', ') + (faltantes.length > 3 ? '...' : '')}
@@ -218,48 +308,35 @@ export default function LiberacionesCalidad() {
         <>
           <div style={styles.form} className="aparecer">
             <h3 style={styles.formTitulo}>Documentos de calidad — {articulo.codigo_interno}</h3>
+            {estadoDocs.vencidos.length > 0 && (
+              <p style={styles.alertaVencido}>⚠ Documentos vencidos: {estadoDocs.vencidos.join(', ')}. Renueva y vuelve a cargar para mantener el articulo liberado.</p>
+            )}
+            {estadoDocs.vencidos.length === 0 && estadoDocs.porVencer.length > 0 && (
+              <p style={styles.alertaPorVencer}>⚠ Proximos a vencer (menos de {DIAS_AVISO_VENCIMIENTO} dias): {estadoDocs.porVencer.join(', ')}.</p>
+            )}
             <div style={styles.fila}>
-              <div style={styles.campo}>
-                <label style={styles.label}>PSW (Part Submission Warrant)</label>
-                {lib?.psw_url
-                  ? <p style={styles.docCargado}>✓ <a href={lib.psw_url} target="_blank" rel="noreferrer" style={styles.enlace}>{lib.psw_nombre || 'Ver documento'}</a></p>
-                  : <p style={styles.docFaltante}>Sin documento</p>}
-                {puedeSubir && !lib?.liberado && (
-                  <input style={styles.inputArchivo} type="file" accept=".pdf,.jpg,.jpeg,.png"
-                    disabled={subiendo === 'PSW'}
-                    onChange={e => subirDocumento('PSW', e.target.files[0])} />
-                )}
-                {subiendo === 'PSW' && <p style={{ fontSize: '12px', color: '#666' }}>Subiendo...</p>}
-              </div>
-              <div style={styles.campo}>
-                <label style={styles.label}>PPAP (Production Part Approval Process)</label>
-                {lib?.ppap_url
-                  ? <p style={styles.docCargado}>✓ <a href={lib.ppap_url} target="_blank" rel="noreferrer" style={styles.enlace}>{lib.ppap_nombre || 'Ver documento'}</a></p>
-                  : <p style={styles.docFaltante}>Sin documento</p>}
-                {puedeSubir && !lib?.liberado && (
-                  <input style={styles.inputArchivo} type="file" accept=".pdf,.jpg,.jpeg,.png"
-                    disabled={subiendo === 'PPAP'}
-                    onChange={e => subirDocumento('PPAP', e.target.files[0])} />
-                )}
-                {subiendo === 'PPAP' && <p style={{ fontSize: '12px', color: '#666' }}>Subiendo...</p>}
-              </div>
+              <BloqueDocumento tipo="PSW" url={lib?.psw_url} nombre={lib?.psw_nombre} vigencia={lib?.psw_vigencia} />
+              <BloqueDocumento tipo="PPAP" url={lib?.ppap_url} nombre={lib?.ppap_nombre} vigencia={lib?.ppap_vigencia} />
             </div>
 
             <div style={styles.liberacionBox}>
               {lib?.liberado ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-                  <span style={{ ...styles.badge, backgroundColor: '#f0fdf4', color: '#16a34a', fontSize: '13px' }}>
-                    ✓ Liberado por {lib.liberador?.nombre || 'Calidad'} el {lib.fecha_liberacion ? new Date(lib.fecha_liberacion).toLocaleDateString('es-MX') : ''}
+                  <span style={{ ...styles.badge, backgroundColor: estadoDocs.vencidos.length > 0 ? '#fef2f2' : '#f0fdf4', color: estadoDocs.vencidos.length > 0 ? '#dc2626' : '#16a34a', fontSize: '13px' }}>
+                    {estadoDocs.vencidos.length > 0
+                      ? `⚠ Liberado con documentos vencidos (${estadoDocs.vencidos.join(', ')})`
+                      : `✓ Liberado por ${lib.liberador?.nombre || 'Calidad'} el ${lib.fecha_liberacion ? new Date(lib.fecha_liberacion).toLocaleDateString('es-MX') : ''}`}
                   </span>
                   {puedeLiberar && <button style={styles.botonRevocar} onClick={revocar}>Revocar liberacion</button>}
                 </div>
               ) : puedeLiberar ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                  <button style={{ ...styles.botonLiberar, opacity: (lib?.psw_url && lib?.ppap_url) ? 1 : 0.5 }}
-                    disabled={!(lib?.psw_url && lib?.ppap_url)} onClick={liberar}>
+                  <button style={{ ...styles.botonLiberar, opacity: (lib?.psw_url && lib?.ppap_url && estadoDocs.vencidos.length === 0) ? 1 : 0.5 }}
+                    disabled={!(lib?.psw_url && lib?.ppap_url) || estadoDocs.vencidos.length > 0} onClick={liberar}>
                     Liberar articulo
                   </button>
                   {!(lib?.psw_url && lib?.ppap_url) && <span style={{ fontSize: '12px', color: '#b45309' }}>Se requieren PSW y PPAP para liberar</span>}
+                  {(lib?.psw_url && lib?.ppap_url) && estadoDocs.vencidos.length > 0 && <span style={{ fontSize: '12px', color: '#dc2626' }}>Hay documentos vencidos</span>}
                 </div>
               ) : (
                 <p style={{ fontSize: '13px', color: '#666', margin: 0 }}>
@@ -279,8 +356,8 @@ export default function LiberacionesCalidad() {
               <div key={c.clave} style={styles.tablaFila} className="fila-hover">
                 <span style={{ flex: 2, fontSize: '13px', fontWeight: '500' }}>{c.nombre}</span>
                 <span style={{ flex: 1 }}>
-                  <span style={{ ...styles.badge, ...(c.ok ? { backgroundColor: '#f0fdf4', color: '#16a34a' } : { backgroundColor: '#fef2f2', color: '#dc2626' }) }}>
-                    {c.ok ? 'OK' : 'Falta'}
+                  <span style={{ ...styles.badge, ...(c.ok ? (c.advertencia ? { backgroundColor: '#fef9c3', color: '#854d0e' } : { backgroundColor: '#f0fdf4', color: '#16a34a' }) : { backgroundColor: '#fef2f2', color: '#dc2626' }) }}>
+                    {c.ok ? (c.advertencia ? 'Por vencer' : 'OK') : 'Falta'}
                   </span>
                 </span>
                 <span style={{ flex: 3, fontSize: '13px', color: '#666' }}>{c.detalle}</span>
@@ -315,6 +392,8 @@ const styles = {
   docCargado: { fontSize: '13px', color: '#16a34a', margin: 0 },
   docFaltante: { fontSize: '13px', color: '#dc2626', margin: 0 },
   enlace: { color: '#2563eb' },
+  alertaVencido: { fontSize: '13px', color: '#dc2626', backgroundColor: '#fef2f2', borderRadius: '7px', padding: '10px 14px', margin: '0 0 14px 0' },
+  alertaPorVencer: { fontSize: '13px', color: '#854d0e', backgroundColor: '#fef9c3', borderRadius: '7px', padding: '10px 14px', margin: '0 0 14px 0' },
   liberacionBox: { borderTop: '1px solid #f1f5f9', paddingTop: '16px' },
   botonLiberar: { padding: '9px 20px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
   botonRevocar: { padding: '6px 14px', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },

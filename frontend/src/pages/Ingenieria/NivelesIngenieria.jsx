@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
-const formVacio = { nivel: '', descripcion_cambio: '', fecha_efectiva: '' }
+const formVacio = { nivel: '', descripcion_cambio: '', fecha_efectiva: '', vigente_hasta: '' }
 
 export default function NivelesIngenieria() {
   const { perfil, tienePermiso } = useAuth()
@@ -11,7 +11,9 @@ export default function NivelesIngenieria() {
   const [articuloId, setArticuloId] = useState('')
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
+  const [editando, setEditando] = useState(null)
   const [form, setForm] = useState(formVacio)
+  const [archivo, setArchivo] = useState(null)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
 
@@ -33,39 +35,81 @@ export default function NivelesIngenieria() {
     setLoading(false)
   }
 
+  const hoy = new Date().toISOString().split('T')[0]
+  const estaVencido = (n) => n.vigente_hasta && n.vigente_hasta < hoy
+
   const articulo = articulos.find(a => a.id === parseInt(articuloId))
   const nivelesDelArticulo = niveles.filter(n => n.articulo_id === parseInt(articuloId))
   const nivelVigente = nivelesDelArticulo.find(n => n.estatus === 'vigente')
 
+  const abrirNuevo = () => { setEditando(null); setForm(formVacio); setArchivo(null); setMostrarForm(true); setError('') }
+  const abrirEditar = (n) => {
+    setEditando(n)
+    setForm({
+      nivel: n.nivel || '',
+      descripcion_cambio: n.descripcion_cambio || '',
+      fecha_efectiva: n.fecha_efectiva || '',
+      vigente_hasta: n.vigente_hasta || '',
+    })
+    setArchivo(null)
+    setMostrarForm(true)
+    setError('')
+  }
+
   const guardar = async () => {
     if (!articuloId) { setError('Selecciona el articulo'); return }
     if (!form.nivel) { setError('El nivel es obligatorio (ej. A, B, REV-01)'); return }
-    if (nivelesDelArticulo.some(n => n.nivel.toUpperCase() === form.nivel.toUpperCase())) {
+    if (nivelesDelArticulo.some(n => n.nivel.toUpperCase() === form.nivel.toUpperCase() && n.id !== editando?.id)) {
       setError('Ese nivel ya existe para este articulo')
       return
     }
     setError('')
     setLoading(true)
 
-    // El nivel anterior vigente pasa a obsoleto
-    if (nivelVigente) {
-      await supabase.from('niveles_ingenieria').update({ estatus: 'obsoleto' }).eq('id', nivelVigente.id)
+    // Subir documento del cambio si se selecciono
+    let camposDocumento = {}
+    if (archivo) {
+      const ruta = `niveles/${articuloId}/${Date.now()}_${archivo.name}`
+      const { error: errS } = await supabase.storage.from('calidad').upload(ruta, archivo)
+      if (errS) { setError('Error al subir el documento: ' + errS.message); setLoading(false); return }
+      const { data: urlData } = supabase.storage.from('calidad').getPublicUrl(ruta)
+      camposDocumento = { documento_url: urlData.publicUrl, documento_nombre: archivo.name }
     }
 
-    const { error } = await supabase.from('niveles_ingenieria').insert({
-      articulo_id: parseInt(articuloId),
-      nivel: form.nivel.toUpperCase(),
-      descripcion_cambio: form.descripcion_cambio,
-      fecha_efectiva: form.fecha_efectiva || null,
-      estatus: 'vigente',
-      creado_por: perfil.id,
-    })
+    let error
+    if (editando) {
+      const r = await supabase.from('niveles_ingenieria').update({
+        nivel: form.nivel.toUpperCase(),
+        descripcion_cambio: form.descripcion_cambio,
+        fecha_efectiva: form.fecha_efectiva || null,
+        vigente_hasta: form.vigente_hasta || null,
+        ...camposDocumento,
+      }).eq('id', editando.id)
+      error = r.error
+    } else {
+      // El nivel anterior vigente pasa a obsoleto
+      if (nivelVigente) {
+        await supabase.from('niveles_ingenieria').update({ estatus: 'obsoleto' }).eq('id', nivelVigente.id)
+      }
+      const r = await supabase.from('niveles_ingenieria').insert({
+        articulo_id: parseInt(articuloId),
+        nivel: form.nivel.toUpperCase(),
+        descripcion_cambio: form.descripcion_cambio,
+        fecha_efectiva: form.fecha_efectiva || null,
+        vigente_hasta: form.vigente_hasta || null,
+        estatus: 'vigente',
+        creado_por: perfil.id,
+        ...camposDocumento,
+      })
+      error = r.error
+    }
 
     if (error) { setError(error.message); setLoading(false); return }
 
-    setExito('Nuevo nivel de ingenieria registrado como vigente')
+    setExito(editando ? 'Nivel actualizado' : 'Nuevo nivel de ingenieria registrado como vigente')
     setMostrarForm(false)
-    setForm(formVacio)
+    setEditando(null)
+    setArchivo(null)
     await cargarDatos()
     setLoading(false)
     setTimeout(() => setExito(''), 3000)
@@ -88,7 +132,7 @@ export default function NivelesIngenieria() {
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Niveles de Ingenieria</h2>
         {puedeCrear && articuloId && (
-          <button style={styles.boton} onClick={() => { setMostrarForm(!mostrarForm); setError('') }}>
+          <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
             {mostrarForm ? 'Cancelar' : '+ Nuevo nivel'}
           </button>
         )}
@@ -107,7 +151,10 @@ export default function NivelesIngenieria() {
         {articulo && (
           <p style={styles.infoNivel}>
             Nivel vigente: {nivelVigente
-              ? <strong style={{ color: '#16a34a' }}>{nivelVigente.nivel}</strong>
+              ? <>
+                  <strong style={{ color: estaVencido(nivelVigente) ? '#dc2626' : '#16a34a' }}>{nivelVigente.nivel}</strong>
+                  {estaVencido(nivelVigente) && <span style={{ color: '#dc2626' }}> (vencido el {new Date(nivelVigente.vigente_hasta + 'T00:00:00').toLocaleDateString('es-MX')})</span>}
+                </>
               : <span style={{ color: '#b45309' }}>sin nivel registrado</span>}
           </p>
         )}
@@ -115,18 +162,23 @@ export default function NivelesIngenieria() {
 
       {mostrarForm && articuloId && (
         <div style={styles.form} className="aparecer">
-          <h3 style={styles.formTitulo}>Nuevo nivel para {articulo?.codigo_interno}</h3>
+          <h3 style={styles.formTitulo}>{editando ? `Editando nivel ${editando.nivel}` : `Nuevo nivel para ${articulo?.codigo_interno}`}</h3>
           <div style={styles.fila}>
             <div style={styles.campo}>
               <label style={styles.label}>Nivel *</label>
               <input style={styles.input} value={form.nivel}
                 onChange={e => setForm({ ...form, nivel: e.target.value.toUpperCase() })}
-                placeholder={nivelVigente ? `Actual: ${nivelVigente.nivel}` : 'Ej: A'} maxLength={12} />
+                placeholder={nivelVigente && !editando ? `Actual: ${nivelVigente.nivel}` : 'Ej: A'} maxLength={12} />
             </div>
             <div style={styles.campo}>
-              <label style={styles.label}>Fecha efectiva</label>
+              <label style={styles.label}>Fecha efectiva (desde)</label>
               <input style={styles.input} type="date" value={form.fecha_efectiva}
                 onChange={e => setForm({ ...form, fecha_efectiva: e.target.value })} />
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Vigente hasta (opcional)</label>
+              <input style={styles.input} type="date" value={form.vigente_hasta}
+                onChange={e => setForm({ ...form, vigente_hasta: e.target.value })} />
             </div>
           </div>
           <div style={styles.fila}>
@@ -137,9 +189,22 @@ export default function NivelesIngenieria() {
                 placeholder="Que cambio en esta revision (dimension, material, tolerancia, etc.)" />
             </div>
           </div>
-          <p style={styles.aviso}>Al guardar, este nivel queda como vigente y el anterior pasa automaticamente a obsoleto.</p>
+          <div style={styles.fila}>
+            <div style={{ ...styles.campo, flex: 2 }}>
+              <label style={styles.label}>Documento del cambio (PDF, dibujo, ECN...)</label>
+              {editando?.documento_url && !archivo && (
+                <p style={{ fontSize: '13px', color: '#16a34a', margin: '0 0 4px 0' }}>
+                  ✓ <a href={editando.documento_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>{editando.documento_nombre || 'Ver documento actual'}</a>
+                  <span style={{ color: '#94a3b8' }}> (sube otro para reemplazarlo)</span>
+                </p>
+              )}
+              <input style={{ fontSize: '13px' }} type="file" accept=".pdf,.jpg,.jpeg,.png"
+                onChange={e => setArchivo(e.target.files[0])} />
+            </div>
+          </div>
+          {!editando && <p style={styles.aviso}>Al guardar, este nivel queda como vigente y el anterior pasa automaticamente a obsoleto.</p>}
           <div style={styles.botones}>
-            <button style={styles.boton} onClick={guardar} disabled={loading}>{loading ? 'Guardando...' : 'Guardar nivel'}</button>
+            <button style={styles.boton} onClick={guardar} disabled={loading}>{loading ? 'Guardando...' : editando ? 'Actualizar nivel' : 'Guardar nivel'}</button>
           </div>
         </div>
       )}
@@ -149,6 +214,7 @@ export default function NivelesIngenieria() {
           <div style={styles.tablaHeader}>
             <span style={{ flex: 3 }}>Articulo</span>
             <span style={{ flex: 1 }}>Nivel vigente</span>
+            <span style={{ flex: 1 }}>Vigente hasta</span>
             <span style={{ flex: 1 }}>Revisiones</span>
           </div>
           {loading ? <p style={{ padding: 20, color: '#666' }}>Cargando...</p> : articulos.map(a => {
@@ -161,8 +227,14 @@ export default function NivelesIngenieria() {
                   <span style={{ color: '#666' }}> — {a.descripcion}</span>
                 </span>
                 <span style={{ flex: 1 }}>
-                  {v ? <span style={{ ...styles.badge, backgroundColor: '#f0fdf4', color: '#16a34a' }}>{v.nivel}</span>
-                    : <span style={{ ...styles.badge, backgroundColor: '#fef9c3', color: '#854d0e' }}>Sin nivel</span>}
+                  {v ? (
+                    <span style={{ ...styles.badge, ...(estaVencido(v) ? { backgroundColor: '#fef2f2', color: '#dc2626' } : { backgroundColor: '#f0fdf4', color: '#16a34a' }) }}>
+                      {v.nivel}{estaVencido(v) ? ' (vencido)' : ''}
+                    </span>
+                  ) : <span style={{ ...styles.badge, backgroundColor: '#fef9c3', color: '#854d0e' }}>Sin nivel</span>}
+                </span>
+                <span style={{ flex: 1, fontSize: '13px', color: estaVencido(v || {}) ? '#dc2626' : '#666' }}>
+                  {v?.vigente_hasta ? new Date(v.vigente_hasta + 'T00:00:00').toLocaleDateString('es-MX') : v ? 'Indefinida' : '-'}
                 </span>
                 <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{total}</span>
               </div>
@@ -174,7 +246,9 @@ export default function NivelesIngenieria() {
           <div style={styles.tablaHeader}>
             <span style={{ flex: 1 }}>Nivel</span>
             <span style={{ flex: 3 }}>Descripcion del cambio</span>
-            <span style={{ flex: 1 }}>Fecha efectiva</span>
+            <span style={{ flex: 1 }}>Efectiva desde</span>
+            <span style={{ flex: 1 }}>Vigente hasta</span>
+            <span style={{ flex: 1 }}>Documento</span>
             <span style={{ flex: 1 }}>Registrado por</span>
             <span style={{ flex: 1 }}>Estatus</span>
             <span style={{ flex: 1 }}>Acciones</span>
@@ -188,15 +262,25 @@ export default function NivelesIngenieria() {
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>
                 {n.fecha_efectiva ? new Date(n.fecha_efectiva + 'T00:00:00').toLocaleDateString('es-MX') : '-'}
               </span>
+              <span style={{ flex: 1, fontSize: '13px', color: estaVencido(n) ? '#dc2626' : '#666' }}>
+                {n.vigente_hasta ? new Date(n.vigente_hasta + 'T00:00:00').toLocaleDateString('es-MX') : 'Indefinida'}
+                {estaVencido(n) && ' ⚠'}
+              </span>
+              <span style={{ flex: 1, fontSize: '12px' }}>
+                {n.documento_url
+                  ? <a href={n.documento_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>Ver</a>
+                  : <span style={{ color: '#94a3b8' }}>-</span>}
+              </span>
               <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{n.usuarios?.nombre || '-'}</span>
               <span style={{ flex: 1 }}>
-                <span style={{ ...styles.badge, ...(n.estatus === 'vigente' ? { backgroundColor: '#f0fdf4', color: '#16a34a' } : { backgroundColor: '#f1f5f9', color: '#64748b' }) }}>
-                  {n.estatus === 'vigente' ? 'Vigente' : 'Obsoleto'}
+                <span style={{ ...styles.badge, ...(n.estatus === 'vigente' ? (estaVencido(n) ? { backgroundColor: '#fef2f2', color: '#dc2626' } : { backgroundColor: '#f0fdf4', color: '#16a34a' }) : { backgroundColor: '#f1f5f9', color: '#64748b' }) }}>
+                  {n.estatus === 'vigente' ? (estaVencido(n) ? 'Vigente (vencido)' : 'Vigente') : 'Obsoleto'}
                 </span>
               </span>
               <span style={{ flex: 1 }}>
+                {puedeEditar && <button style={styles.botonAccion} onClick={() => abrirEditar(n)}>Editar</button>}
                 {puedeEditar && n.estatus === 'obsoleto' && (
-                  <button style={styles.botonAccion} onClick={() => restaurarVigente(n)}>Restaurar</button>
+                  <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => restaurarVigente(n)}>Restaurar</button>
                 )}
               </span>
             </div>
