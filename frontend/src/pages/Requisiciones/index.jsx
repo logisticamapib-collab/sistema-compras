@@ -53,6 +53,8 @@ const ocEstatusLabels = {
   cancelada: 'OC cancelada',
 }
 
+const TAMANO_PAGINA = 50
+
 const prioridadColores = {
   alta: { bg: '#fef2f2', color: '#dc2626' },
   media: { bg: '#fef9c3', color: '#854d0e' },
@@ -64,6 +66,8 @@ export default function Requisiciones() {
   const [vista, setVista] = useState('lista')
   const [requisiciones, setRequisiciones] = useState([])
   const [loading, setLoading] = useState(true)
+  const [hayMas, setHayMas] = useState(false)
+  const [cargandoMas, setCargandoMas] = useState(false)
   const [filtroEstatus, setFiltroEstatus] = useState('todos')
   const [filtroPrioridad, setFiltroPrioridad] = useState('todos')
   const [busqueda, setBusqueda] = useState('')
@@ -71,13 +75,14 @@ export default function Requisiciones() {
 
   useEffect(() => { cargarRequisiciones() }, [])
 
-  const cargarRequisiciones = async () => {
-    setLoading(true)
+  const cargarRequisiciones = async (desde = 0) => {
+    if (desde === 0) setLoading(true); else setCargandoMas(true)
     let query = supabase
       .from('requisiciones')
       .select('*, solicitante:solicitante_id(nombre), sites(nombre,codigo)')
       .eq('empresa_id', perfil.empresa_id)
       .order('created_at', { ascending: false })
+      .range(desde, desde + TAMANO_PAGINA - 1)
 
     if (perfil.rol === 'solicitante') {
       query = query.eq('solicitante_id', perfil.id)
@@ -101,8 +106,10 @@ export default function Requisiciones() {
       reqs.forEach(r => { r.ordenesCompra = ocPorRequisicion[r.id] || [] })
     }
 
-    setRequisiciones(reqs)
+    setHayMas(reqs.length === TAMANO_PAGINA)
+    setRequisiciones(prev => desde === 0 ? reqs : [...prev, ...reqs])
     setLoading(false)
+    setCargandoMas(false)
   }
 
   const abrirDetalle = (req) => {
@@ -183,7 +190,7 @@ export default function Requisiciones() {
           <option value="media">Media</option>
           <option value="baja">Baja</option>
         </select>
-        <button style={styles.botonRefrescar} onClick={cargarRequisiciones}>
+        <button style={styles.botonRefrescar} onClick={() => cargarRequisiciones()}>
           Refrescar
         </button>
       </div>
@@ -247,6 +254,14 @@ export default function Requisiciones() {
           })
         )}
       </div>
+
+      {hayMas && !loading && (
+        <div style={{ textAlign: 'center', marginTop: '14px' }}>
+          <button style={styles.botonRefrescar} onClick={() => cargarRequisiciones(requisiciones.length)}>
+            {cargandoMas ? 'Cargando...' : 'Cargar mas'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

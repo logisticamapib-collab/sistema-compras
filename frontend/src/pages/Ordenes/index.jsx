@@ -34,26 +34,34 @@ const estatusLabels = {
   cancelada: 'Cancelada',
 }
 
+const TAMANO_PAGINA = 50
+
 export default function Ordenes() {
   const { perfil } = useAuth()
   const [vista, setVista] = useState('lista')
   const [ordenes, setOrdenes] = useState([])
   const [loading, setLoading] = useState(true)
+  const [hayMas, setHayMas] = useState(false)
+  const [cargandoMas, setCargandoMas] = useState(false)
   const [filtroEstatus, setFiltroEstatus] = useState('todos')
   const [busqueda, setBusqueda] = useState('')
   const [ordenSeleccionada, setOrdenSeleccionada] = useState(null)
 
   useEffect(() => { cargarOrdenes() }, [])
 
-  const cargarOrdenes = async () => {
-    setLoading(true)
+  const cargarOrdenes = async (desde = 0) => {
+    if (desde === 0) setLoading(true); else setCargandoMas(true)
     const { data } = await supabase
       .from('ordenes_compra')
       .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
       .eq('empresa_id', perfil.empresa_id)
       .order('created_at', { ascending: false })
-    setOrdenes(data || [])
+      .range(desde, desde + TAMANO_PAGINA - 1)
+    const nuevos = data || []
+    setHayMas(nuevos.length === TAMANO_PAGINA)
+    setOrdenes(prev => desde === 0 ? nuevos : [...prev, ...nuevos])
     setLoading(false)
+    setCargandoMas(false)
   }
 
   const ordenesFiltradas = ordenes.filter(o => {
@@ -99,7 +107,7 @@ export default function Ordenes() {
             <option key={k} value={k}>{v}</option>
           ))}
         </select>
-        <button style={styles.botonRefrescar} onClick={cargarOrdenes}>
+        <button style={styles.botonRefrescar} onClick={() => cargarOrdenes()}>
           Refrescar
         </button>
       </div>
@@ -151,6 +159,14 @@ export default function Ordenes() {
           ))
         )}
       </div>
+
+      {hayMas && !loading && (
+        <div style={{ textAlign: 'center', marginTop: '14px' }}>
+          <button style={styles.botonRefrescar} onClick={() => cargarOrdenes(ordenes.length)}>
+            {cargandoMas ? 'Cargando...' : 'Cargar mas'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
