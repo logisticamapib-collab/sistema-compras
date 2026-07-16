@@ -1,0 +1,551 @@
+import { useState, useEffect } from 'react'
+import * as XLSX from 'xlsx'
+import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../context/AuthContext'
+
+// Capa 2 - Customer Service: releases de clientes (firme/forecast) cargados via Excel.
+// El reemplazo es POR ARTICULO: solo los articulos incluidos en el archivo nuevo
+// sustituyen su release anterior; los demas conservan el vigente.
+
+const fmtNum = (n) => (Number(n) || 0).toLocaleString('es-MX')
+const fmtFecha = (f) => {
+  if (!f) return '-'
+  const [y, m, d] = f.split('-')
+  return `${d}/${m}/${y}`
+}
+
+// Convierte celdas de Excel (serial, Date o texto) a 'YYYY-MM-DD'
+const parseFecha = (v) => {
+  if (v === null || v === undefined || v === '') return null
+  if (v instanceof Date && !isNaN(v)) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`
+  }
+  if (typeof v === 'number' && v > 20000 && v < 80000) {
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000))
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+  }
+  const s = String(v).trim()
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/)
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+  return null
+}
+
+const parseTipo = (v) => {
+  const s = String(v || '').trim().toLowerCase()
+  if (!s) return 'firme'
+  if (s.startsWith('firm') || s === 'f' || s.includes('firme')) return 'firme'
+  if (s.startsWith('fore') || s === 'fc' || s.includes('pron')) return 'forecast'
+  return null
+}
+
+export default function Releases() {
+  const { perfil, tienePermiso } = useAuth()
+  const puedeCargar = tienePermiso('cs_releases', 'crear')
+
+  const [vista, setVista] = useState('vigente')
+  const [clientes, setClientes] = useState([])
+  const [articulosCliente, setArticulosCliente] = useState([])
+  const [vigentes, setVigentes] = useState([])
+  const [cargas, setCargas] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [exito, setExito] = useState('')
+
+  // Filtro de la vista de vigentes
+  const [filtroCliente, setFiltroCliente] = useState('')
+  const [expandido, setExpandido] = useState(null)
+
+  // Flujo de carga
+  const [clienteId, setClienteId] = useState('')
+  const [archivoNombre, setArchivoNombre] = useState('')
+  const [notas, setNotas] = useState('')
+  const [lineasNuevas, setLineasNuevas] = useState([])
+  const [erroresArchivo, setErroresArchivo] = useState([])
+  const [guardando, setGuardando] = useState(false)
+  const [detalleDiff, setDetalleDiff] = useState(null)
+
+  // Historial
+  const [cargaExpandida, setCargaExpandida] = useState(null)
+  const [lineasCarga, setLineasCarga] = useState([])
+
+  useEffect(() => { cargarDatos() }, [])
+
+  const cargarDatos = async () => {
+    setLoading(true)
+    const [c, ac, v, cg] = await Promise.all([
+      supabase.from('clientes').select('id, clave, nombre').eq('activo', true).order('nombre'),
+      supabase.from('articulo_cliente').select('id, articulo_id, cliente_id, codigo_cliente, articulo:articulos(id, codigo_interno, descripcion, unidad_medida)').eq('activo', true),
+      supabase.from('release_lineas').select('*').eq('vigente', true).order('fecha_requerida'),
+      supabase.from('releases_cargas').select('*, cliente:clientes(nombre), usuario:usuarios!releases_cargas_cargado_por_fkey(nombre)').order('fecha_carga', { ascending: false }).limit(100),
+    ])
+    setClientes(c.data || [])
+    setArticulosCliente(ac.data || [])
+    setVigentes(v.data || [])
+    setCargas(cg.data || [])
+    setLoading(false)
+  }
+
+  const articuloDe = (articuloId) => articulosCliente.find(a => a.articulo_id === articuloId)?.articulo
+
+  // ---------- Lectura del Excel ----------
+  const leerArchivo = async (e) => {
+    setError(''); setExito(''); setLineasNuevas([]); setErroresArchivo([]); setDetalleDiff(null)
+    const file = e.target.files[0]
+    if (!file) return
+    if (!clienteId) { setError('Selecciona primero el cliente al que pertenece el release'); e.target.value = ''; return }
+    setArchivoNombre(file.name)
+    try {
+      const buf = await file.arrayBuffer()
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true })
+      const hoja = wb.Sheets[wb.SheetNames[0]]
+      const filas = XLSX.utils.sheet_to_json(hoja, { header: 1, defval: '' })
+      if (filas.length < 2) { setError('El archivo no tiene datos'); return }
+
+      // Detectar fila de encabezados y columnas
+      let idxHeader = -1, colParte = -1, colFecha = -1, colCant = -1, colTipo = -1
+      for (let i = 0; i < Math.min(filas.length, 10); i++) {
+        const celdas = filas[i].map(x => String(x).toLowerCase())
+        const p = celdas.findIndex(x => x.includes('parte') || x.includes('codigo') || x.includes('part'))
+        const f = celdas.findIndex(x => x.includes('fecha') || x.includes('date'))
+        const q = celdas.findIndex(x => x.includes('cant') || x.includes('qty'))
+        if (p >= 0 && f >= 0 && q >= 0) {
+          idxHeader = i; colParte = p; colFecha = f; colCant = q
+          colTipo = celdas.findIndex(x => x.includes('tipo') || x.includes('type'))
+          break
+        }
+      }
+      if (idxHeader < 0) {
+        setError('No se encontraron los encabezados. El Excel debe tener columnas: Numero de Parte, Fecha Requerida, Cantidad y Tipo (firme/forecast)')
+        return
+      }
+
+      const partesCliente = articulosCliente.filter(a => a.cliente_id === Number(clienteId))
+      const lineas = []
+      const errs = []
+      for (let i = idxHeader + 1; i < filas.length; i++) {
+        const fila = filas[i]
+        const codigo = String(fila[colParte] || '').trim()
+        if (!codigo) continue
+        const numFila = i + 1
+        const rel = partesCliente.find(p => String(p.codigo_cliente || '').trim().toLowerCase() === codigo.toLowerCase())
+        if (!rel) { errs.push(`Fila ${numFila}: el numero de parte "${codigo}" no esta relacionado con este cliente (revisa la relacion articulo-cliente)`); continue }
+        const fecha = parseFecha(fila[colFecha])
+        if (!fecha) { errs.push(`Fila ${numFila}: fecha invalida "${fila[colFecha]}"`); continue }
+        const cantidad = Number(fila[colCant])
+        if (!(cantidad >= 0) || isNaN(cantidad)) { errs.push(`Fila ${numFila}: cantidad invalida "${fila[colCant]}"`); continue }
+        const tipo = colTipo >= 0 ? parseTipo(fila[colTipo]) : 'firme'
+        if (!tipo) { errs.push(`Fila ${numFila}: tipo invalido "${fila[colTipo]}" (usa firme o forecast)`); continue }
+        lineas.push({ articulo_id: rel.articulo_id, codigo_cliente: rel.codigo_cliente, fecha_requerida: fecha, cantidad, tipo })
+      }
+      setErroresArchivo(errs)
+      if (lineas.length === 0) { setError('No se pudo leer ninguna linea valida del archivo'); return }
+      setLineasNuevas(lineas)
+    } catch (err) {
+      setError('Error al leer el archivo: ' + err.message)
+    }
+    e.target.value = ''
+  }
+
+  // ---------- Comparativo incrementos / decrementos ----------
+  const construirDiff = () => {
+    const articuloIds = [...new Set(lineasNuevas.map(l => l.articulo_id))]
+    return articuloIds.map(id => {
+      const nuevas = lineasNuevas.filter(l => l.articulo_id === id)
+      const anteriores = vigentes.filter(v => v.cliente_id === Number(clienteId) && v.articulo_id === id)
+      const totalNuevo = nuevas.reduce((s, l) => s + Number(l.cantidad), 0)
+      const totalAnterior = anteriores.reduce((s, l) => s + Number(l.cantidad), 0)
+      const fechas = [...new Set([...nuevas.map(l => l.fecha_requerida), ...anteriores.map(l => l.fecha_requerida)])].sort()
+      const detalle = fechas.map(f => {
+        const cn = nuevas.filter(l => l.fecha_requerida === f).reduce((s, l) => s + Number(l.cantidad), 0)
+        const ca = anteriores.filter(l => l.fecha_requerida === f).reduce((s, l) => s + Number(l.cantidad), 0)
+        const tipos = [...new Set(nuevas.filter(l => l.fecha_requerida === f).map(l => l.tipo))].join(', ')
+        return { fecha: f, anterior: ca, nueva: cn, delta: cn - ca, tipos }
+      })
+      return { articulo_id: id, articulo: articuloDe(id), esNuevo: anteriores.length === 0, totalNuevo, totalAnterior, delta: totalNuevo - totalAnterior, detalle }
+    }).sort((a, b) => (a.articulo?.codigo_interno || '').localeCompare(b.articulo?.codigo_interno || ''))
+  }
+
+  const diff = lineasNuevas.length > 0 ? construirDiff() : []
+
+  // ---------- Confirmar y guardar ----------
+  const confirmarCarga = async () => {
+    setGuardando(true); setError('')
+    try {
+      const articuloIds = [...new Set(lineasNuevas.map(l => l.articulo_id))]
+      const { data: carga, error: e1 } = await supabase.from('releases_cargas').insert({
+        empresa_id: perfil.empresa_id,
+        cliente_id: Number(clienteId),
+        nombre_archivo: archivoNombre,
+        notas: notas || null,
+        cargado_por: perfil.id,
+        total_lineas: lineasNuevas.length,
+        articulos_incluidos: articuloIds.length,
+      }).select().single()
+      if (e1) throw e1
+
+      // Solo los articulos incluidos en el archivo pierden su release anterior
+      const { error: e2 } = await supabase.from('release_lineas')
+        .update({ vigente: false })
+        .eq('cliente_id', Number(clienteId)).eq('vigente', true).in('articulo_id', articuloIds)
+      if (e2) throw e2
+
+      const filas = lineasNuevas.map(l => ({ ...l, carga_id: carga.id, cliente_id: Number(clienteId), vigente: true }))
+      for (let i = 0; i < filas.length; i += 500) {
+        const { error: e3 } = await supabase.from('release_lineas').insert(filas.slice(i, i + 500))
+        if (e3) throw e3
+      }
+
+      setExito(`Release cargado: ${lineasNuevas.length} lineas de ${articuloIds.length} articulo(s)`)
+      setLineasNuevas([]); setErroresArchivo([]); setArchivoNombre(''); setNotas(''); setDetalleDiff(null)
+      await cargarDatos()
+      setVista('vigente')
+    } catch (err) {
+      setError('Error al guardar: ' + err.message)
+    }
+    setGuardando(false)
+  }
+
+  const descargarPlantilla = () => {
+    const wb = XLSX.utils.book_new()
+    const datos = [
+      ['Numero de Parte', 'Fecha Requerida', 'Cantidad', 'Tipo'],
+      ['ABC-12345', '01/08/2026', 5000, 'firme'],
+      ['ABC-12345', '15/08/2026', 3000, 'forecast'],
+    ]
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(datos), 'Release')
+    XLSX.writeFile(wb, 'plantilla_release.xlsx')
+  }
+
+  const exportarVigente = () => {
+    const filas = vigentesFiltrados.map(v => {
+      const art = articuloDe(v.articulo_id)
+      return {
+        Cliente: clientes.find(c => c.id === v.cliente_id)?.nombre || v.cliente_id,
+        'Codigo interno': art?.codigo_interno || '',
+        Descripcion: art?.descripcion || '',
+        'Parte cliente': v.codigo_cliente || '',
+        'Fecha requerida': fmtFecha(v.fecha_requerida),
+        Cantidad: Number(v.cantidad),
+        Tipo: v.tipo,
+      }
+    })
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Release vigente')
+    XLSX.writeFile(wb, `release_vigente_${new Date().toISOString().split('T')[0]}.xlsx`)
+  }
+
+  // ---------- Vista de vigentes agrupada ----------
+  const vigentesFiltrados = vigentes.filter(v => !filtroCliente || v.cliente_id === Number(filtroCliente))
+  const grupos = []
+  vigentesFiltrados.forEach(v => {
+    let g = grupos.find(x => x.cliente_id === v.cliente_id && x.articulo_id === v.articulo_id)
+    if (!g) {
+      g = { cliente_id: v.cliente_id, articulo_id: v.articulo_id, codigo_cliente: v.codigo_cliente, firme: 0, forecast: 0, lineas: [] }
+      grupos.push(g)
+    }
+    g[v.tipo] += Number(v.cantidad)
+    g.lineas.push(v)
+  })
+  grupos.sort((a, b) => (articuloDe(a.articulo_id)?.codigo_interno || '').localeCompare(articuloDe(b.articulo_id)?.codigo_interno || ''))
+
+  const verLineasCarga = async (cargaId) => {
+    if (cargaExpandida === cargaId) { setCargaExpandida(null); setLineasCarga([]); return }
+    const { data } = await supabase.from('release_lineas').select('*').eq('carga_id', cargaId).order('fecha_requerida')
+    setLineasCarga(data || [])
+    setCargaExpandida(cargaId)
+  }
+
+  if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando releases...</p>
+
+  return (
+    <div style={styles.container} className="aparecer">
+      <div style={styles.encabezado}>
+        <h2 style={styles.titulo}>Releases de Clientes</h2>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {vista === 'vigente' && grupos.length > 0 && (
+            <button style={styles.botonSec} onClick={exportarVigente}>Exportar Excel</button>
+          )}
+          {puedeCargar && (
+            <button style={styles.boton} onClick={() => { setVista(vista === 'cargar' ? 'vigente' : 'cargar'); setError(''); setExito('') }}>
+              {vista === 'cargar' ? 'Ver release vigente' : '+ Cargar release'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={styles.tabs}>
+        {[['vigente', 'Release vigente'], ['historial', 'Historial de cargas']].map(([id, nombre]) => (
+          <button key={id} style={vista === id ? styles.tabActiva : styles.tab} onClick={() => setVista(id)}>{nombre}</button>
+        ))}
+      </div>
+
+      {error && <p style={styles.error}>{error}</p>}
+      {exito && <p style={styles.exito}>{exito}</p>}
+
+      {/* ==================== CARGAR ==================== */}
+      {vista === 'cargar' && puedeCargar && (
+        <div style={styles.form}>
+          <h3 style={styles.formTitulo}>Cargar release desde Excel</h3>
+          <p style={styles.ayuda}>
+            El Excel debe tener columnas: <b>Numero de Parte</b> (del cliente), <b>Fecha Requerida</b>, <b>Cantidad</b> y <b>Tipo</b> (firme/forecast; si falta, se asume firme).
+            Solo los articulos incluidos en el archivo reemplazan su release anterior.
+            {' '}<button style={styles.link} onClick={descargarPlantilla}>Descargar plantilla</button>
+          </p>
+          <div style={styles.fila}>
+            <div style={styles.campo}>
+              <label style={styles.label}>Cliente *</label>
+              <select style={styles.input} value={clienteId} onChange={e => { setClienteId(e.target.value); setLineasNuevas([]); setErroresArchivo([]) }}>
+                <option value="">Selecciona cliente...</option>
+                {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Archivo Excel *</label>
+              <input type="file" accept=".xlsx,.xls,.csv" style={styles.input} onChange={leerArchivo} />
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Notas</label>
+              <input style={styles.input} value={notas} onChange={e => setNotas(e.target.value)} placeholder="Ej. release semana 32" />
+            </div>
+          </div>
+
+          {erroresArchivo.length > 0 && (
+            <div style={styles.cajaErrores}>
+              <p style={{ margin: '0 0 6px 0', fontWeight: '600', fontSize: '13px' }}>{erroresArchivo.length} fila(s) con problemas (no se cargaran):</p>
+              {erroresArchivo.slice(0, 15).map((e, i) => <p key={i} style={{ margin: '2px 0', fontSize: '12px' }}>{e}</p>)}
+              {erroresArchivo.length > 15 && <p style={{ margin: '2px 0', fontSize: '12px' }}>... y {erroresArchivo.length - 15} mas</p>}
+            </div>
+          )}
+
+          {/* Comparativo antes de confirmar */}
+          {diff.length > 0 && (
+            <>
+              <h3 style={{ ...styles.formTitulo, marginTop: '20px' }}>Analisis de cambios vs release vigente</h3>
+              <div style={styles.tabla}>
+                <div style={styles.tablaHeader}>
+                  <span style={{ flex: 2.5 }}>Articulo</span>
+                  <span style={{ flex: 1, textAlign: 'right' }}>Total anterior</span>
+                  <span style={{ flex: 1, textAlign: 'right' }}>Total nuevo</span>
+                  <span style={{ flex: 1, textAlign: 'right' }}>Diferencia</span>
+                  <span style={{ flex: 1, textAlign: 'center' }}>Estado</span>
+                  <span style={{ width: '90px' }}></span>
+                </div>
+                {diff.map(d => (
+                  <div key={d.articulo_id}>
+                    <div style={styles.tablaFila} className="fila-hover">
+                      <span style={{ flex: 2.5 }}>
+                        <b>{d.articulo?.codigo_interno}</b>
+                        <span style={{ color: '#64748b', fontSize: '13px' }}> - {d.articulo?.descripcion}</span>
+                      </span>
+                      <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(d.totalAnterior)}</span>
+                      <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(d.totalNuevo)}</span>
+                      <span style={{ flex: 1, textAlign: 'right', fontWeight: '600', color: d.delta > 0 ? '#16a34a' : d.delta < 0 ? '#dc2626' : '#64748b' }}>
+                        {d.delta > 0 ? '+' : ''}{fmtNum(d.delta)}
+                      </span>
+                      <span style={{ flex: 1, textAlign: 'center' }}>
+                        <span style={{ ...styles.badge, ...(d.esNuevo ? styles.badgeAzul : d.delta > 0 ? styles.badgeVerde : d.delta < 0 ? styles.badgeRojo : styles.badgeGris) }}>
+                          {d.esNuevo ? 'Nuevo' : d.delta > 0 ? 'Incremento' : d.delta < 0 ? 'Decremento' : 'Sin cambio'}
+                        </span>
+                      </span>
+                      <span style={{ width: '90px', textAlign: 'right' }}>
+                        <button style={styles.botonAccion} onClick={() => setDetalleDiff(detalleDiff === d.articulo_id ? null : d.articulo_id)}>
+                          {detalleDiff === d.articulo_id ? 'Ocultar' : 'Detalle'}
+                        </button>
+                      </span>
+                    </div>
+                    {detalleDiff === d.articulo_id && (
+                      <div style={styles.subTabla}>
+                        <div style={{ ...styles.tablaHeader, backgroundColor: '#fff' }}>
+                          <span style={{ flex: 1 }}>Fecha</span>
+                          <span style={{ flex: 1, textAlign: 'right' }}>Anterior</span>
+                          <span style={{ flex: 1, textAlign: 'right' }}>Nueva</span>
+                          <span style={{ flex: 1, textAlign: 'right' }}>Delta</span>
+                          <span style={{ flex: 1, textAlign: 'center' }}>Tipo</span>
+                        </div>
+                        {d.detalle.map(l => (
+                          <div key={l.fecha} style={{ ...styles.tablaFila, padding: '8px 20px', fontSize: '13px' }}>
+                            <span style={{ flex: 1 }}>{fmtFecha(l.fecha)}</span>
+                            <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(l.anterior)}</span>
+                            <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(l.nueva)}</span>
+                            <span style={{ flex: 1, textAlign: 'right', color: l.delta > 0 ? '#16a34a' : l.delta < 0 ? '#dc2626' : '#64748b' }}>
+                              {l.delta > 0 ? '+' : ''}{fmtNum(l.delta)}
+                            </span>
+                            <span style={{ flex: 1, textAlign: 'center', color: '#64748b' }}>{l.tipos || '(se elimina)'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div style={{ ...styles.botones, marginTop: '16px' }}>
+                <button style={styles.botonSec} onClick={() => { setLineasNuevas([]); setErroresArchivo([]); setArchivoNombre('') }} disabled={guardando}>Cancelar</button>
+                <button style={styles.boton} onClick={confirmarCarga} disabled={guardando}>
+                  {guardando ? 'Guardando...' : `Confirmar y reemplazar (${lineasNuevas.length} lineas)`}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ==================== VIGENTE ==================== */}
+      {vista === 'vigente' && (
+        <>
+          <div style={styles.selectorBox}>
+            <label style={{ ...styles.label, marginRight: '10px' }}>Cliente:</label>
+            <select style={styles.input} value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}>
+              <option value="">Todos</option>
+              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+          </div>
+          {grupos.length === 0 ? (
+            <p style={{ color: '#666', padding: '10px 4px' }}>No hay release vigente. Usa "+ Cargar release" para subir el primero.</p>
+          ) : (
+            <div style={styles.tabla}>
+              <div style={styles.tablaHeader}>
+                <span style={{ flex: 2.5 }}>Articulo</span>
+                <span style={{ flex: 1.2 }}>Parte cliente</span>
+                <span style={{ flex: 1.2 }}>Cliente</span>
+                <span style={{ flex: 1, textAlign: 'right' }}>Firme</span>
+                <span style={{ flex: 1, textAlign: 'right' }}>Forecast</span>
+                <span style={{ flex: 1, textAlign: 'center' }}>Proxima fecha</span>
+                <span style={{ width: '90px' }}></span>
+              </div>
+              {grupos.map(g => {
+                const art = articuloDe(g.articulo_id)
+                const clave = `${g.cliente_id}-${g.articulo_id}`
+                const proxima = g.lineas.filter(l => l.tipo === 'firme')[0]?.fecha_requerida || g.lineas[0]?.fecha_requerida
+                return (
+                  <div key={clave}>
+                    <div style={styles.tablaFila} className="fila-hover">
+                      <span style={{ flex: 2.5 }}>
+                        <b>{art?.codigo_interno}</b>
+                        <span style={{ color: '#64748b', fontSize: '13px' }}> - {art?.descripcion}</span>
+                      </span>
+                      <span style={{ flex: 1.2, color: '#64748b' }}>{g.codigo_cliente}</span>
+                      <span style={{ flex: 1.2 }}>{clientes.find(c => c.id === g.cliente_id)?.nombre}</span>
+                      <span style={{ flex: 1, textAlign: 'right', fontWeight: '600' }}>{fmtNum(g.firme)}</span>
+                      <span style={{ flex: 1, textAlign: 'right', color: '#64748b' }}>{fmtNum(g.forecast)}</span>
+                      <span style={{ flex: 1, textAlign: 'center' }}>{fmtFecha(proxima)}</span>
+                      <span style={{ width: '90px', textAlign: 'right' }}>
+                        <button style={styles.botonAccion} onClick={() => setExpandido(expandido === clave ? null : clave)}>
+                          {expandido === clave ? 'Ocultar' : 'Detalle'}
+                        </button>
+                      </span>
+                    </div>
+                    {expandido === clave && (
+                      <div style={styles.subTabla}>
+                        {g.lineas.map(l => (
+                          <div key={l.id} style={{ ...styles.tablaFila, padding: '7px 20px', fontSize: '13px' }}>
+                            <span style={{ flex: 1 }}>{fmtFecha(l.fecha_requerida)}</span>
+                            <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(l.cantidad)} {art?.unidad_medida || 'pzas'}</span>
+                            <span style={{ flex: 1, textAlign: 'center' }}>
+                              <span style={{ ...styles.badge, ...(l.tipo === 'firme' ? styles.badgeVerde : styles.badgeGris) }}>{l.tipo}</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ==================== HISTORIAL ==================== */}
+      {vista === 'historial' && (
+        cargas.length === 0 ? (
+          <p style={{ color: '#666', padding: '10px 4px' }}>Aun no se ha cargado ningun release.</p>
+        ) : (
+          <div style={styles.tabla}>
+            <div style={styles.tablaHeader}>
+              <span style={{ flex: 1.3 }}>Fecha de carga</span>
+              <span style={{ flex: 1.3 }}>Cliente</span>
+              <span style={{ flex: 1.8 }}>Archivo</span>
+              <span style={{ flex: 0.8, textAlign: 'right' }}>Lineas</span>
+              <span style={{ flex: 0.8, textAlign: 'right' }}>Articulos</span>
+              <span style={{ flex: 1.2 }}>Cargado por</span>
+              <span style={{ width: '90px' }}></span>
+            </div>
+            {cargas.map(cg => (
+              <div key={cg.id}>
+                <div style={styles.tablaFila} className="fila-hover">
+                  <span style={{ flex: 1.3 }}>{new Date(cg.fecha_carga).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                  <span style={{ flex: 1.3 }}>{cg.cliente?.nombre}</span>
+                  <span style={{ flex: 1.8, color: '#64748b', fontSize: '13px' }}>{cg.nombre_archivo}{cg.notas ? ` - ${cg.notas}` : ''}</span>
+                  <span style={{ flex: 0.8, textAlign: 'right' }}>{cg.total_lineas}</span>
+                  <span style={{ flex: 0.8, textAlign: 'right' }}>{cg.articulos_incluidos}</span>
+                  <span style={{ flex: 1.2, color: '#64748b', fontSize: '13px' }}>{cg.usuario?.nombre}</span>
+                  <span style={{ width: '90px', textAlign: 'right' }}>
+                    <button style={styles.botonAccion} onClick={() => verLineasCarga(cg.id)}>
+                      {cargaExpandida === cg.id ? 'Ocultar' : 'Detalle'}
+                    </button>
+                  </span>
+                </div>
+                {cargaExpandida === cg.id && (
+                  <div style={styles.subTabla}>
+                    {lineasCarga.map(l => {
+                      const art = articuloDe(l.articulo_id)
+                      return (
+                        <div key={l.id} style={{ ...styles.tablaFila, padding: '7px 20px', fontSize: '13px' }}>
+                          <span style={{ flex: 2 }}><b>{art?.codigo_interno}</b> <span style={{ color: '#94a3b8' }}>({l.codigo_cliente})</span></span>
+                          <span style={{ flex: 1 }}>{fmtFecha(l.fecha_requerida)}</span>
+                          <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(l.cantidad)}</span>
+                          <span style={{ flex: 1, textAlign: 'center' }}>
+                            <span style={{ ...styles.badge, ...(l.tipo === 'firme' ? styles.badgeVerde : styles.badgeGris) }}>{l.tipo}</span>
+                          </span>
+                          <span style={{ flex: 1, textAlign: 'center', color: l.vigente ? '#16a34a' : '#94a3b8', fontSize: '12px' }}>
+                            {l.vigente ? 'vigente' : 'reemplazada'}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+const styles = {
+  container: { padding: '28px' },
+  encabezado: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
+  titulo: { fontSize: '18px', fontWeight: '600', color: '#1a1a2e', margin: '0' },
+  tabs: { display: 'flex', gap: '4px', marginBottom: '16px', borderBottom: '1px solid #e2e8f0' },
+  tab: { padding: '8px 16px', border: 'none', backgroundColor: 'transparent', fontSize: '14px', color: '#64748b', cursor: 'pointer', borderBottom: '2px solid transparent' },
+  tabActiva: { padding: '8px 16px', border: 'none', backgroundColor: 'transparent', fontSize: '14px', color: '#2563eb', fontWeight: '600', cursor: 'pointer', borderBottom: '2px solid #2563eb' },
+  selectorBox: { backgroundColor: '#fff', borderRadius: '10px', padding: '14px 20px', marginBottom: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', display: 'flex', alignItems: 'center' },
+  form: { backgroundColor: '#fff', borderRadius: '10px', padding: '24px', marginBottom: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
+  formTitulo: { fontSize: '15px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 10px 0' },
+  ayuda: { fontSize: '13px', color: '#64748b', margin: '0 0 16px 0', lineHeight: '1.5' },
+  link: { border: 'none', background: 'none', color: '#2563eb', cursor: 'pointer', fontSize: '13px', padding: 0, textDecoration: 'underline' },
+  fila: { display: 'flex', gap: '16px', marginBottom: '16px' },
+  campo: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 },
+  label: { fontSize: '12px', fontWeight: '500', color: '#444' },
+  input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', fontFamily: 'inherit', backgroundColor: '#fff' },
+  botones: { display: 'flex', justifyContent: 'flex-end', gap: '10px' },
+  boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
+  botonSec: { padding: '9px 20px', backgroundColor: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
+  botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
+  tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
+  tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
+  tablaFila: { display: 'flex', padding: '12px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
+  subTabla: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', padding: '4px 0' },
+  badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '600' },
+  badgeVerde: { backgroundColor: '#dcfce7', color: '#16a34a' },
+  badgeRojo: { backgroundColor: '#fee2e2', color: '#dc2626' },
+  badgeAzul: { backgroundColor: '#dbeafe', color: '#2563eb' },
+  badgeGris: { backgroundColor: '#f1f5f9', color: '#64748b' },
+  cajaErrores: { backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 16px', color: '#92400e', marginBottom: '12px' },
+  error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
+  exito: { color: '#16a34a', fontSize: '13px', marginBottom: '12px' },
+}

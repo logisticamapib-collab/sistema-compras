@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import Clientes from '../Ingenieria/Clientes'
 import ModuloPendiente from '../ModuloPendiente'
+import Releases from './Releases'
 
 const secciones = [
   { id: 'almacen', modulo: null, titulo: 'Almacen', pendiente: true },
   { id: 'embarques', modulo: null, titulo: 'Embarques', pendiente: true },
-  { id: 'customer_service', modulo: null, titulo: 'Customer Service', pendiente: true },
+  { id: 'customer_service', modulo: 'cs_releases', titulo: 'Customer Service' },
   { id: 'clientes', modulo: 'ing_clientes', titulo: 'Clientes' },
 ]
 
@@ -35,7 +36,7 @@ export default function GrupoLogistica() {
         )}
         {seccion === 'almacen' && <ModuloPendiente titulo="Almacen" />}
         {seccion === 'embarques' && <ModuloPendiente titulo="Embarques" />}
-        {seccion === 'customer_service' && <ModuloPendiente titulo="Customer Service" />}
+        {seccion === 'customer_service' && <Releases />}
         {seccion === 'clientes' && <Clientes />}
       </div>
     </div>
