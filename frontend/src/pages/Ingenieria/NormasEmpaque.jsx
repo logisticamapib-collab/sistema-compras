@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
-const formVacio = { articulo_id: '', nombre: '', piezas_por_empaque: '', piezas_por_tarima: '', activa: true }
+const formVacio = {
+  articulo_id: '', nombre: '', piezas_por_empaque: '', piezas_por_tarima: '',
+  tipo: 'oficial', aprobada_cliente: false, activa: true,
+}
 
 export default function NormasEmpaque() {
   const { perfil, tienePermiso } = useAuth()
@@ -12,6 +15,7 @@ export default function NormasEmpaque() {
   const [mostrarForm, setMostrarForm] = useState(false)
   const [editando, setEditando] = useState(null)
   const [form, setForm] = useState(formVacio)
+  const [archivo, setArchivo] = useState(null)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [filtroArticulo, setFiltroArticulo] = useState('')
@@ -34,7 +38,7 @@ export default function NormasEmpaque() {
     setLoading(false)
   }
 
-  const abrirNuevo = () => { setEditando(null); setForm(formVacio); setMostrarForm(true); setError('') }
+  const abrirNuevo = () => { setEditando(null); setForm(formVacio); setArchivo(null); setMostrarForm(true); setError('') }
   const abrirEditar = (n) => {
     setEditando(n)
     setForm({
@@ -42,23 +46,49 @@ export default function NormasEmpaque() {
       nombre: n.nombre || '',
       piezas_por_empaque: n.piezas_por_empaque?.toString() || '',
       piezas_por_tarima: n.piezas_por_tarima?.toString() || '',
+      tipo: n.tipo || 'oficial',
+      aprobada_cliente: n.aprobada_cliente || false,
       activa: n.activa ?? true,
     })
+    setArchivo(null)
     setMostrarForm(true)
     setError('')
   }
 
   const guardar = async () => {
     if (!form.articulo_id || !form.piezas_por_empaque) { setError('Articulo y piezas por empaque son obligatorios'); return }
+    // Solo puede haber una norma OFICIAL activa por articulo
+    if (form.tipo === 'oficial' && form.activa) {
+      const otraOficial = normas.find(n =>
+        n.articulo_id === parseInt(form.articulo_id) && n.tipo === 'oficial' && n.activa && n.id !== editando?.id
+      )
+      if (otraOficial) {
+        setError(`Ese articulo ya tiene una norma oficial activa (${otraOficial.nombre || '#' + otraOficial.id}). Desactivala primero o registra esta como alterna.`)
+        return
+      }
+    }
     setError('')
     setLoading(true)
+
+    // Subir PDF firmado si se selecciono
+    let camposDocumento = {}
+    if (archivo) {
+      const ruta = `normas_empaque/${form.articulo_id}/${Date.now()}_${archivo.name}`
+      const { error: errS } = await supabase.storage.from('calidad').upload(ruta, archivo)
+      if (errS) { setError('Error al subir el PDF: ' + errS.message); setLoading(false); return }
+      const { data: urlData } = supabase.storage.from('calidad').getPublicUrl(ruta)
+      camposDocumento = { documento_url: urlData.publicUrl, documento_nombre: archivo.name }
+    }
 
     const payload = {
       articulo_id: parseInt(form.articulo_id),
       nombre: form.nombre,
       piezas_por_empaque: parseFloat(form.piezas_por_empaque),
       piezas_por_tarima: form.piezas_por_tarima ? parseFloat(form.piezas_por_tarima) : null,
+      tipo: form.tipo,
+      aprobada_cliente: form.tipo === 'oficial' ? true : form.aprobada_cliente,
       activa: form.activa,
+      ...camposDocumento,
     }
 
     let error
@@ -74,14 +104,32 @@ export default function NormasEmpaque() {
 
     setExito(editando ? 'Norma actualizada' : 'Norma creada')
     setMostrarForm(false)
+    setArchivo(null)
     await cargarDatos()
     setLoading(false)
     setTimeout(() => setExito(''), 3000)
   }
 
   const toggleActiva = async (n) => {
+    // Al reactivar una oficial, validar que no haya otra oficial activa
+    if (!n.activa && n.tipo === 'oficial') {
+      const otraOficial = normas.find(x => x.articulo_id === n.articulo_id && x.tipo === 'oficial' && x.activa && x.id !== n.id)
+      if (otraOficial) { setError('Ese articulo ya tiene otra norma oficial activa'); return }
+    }
     await supabase.from('normas_empaque').update({ activa: !n.activa }).eq('id', n.id)
     await cargarDatos()
+  }
+
+  const imprimir = (n) => {
+    if (!n.documento_url) return
+    // Abre el PDF oficial firmado en una pestana nueva, desde ahi se imprime/postea en maquina
+    window.open(n.documento_url, '_blank')
+  }
+
+  const etiquetaTipo = (n) => {
+    if (n.tipo === 'oficial') return { texto: 'Oficial', fondo: '#eff6ff', color: '#2563eb' }
+    if (n.aprobada_cliente) return { texto: 'Alterna aprobada', fondo: '#ecfeff', color: '#0891b2' }
+    return { texto: 'Alterna interna', fondo: '#fef9c3', color: '#854d0e' }
   }
 
   const normasFiltradas = filtroArticulo
@@ -120,12 +168,49 @@ export default function NormasEmpaque() {
           </div>
           <div style={styles.fila}>
             <div style={styles.campo}>
+              <label style={styles.label}>Tipo de norma *</label>
+              <select style={styles.input} value={form.tipo}
+                onChange={e => setForm({ ...form, tipo: e.target.value, aprobada_cliente: false })}>
+                <option value="oficial">Oficial (aprobada por el cliente)</option>
+                <option value="alterna">Alterna</option>
+              </select>
+            </div>
+            <div style={styles.campo}>
               <label style={styles.label}>Piezas por empaque *</label>
               <input style={styles.input} type="number" min="1" value={form.piezas_por_empaque} onChange={e => setForm({ ...form, piezas_por_empaque: e.target.value })} />
             </div>
             <div style={styles.campo}>
               <label style={styles.label}>Piezas por tarima</label>
               <input style={styles.input} type="number" min="1" value={form.piezas_por_tarima} onChange={e => setForm({ ...form, piezas_por_tarima: e.target.value })} />
+            </div>
+          </div>
+          {form.tipo === 'alterna' && (
+            <div style={styles.avisoAlterna}>
+              <div style={styles.filaCheckbox}>
+                <input type="checkbox" id="aprobadaCliente" checked={form.aprobada_cliente}
+                  onChange={e => setForm({ ...form, aprobada_cliente: e.target.checked })} />
+                <label htmlFor="aprobadaCliente" style={styles.labelCheckbox}>
+                  El cliente aprueba este empaque alterno para entrega directa
+                </label>
+              </div>
+              <p style={styles.notaAlterna}>
+                {form.aprobada_cliente
+                  ? 'Se podra embarcar al cliente en este empaque sin traspaleo.'
+                  : 'Uso interno unicamente: al salir de inyeccion se debera traspalear al empaque oficial antes de embarcar.'}
+              </p>
+            </div>
+          )}
+          <div style={styles.fila}>
+            <div style={{ ...styles.campo, flex: 2 }}>
+              <label style={styles.label}>Formato oficial firmado (PDF) — el que se postea en maquina</label>
+              {editando?.documento_url && !archivo && (
+                <p style={{ fontSize: '13px', color: '#16a34a', margin: '0 0 4px 0' }}>
+                  ✓ <a href={editando.documento_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>{editando.documento_nombre || 'Ver documento actual'}</a>
+                  <span style={{ color: '#94a3b8' }}> (sube otro para reemplazarlo)</span>
+                </p>
+              )}
+              <input style={{ fontSize: '13px' }} type="file" accept=".pdf"
+                onChange={e => setArchivo(e.target.files[0])} />
             </div>
             <div style={{ ...styles.campo, justifyContent: 'flex-end' }}>
               <div style={styles.filaCheckbox}>
@@ -152,33 +237,49 @@ export default function NormasEmpaque() {
         <div style={styles.tablaHeader}>
           <span style={{ flex: 2 }}>Articulo</span>
           <span style={{ flex: 2 }}>Norma</span>
+          <span style={{ flex: 1 }}>Tipo</span>
           <span style={{ flex: 1 }}>Pzs/empaque</span>
           <span style={{ flex: 1 }}>Pzs/tarima</span>
+          <span style={{ flex: 1 }}>Formato</span>
           <span style={{ flex: 1 }}>Estatus</span>
-          <span style={{ flex: 1 }}>Acciones</span>
+          <span style={{ flex: 2 }}>Acciones</span>
         </div>
         {loading ? <p style={{ padding: 20, color: '#666' }}>Cargando...</p> : normasFiltradas.length === 0 ? (
           <p style={{ padding: 20, color: '#666' }}>No hay normas de empaque registradas</p>
-        ) : normasFiltradas.map(n => (
-          <div key={n.id} className="fila-hover" style={{ ...styles.tablaFila, opacity: n.activa ? 1 : 0.5 }}>
-            <span style={{ flex: 2, fontSize: '13px' }}>
-              <span style={{ fontWeight: '600', color: '#2563eb' }}>{n.articulos?.codigo_interno}</span>
-              <span style={{ color: '#666' }}> — {n.articulos?.descripcion}</span>
-            </span>
-            <span style={{ flex: 2, fontSize: '14px' }}>{n.nombre || '-'}</span>
-            <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{n.piezas_por_empaque}</span>
-            <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{n.piezas_por_tarima || '-'}</span>
-            <span style={{ flex: 1 }}>
-              <span style={{ ...styles.badge, ...(n.activa ? { backgroundColor: '#f0fdf4', color: '#16a34a' } : { backgroundColor: '#fef2f2', color: '#dc2626' }) }}>
-                {n.activa ? 'Activa' : 'Inactiva'}
+        ) : normasFiltradas.map(n => {
+          const tipo = etiquetaTipo(n)
+          return (
+            <div key={n.id} className="fila-hover" style={{ ...styles.tablaFila, opacity: n.activa ? 1 : 0.5 }}>
+              <span style={{ flex: 2, fontSize: '13px' }}>
+                <span style={{ fontWeight: '600', color: '#2563eb' }}>{n.articulos?.codigo_interno}</span>
+                <span style={{ color: '#666' }}> — {n.articulos?.descripcion}</span>
               </span>
-            </span>
-            <span style={{ flex: 1 }}>
-              {puedeEditar && <button style={styles.botonAccion} onClick={() => abrirEditar(n)}>Editar</button>}
-              {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => toggleActiva(n)}>{n.activa ? 'Desactivar' : 'Activar'}</button>}
-            </span>
-          </div>
-        ))}
+              <span style={{ flex: 2, fontSize: '14px' }}>{n.nombre || '-'}</span>
+              <span style={{ flex: 1 }}>
+                <span style={{ ...styles.badge, backgroundColor: tipo.fondo, color: tipo.color }}>{tipo.texto}</span>
+              </span>
+              <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{n.piezas_por_empaque}</span>
+              <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{n.piezas_por_tarima || '-'}</span>
+              <span style={{ flex: 1, fontSize: '12px' }}>
+                {n.documento_url
+                  ? <span style={{ color: '#16a34a' }}>✓ PDF</span>
+                  : <span style={{ color: '#dc2626' }}>Sin PDF</span>}
+              </span>
+              <span style={{ flex: 1 }}>
+                <span style={{ ...styles.badge, ...(n.activa ? { backgroundColor: '#f0fdf4', color: '#16a34a' } : { backgroundColor: '#fef2f2', color: '#dc2626' }) }}>
+                  {n.activa ? 'Activa' : 'Inactiva'}
+                </span>
+              </span>
+              <span style={{ flex: 2 }}>
+                {n.documento_url && (
+                  <button style={styles.botonAccion} onClick={() => imprimir(n)}>Imprimir</button>
+                )}
+                {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => abrirEditar(n)}>Editar</button>}
+                {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => toggleActiva(n)}>{n.activa ? 'Desactivar' : 'Activar'}</button>}
+              </span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -197,12 +298,14 @@ const styles = {
   botones: { display: 'flex', justifyContent: 'flex-end' },
   filaCheckbox: { display: 'flex', alignItems: 'center', gap: '8px' },
   labelCheckbox: { fontSize: '13px', color: '#444' },
+  avisoAlterna: { backgroundColor: '#f8fafc', borderRadius: '8px', padding: '14px', marginBottom: '16px' },
+  notaAlterna: { fontSize: '12px', color: '#94a3b8', margin: '8px 0 0 0' },
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '14px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' },
-  badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '500' },
+  badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
   exito: { color: '#16a34a', fontSize: '13px', marginBottom: '12px' },
 }

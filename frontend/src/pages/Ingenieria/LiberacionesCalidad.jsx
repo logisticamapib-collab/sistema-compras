@@ -30,7 +30,7 @@ export default function LiberacionesCalidad() {
         .eq('empresa_id', perfil.empresa_id).eq('origen', 'fabricado').eq('activo', true).order('codigo_interno'),
       supabase.from('bom').select('articulo_padre_id'),
       supabase.from('articulo_cliente').select('articulo_id').eq('activo', true),
-      supabase.from('normas_empaque').select('articulo_id').eq('activa', true),
+      supabase.from('normas_empaque').select('articulo_id').eq('activa', true).eq('tipo', 'oficial'),
       supabase.from('niveles_ingenieria').select('articulo_id, estatus').eq('estatus', 'vigente'),
       supabase.from('rutas_fabricacion').select('articulo_id'),
       supabase.from('molde_cavidades').select('articulo_id').eq('activa', true),
@@ -80,9 +80,9 @@ export default function LiberacionesCalidad() {
         detalle: clientesArt.some(c => c.articulo_id === a.id) ? 'Con cliente y codigo de parte' : 'Sin cliente asignado',
       },
       {
-        clave: 'empaque', nombre: 'Norma de empaque activa',
+        clave: 'empaque', nombre: 'Norma de empaque oficial activa',
         ok: normas.some(n => n.articulo_id === a.id),
-        detalle: normas.some(n => n.articulo_id === a.id) ? 'Norma definida' : 'Sin norma de empaque',
+        detalle: normas.some(n => n.articulo_id === a.id) ? 'Norma oficial definida' : 'Sin norma de empaque oficial',
       },
       {
         clave: 'nivel', nombre: 'Nivel de ingenieria vigente',
