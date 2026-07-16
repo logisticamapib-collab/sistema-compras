@@ -2,17 +2,20 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
+const formVacio = {
+  nombre: '', codigo: '', razon_social: '', rfc: '',
+  telefono: '', email: '', direccion: '', ciudad: '', estado: '', cp: ''
+}
+
 export default function Sites() {
   const { perfil, tienePermiso } = useAuth()
   const [sites, setSites] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
+  const [editando, setEditando] = useState(null)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
-  const [form, setForm] = useState({
-    nombre: '', codigo: '', razon_social: '', rfc: '',
-    telefono: '', email: '', direccion: '', ciudad: '', estado: '', cp: ''
-  })
+  const [form, setForm] = useState(formVacio)
 
   useEffect(() => { cargarSites() }, [])
 
@@ -24,6 +27,18 @@ export default function Sites() {
     setLoading(false)
   }
 
+  const abrirNuevo = () => { setEditando(null); setForm(formVacio); setMostrarForm(true); setError('') }
+  const abrirEditar = (s) => {
+    setEditando(s)
+    setForm({
+      nombre: s.nombre || '', codigo: s.codigo || '', razon_social: s.razon_social || '',
+      rfc: s.rfc || '', telefono: s.telefono || '', email: s.email || '',
+      direccion: s.direccion || '', ciudad: s.ciudad || '', estado: s.estado || '', cp: s.cp || '',
+    })
+    setMostrarForm(true)
+    setError('')
+  }
+
   const guardarSite = async () => {
     if (!form.nombre || !form.codigo) {
       setError('Nombre y codigo son obligatorios')
@@ -32,8 +47,15 @@ export default function Sites() {
     setError('')
     setLoading(true)
 
-    const { error } = await supabase.from('sites')
-      .insert({ ...form, codigo: form.codigo.toUpperCase(), empresa_id: perfil.empresa_id })
+    const payload = { ...form, codigo: form.codigo.toUpperCase() }
+    let error
+    if (editando) {
+      const r = await supabase.from('sites').update(payload).eq('id', editando.id)
+      error = r.error
+    } else {
+      const r = await supabase.from('sites').insert({ ...payload, empresa_id: perfil.empresa_id })
+      error = r.error
+    }
 
     if (error) {
       setError(error.message.includes('unique') ? 'El codigo de site ya existe' : error.message)
@@ -41,9 +63,10 @@ export default function Sites() {
       return
     }
 
-    setExito('Site guardado correctamente')
+    setExito(editando ? 'Site actualizado correctamente' : 'Site guardado correctamente')
     setMostrarForm(false)
-    setForm({ nombre: '', codigo: '', razon_social: '', rfc: '', telefono: '', email: '', direccion: '', ciudad: '', estado: '', cp: '' })
+    setEditando(null)
+    setForm(formVacio)
     await cargarSites()
     setLoading(false)
     setTimeout(() => setExito(''), 3000)
@@ -59,7 +82,7 @@ export default function Sites() {
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Sites / Plantas</h2>
         {tienePermiso('config_sites', 'crear') && (
-          <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
+          <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
             {mostrarForm ? 'Cancelar' : '+ Nuevo site'}
           </button>
         )}
@@ -70,7 +93,7 @@ export default function Sites() {
 
       {mostrarForm && (
         <div style={styles.form}>
-          <h3 style={styles.formTitulo}>Nuevo site</h3>
+          <h3 style={styles.formTitulo}>{editando ? `Editando: ${editando.nombre}` : 'Nuevo site'}</h3>
           <div style={styles.fila}>
             <div style={styles.campo}>
               <label style={styles.label}>Nombre del site *</label>
@@ -137,9 +160,9 @@ export default function Sites() {
             </div>
           </div>
           <div style={styles.botones}>
-            <button style={styles.botonSecundario} onClick={() => setMostrarForm(false)}>Cancelar</button>
+            <button style={styles.botonSecundario} onClick={() => { setMostrarForm(false); setEditando(null) }}>Cancelar</button>
             <button style={styles.boton} onClick={guardarSite} disabled={loading}>
-              {loading ? 'Guardando...' : 'Guardar site'}
+              {loading ? 'Guardando...' : editando ? 'Actualizar site' : 'Guardar site'}
             </button>
           </div>
         </div>
@@ -151,7 +174,7 @@ export default function Sites() {
           <span style={{ flex: 2 }}>Nombre</span>
           <span style={{ flex: 2 }}>Ciudad / Estado</span>
           <span style={{ flex: 1 }}>Estatus</span>
-          <span style={{ flex: 1 }}>Acciones</span>
+          <span style={{ flex: 2 }}>Acciones</span>
         </div>
         {loading ? (
           <p style={{ padding: '20px', color: '#666' }}>Cargando...</p>
@@ -165,11 +188,14 @@ export default function Sites() {
                 {s.activo ? 'Activo' : 'Inactivo'}
               </span>
             </span>
-            <span style={{ flex: 1 }}>
+            <span style={{ flex: 2 }}>
               {tienePermiso('config_sites', 'editar') && (
-                <button style={styles.botonAccion} onClick={() => toggleActivo(s)}>
-                  {s.activo ? 'Desactivar' : 'Activar'}
-                </button>
+                <>
+                  <button style={styles.botonAccion} onClick={() => abrirEditar(s)}>Editar</button>
+                  <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => toggleActivo(s)}>
+                    {s.activo ? 'Desactivar' : 'Activar'}
+                  </button>
+                </>
               )}
             </span>
           </div>

@@ -8,6 +8,7 @@ export default function CentrosCostos() {
   const [sites, setSites] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
+  const [editando, setEditando] = useState(null)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [form, setForm] = useState({ codigo: '', nombre: '', site_id: '' })
@@ -25,17 +26,33 @@ export default function CentrosCostos() {
     setLoading(false)
   }
 
+  const abrirNuevo = () => { setEditando(null); setForm({ codigo: '', nombre: '', site_id: '' }); setMostrarForm(true); setError('') }
+  const abrirEditar = (r) => {
+    setEditando(r)
+    setForm({ codigo: r.codigo || '', nombre: r.nombre || '', site_id: r.site_id?.toString() || '' })
+    setMostrarForm(true)
+    setError('')
+  }
+
   const guardar = async () => {
     if (!form.codigo || !form.nombre || !form.site_id) {
       setError('Todos los campos son obligatorios')
       return
     }
     setError('')
-    const { error } = await supabase.from('centros_costos')
-      .insert({ ...form, site_id: parseInt(form.site_id) })
+    const payload = { ...form, site_id: parseInt(form.site_id) }
+    let error
+    if (editando) {
+      const r = await supabase.from('centros_costos').update(payload).eq('id', editando.id)
+      error = r.error
+    } else {
+      const r = await supabase.from('centros_costos').insert(payload)
+      error = r.error
+    }
     if (error) { setError(error.message); return }
-    setExito('Centro de costos guardado')
+    setExito(editando ? 'Centro de costos actualizado' : 'Centro de costos guardado')
     setMostrarForm(false)
+    setEditando(null)
     setForm({ codigo: '', nombre: '', site_id: '' })
     await cargarDatos()
     setTimeout(() => setExito(''), 3000)
@@ -51,7 +68,7 @@ export default function CentrosCostos() {
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Centros de Costos</h2>
         {tienePermiso('config_centros_costos', 'crear') && (
-          <button style={styles.boton} onClick={() => setMostrarForm(!mostrarForm)}>
+          <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
             {mostrarForm ? 'Cancelar' : '+ Nuevo centro de costos'}
           </button>
         )}
@@ -60,6 +77,7 @@ export default function CentrosCostos() {
       {exito && <p style={styles.exito}>{exito}</p>}
       {mostrarForm && (
         <div style={styles.form}>
+          <h3 style={styles.formTitulo}>{editando ? `Editando: ${editando.codigo}` : 'Nuevo centro de costos'}</h3>
           <div style={styles.fila}>
             <div style={styles.campo}>
               <label style={styles.label}>Codigo *</label>
@@ -83,8 +101,8 @@ export default function CentrosCostos() {
             </div>
           </div>
           <div style={styles.botones}>
-            <button style={styles.botonSecundario} onClick={() => setMostrarForm(false)}>Cancelar</button>
-            <button style={styles.boton} onClick={guardar}>Guardar</button>
+            <button style={styles.botonSecundario} onClick={() => { setMostrarForm(false); setEditando(null) }}>Cancelar</button>
+            <button style={styles.boton} onClick={guardar}>{editando ? 'Actualizar' : 'Guardar'}</button>
           </div>
         </div>
       )}
@@ -94,7 +112,7 @@ export default function CentrosCostos() {
           <span style={{ flex: 2 }}>Nombre</span>
           <span style={{ flex: 1 }}>Site</span>
           <span style={{ flex: 1 }}>Estatus</span>
-          <span style={{ flex: 1 }}>Acciones</span>
+          <span style={{ flex: 2 }}>Acciones</span>
         </div>
         {loading ? <p style={{ padding: '20px', color: '#666' }}>Cargando...</p>
           : registros.map(r => (
@@ -107,11 +125,14 @@ export default function CentrosCostos() {
                   {r.activo ? 'Activo' : 'Inactivo'}
                 </span>
               </span>
-              <span style={{ flex: 1 }}>
+              <span style={{ flex: 2 }}>
                 {tienePermiso('config_centros_costos', 'editar') && (
-                  <button style={styles.botonAccion} onClick={() => toggleActivo(r)}>
-                    {r.activo ? 'Desactivar' : 'Activar'}
-                  </button>
+                  <>
+                    <button style={styles.botonAccion} onClick={() => abrirEditar(r)}>Editar</button>
+                    <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => toggleActivo(r)}>
+                      {r.activo ? 'Desactivar' : 'Activar'}
+                    </button>
+                  </>
                 )}
               </span>
             </div>
@@ -125,6 +146,7 @@ const styles = {
   encabezado: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
   titulo: { fontSize: '18px', fontWeight: '600', color: '#1a1a2e', margin: '0' },
   form: { backgroundColor: '#fff', borderRadius: '10px', padding: '24px', marginBottom: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
+  formTitulo: { fontSize: '15px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 16px 0' },
   fila: { display: 'flex', gap: '16px', marginBottom: '16px' },
   campo: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 },
   label: { fontSize: '12px', fontWeight: '500', color: '#444' },
