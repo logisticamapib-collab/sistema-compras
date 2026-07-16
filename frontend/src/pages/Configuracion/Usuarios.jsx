@@ -12,6 +12,7 @@ const roles = [
   { value: 'gerente_compras', label: 'Gerente de Compras' },
   { value: 'gerente_ingenieria', label: 'Gerente de Ingenieria' },
   { value: 'ingeniero_nuevos_proyectos', label: 'Ingeniero de Nuevos Proyectos' },
+  { value: 'calidad', label: 'Calidad' },
   { value: 'direccion', label: 'Direccion / Director' },
   { value: 'admin', label: 'Administrador' },
 ]
