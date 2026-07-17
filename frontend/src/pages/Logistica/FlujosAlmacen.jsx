@@ -165,7 +165,7 @@ export default function FlujosAlmacen() {
         <>
           {!form && (
             <p style={styles.ayuda}>
-              Un flujo es el camino que recorre un producto fabricado, como secuencia de <b>almacenes reales de un site</b>.
+              <b>Los flujos aplican solo a productos fabricados (PT/WIP)</b>; la materia prima y demas comprados no llevan flujo (su camino de recibo e inspeccion se maneja en el modulo de Recibos). Un flujo es el camino que recorre un producto fabricado, como secuencia de <b>almacenes reales de un site</b>.
               El <b>paso 1 es donde nace</b> el producto al reportar produccion y el ultimo es de donde se embarca; los movimientos
               de inventario respetaran este orden. Marca <b>"Libera Calidad"</b> en el paso donde el lote debe estar liberado antes
               de poder avanzar (la liberacion cambia el estatus del lote, no su ubicacion). Ej. PROD &rarr; CAL (&#10003;Cal) &rarr; PT.
