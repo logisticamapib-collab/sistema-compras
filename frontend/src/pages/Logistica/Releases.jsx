@@ -223,6 +223,18 @@ export default function Releases() {
           }
         }
       })
+      // No se acepta cantidad menor a lo ya entregado (excepto 0 = cancelacion):
+      // desvirtuaria el historial de la orden
+      lineas.forEach(l => {
+        const existente = vigentes.find(v => v.cliente_id === Number(clienteId) && v.articulo_id === l.articulo_id && v.fecha_requerida === l.fecha_requerida)
+        if (existente) {
+          const ent = entregadoDe(existente.id)
+          if (l.cantidad > 0 && l.cantidad < ent) {
+            bloqueados.add(l.articulo_id)
+            errs.push(`El codigo "${l.codigo_cliente}" en la fecha ${fmtFecha(l.fecha_requerida)} trae cantidad ${fmtNum(l.cantidad)}, MENOR a lo ya entregado (${fmtNum(ent)}). Usa ${fmtNum(ent)} para cerrar la fecha o 0 para cancelar. Se bloqueo el articulo completo`)
+          }
+        }
+      })
       if (bloqueados.size > 0) lineas = lineas.filter(l => !bloqueados.has(l.articulo_id))
 
       setErroresArchivo(errs)
@@ -254,10 +266,13 @@ export default function Releases() {
         const entregado = ant ? entregadoDe(ant.id) : 0
         const tipos = [...new Set(nuevas.filter(l => l.fecha_requerida === f).map(l => l.tipo))].join(', ')
         if (ant) {
+          const estabaCubierta = entregado >= ca && ca > 0
           if (cn === 0) {
             hallazgos.push(`Cancelacion de la fecha ${fmtFecha(f)} (tenia ${fmtNum(ca)}, entregado ${fmtNum(entregado)})`)
-          } else if (cn <= entregado) {
+          } else if (cn === entregado) {
             hallazgos.push(`Cierre de la fecha ${fmtFecha(f)}: la nueva cantidad ${fmtNum(cn)} queda cubierta con lo ya entregado (${fmtNum(entregado)})`)
+          } else if (estabaCubierta && cn > entregado) {
+            hallazgos.push(`Reapertura de la fecha ${fmtFecha(f)} que ya estaba cubierta: entregado ${fmtNum(entregado)}, nueva cantidad ${fmtNum(cn)} (quedaran pendientes ${fmtNum(cn - entregado)})`)
           } else if (f < fechaHoy) {
             hallazgos.push(`Back order en fecha vencida ${fmtFecha(f)}: de ${fmtNum(ca)} a ${fmtNum(cn)}; entregado ${fmtNum(entregado)}, quedaran pendientes ${fmtNum(cn - entregado)}`)
           } else if (cn < ca) {
