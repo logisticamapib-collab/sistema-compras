@@ -7,10 +7,12 @@ import Almacenes from './Almacenes'
 import FlujosAlmacen from './FlujosAlmacen'
 import Inventario from './Inventario'
 import ConsultasInventario from './ConsultasInventario'
+import Recibos from './Recibos'
 
 const secciones = [
   { id: 'almacenes', modulo: 'log_almacenes', titulo: 'Almacenes' },
   { id: 'flujos', modulo: 'log_flujos', titulo: 'Flujos de Almacen' },
+  { id: 'recibos', modulo: 'log_recibos', titulo: 'Recibos' },
   { id: 'inventario', modulo: 'log_inventario', titulo: 'Inventario' },
   { id: 'consultas', modulo: 'log_consultas', titulo: 'Consultas de Inventario' },
   { id: 'embarques', modulo: null, titulo: 'Embarques', pendiente: true },
@@ -43,6 +45,7 @@ export default function GrupoLogistica() {
         )}
         {seccion === 'almacenes' && <Almacenes />}
         {seccion === 'flujos' && <FlujosAlmacen />}
+        {seccion === 'recibos' && <Recibos />}
         {seccion === 'inventario' && <Inventario />}
         {seccion === 'consultas' && <ConsultasInventario />}
         {seccion === 'embarques' && <ModuloPendiente titulo="Embarques" />}
