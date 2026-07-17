@@ -3,9 +3,12 @@ import { useAuth } from '../../context/AuthContext'
 import Clientes from '../Ingenieria/Clientes'
 import ModuloPendiente from '../ModuloPendiente'
 import Releases from './Releases'
+import Almacenes from './Almacenes'
+import FlujosAlmacen from './FlujosAlmacen'
 
 const secciones = [
-  { id: 'almacen', modulo: null, titulo: 'Almacen', pendiente: true },
+  { id: 'almacenes', modulo: 'log_almacenes', titulo: 'Almacenes' },
+  { id: 'flujos', modulo: 'log_flujos', titulo: 'Flujos de Almacen' },
   { id: 'embarques', modulo: null, titulo: 'Embarques', pendiente: true },
   { id: 'customer_service', modulo: 'cs_releases', titulo: 'Customer Service' },
   { id: 'clientes', modulo: 'ing_clientes', titulo: 'Clientes' },
@@ -34,7 +37,8 @@ export default function GrupoLogistica() {
         {seccionesVisibles.length === 0 && (
           <p style={{ color: '#666', padding: '28px' }}>Tu rol no tiene ninguna seccion de Logistica habilitada.</p>
         )}
-        {seccion === 'almacen' && <ModuloPendiente titulo="Almacen" />}
+        {seccion === 'almacenes' && <Almacenes />}
+        {seccion === 'flujos' && <FlujosAlmacen />}
         {seccion === 'embarques' && <ModuloPendiente titulo="Embarques" />}
         {seccion === 'customer_service' && <Releases />}
         {seccion === 'clientes' && <Clientes />}
