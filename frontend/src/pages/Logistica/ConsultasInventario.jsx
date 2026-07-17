@@ -16,6 +16,8 @@ export default function ConsultasInventario() {
   const [categorias, setCategorias] = useState([])
   const [clientes, setClientes] = useState([])
   const [artCliente, setArtCliente] = useState([])
+  const [proveedores, setProveedores] = useState([])
+  const [artProveedor, setArtProveedor] = useState([])
   const [almacenes, setAlmacenes] = useState([])
   const [ubicaciones, setUbicaciones] = useState([])
   const [lotes, setLotes] = useState([])
@@ -26,6 +28,7 @@ export default function ConsultasInventario() {
   const [fCategoria, setFCategoria] = useState('')
   const [fOrigen, setFOrigen] = useState('')
   const [fCliente, setFCliente] = useState('')
+  const [fProveedor, setFProveedor] = useState('')
   const [fAlmacen, setFAlmacen] = useState('')
   const [fCalidad, setFCalidad] = useState('')
 
@@ -33,7 +36,7 @@ export default function ConsultasInventario() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [art, cat, cli, ac, alm, ubi, lot, ex] = await Promise.all([
+    const [art, cat, cli, ac, alm, ubi, lot, ex, prov, ap] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, categoria_id, origen, es_consigna, stock_minimo').eq('empresa_id', perfil.empresa_id).eq('activo', true),
       supabase.from('categorias').select('*'),
       supabase.from('clientes').select('id, nombre').eq('activo', true),
@@ -42,6 +45,8 @@ export default function ConsultasInventario() {
       supabase.from('ubicaciones').select('*'),
       supabase.from('lotes').select('id, articulo_id, codigo_lote, estatus_calidad'),
       supabase.from('existencias').select('*'),
+      supabase.from('proveedores').select('id, nombre').eq('activo', true),
+      supabase.from('articulo_proveedor').select('articulo_id, proveedor_id').eq('activo', true),
     ])
     setArticulos(art.data || [])
     setCategorias(cat.data || [])
@@ -51,6 +56,8 @@ export default function ConsultasInventario() {
     setUbicaciones(ubi.data || [])
     setLotes(lot.data || [])
     setExistencias(ex.data || [])
+    setProveedores(prov.data || [])
+    setArtProveedor(ap.data || [])
     setLoading(false)
   }
 
@@ -60,6 +67,7 @@ export default function ConsultasInventario() {
   const ubiDe = (id) => ubicaciones.find(u => u.id === id)
   const loteDe = (id) => lotes.find(l => l.id === id)
   const clientesDeArt = (artId) => artCliente.filter(x => x.articulo_id === artId).map(x => x.cliente_id)
+  const proveedoresDeArt = (artId) => artProveedor.filter(x => x.articulo_id === artId).map(x => x.proveedor_id)
 
   // Existencias enriquecidas + filtradas
   const filas = existencias.map(e => {
@@ -67,7 +75,8 @@ export default function ConsultasInventario() {
     return { ...e, _lote: lote, _art: art }
   }).filter(e => e._art)
     .filter(e => !fCategoria || e._art.categoria_id === Number(fCategoria))
-    .filter(e => !fOrigen || e._art.origen === fOrigen)
+    .filter(e => !fOrigen || (fOrigen === 'consigna' ? e._art.es_consigna : (e._art.origen === fOrigen && !e._art.es_consigna)))
+    .filter(e => !fProveedor || proveedoresDeArt(e._art.id).includes(Number(fProveedor)))
     .filter(e => !fCliente || clientesDeArt(e._art.id).includes(Number(fCliente)))
     .filter(e => !fAlmacen || e.almacen_id === Number(fAlmacen))
     .filter(e => !fCalidad || e._lote.estatus_calidad === fCalidad)
@@ -90,7 +99,7 @@ export default function ConsultasInventario() {
     .map(a => ({ art: a, total: totalesPorArt[a.id] || 0, min: Number(a.stock_minimo) }))
     .filter(x => x.total < x.min)
     .filter(x => !fCategoria || x.art.categoria_id === Number(fCategoria))
-    .filter(x => !fOrigen || x.art.origen === fOrigen)
+    .filter(x => !fOrigen || (fOrigen === 'consigna' ? x.art.es_consigna : (x.art.origen === fOrigen && !x.art.es_consigna)))
     .sort((a, b) => (a.total / a.min) - (b.total / b.min))
 
   const exportar = () => {
@@ -106,7 +115,7 @@ export default function ConsultasInventario() {
     XLSX.writeFile(wb, `consulta_inventario_${new Date().toISOString().split('T')[0]}.xlsx`)
   }
 
-  const limpiar = () => { setFTexto(''); setFCategoria(''); setFOrigen(''); setFCliente(''); setFAlmacen(''); setFCalidad('') }
+  const limpiar = () => { setFTexto(''); setFCategoria(''); setFOrigen(''); setFCliente(''); setFProveedor(''); setFAlmacen(''); setFCalidad('') }
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
 
@@ -130,15 +139,20 @@ export default function ConsultasInventario() {
           {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
         </select>
         <select style={styles.input} value={fOrigen} onChange={e => setFOrigen(e.target.value)}>
-          <option value="">Comprado y fabricado</option>
+          <option value="">Todo origen</option>
           <option value="comprado">Comprado</option>
           <option value="fabricado">Fabricado</option>
+          <option value="consigna">Consigna</option>
         </select>
         {vista === 'existencias' && (
           <>
             <select style={styles.input} value={fCliente} onChange={e => setFCliente(e.target.value)}>
               <option value="">Todo cliente</option>
               {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+            <select style={styles.input} value={fProveedor} onChange={e => setFProveedor(e.target.value)}>
+              <option value="">Todo proveedor</option>
+              {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
             </select>
             <select style={styles.input} value={fAlmacen} onChange={e => setFAlmacen(e.target.value)}>
               <option value="">Todo almacen</option>
