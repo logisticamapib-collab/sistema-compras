@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
-// Capa 3 - Flujos de Almacen: plantillas con la secuencia de TIPOS de almacen
-// que sigue un producto en su fabricacion. El paso 1 es donde NACE el producto
-// (donde se registra al reportar produccion). Las plantillas se asignan a los
-// articulos fabricados; sera la ruta que respeten los movimientos de inventario.
+// Capa 3 - Flujos de Almacen: plantillas con la secuencia de tipos de almacen
+// (catalogo unico y editable en la pantalla de Almacenes) que sigue un producto
+// en su fabricacion. El paso 1 es donde NACE el producto al reportar produccion.
+// Las plantillas se asignan a los articulos fabricados; sera la ruta que
+// respeten los movimientos de inventario.
 
 export default function FlujosAlmacen() {
   const { perfil, tienePermiso } = useAuth()
@@ -31,7 +32,7 @@ export default function FlujosAlmacen() {
   const cargarDatos = async () => {
     setLoading(true)
     const [t, f, p, a] = await Promise.all([
-      supabase.from('almacenes_virtuales').select('*').order('orden'),
+      supabase.from('tipos_almacen').select('*').order('nombre'),
       supabase.from('flujos_almacen').select('*').order('nombre'),
       supabase.from('flujo_pasos').select('*').order('secuencia'),
       supabase.from('articulos').select('id, codigo_interno, descripcion, flujo_id, tipo_proceso')
@@ -150,6 +151,15 @@ export default function FlujosAlmacen() {
       {/* ==================== PLANTILLAS ==================== */}
       {vista === 'plantillas' && (
         <>
+          {!form && (
+            <p style={styles.ayuda}>
+              Un flujo es el camino que recorre un producto fabricado dentro de la planta, como secuencia de tipos de almacen.
+              El <b>paso 1 es donde nace</b> el producto al reportar produccion y el ultimo es de donde se embarca; los movimientos
+              de inventario respetaran este orden. Crea una plantilla por cada camino distinto (ej. "Inyeccion estandar":
+              Produccion &rarr; WIP &rarr; Calidad &rarr; Producto Terminado) y asignala a los articulos en la otra pestana.
+              Los tipos de almacen se administran en la pantalla <b>Almacenes</b> (boton "Tipos de almacen") y cada negocio puede crear los suyos.
+            </p>
+          )}
           {form && (
             <div style={styles.form}>
               <h3 style={styles.formTitulo}>{form.id ? 'Editar plantilla' : 'Nueva plantilla de flujo'}</h3>
@@ -171,7 +181,7 @@ export default function FlujosAlmacen() {
                   <span style={{ ...styles.numeroPaso, ...(i === 0 ? styles.numeroNace : {}) }}>{i + 1}</span>
                   <select style={{ ...styles.input, flex: 1.2 }} value={p.tipo_almacen_id} onChange={e => setPaso(i, 'tipo_almacen_id', e.target.value)}>
                     <option value="">Tipo de almacen...</option>
-                    {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                    {tipos.filter(t => t.activo || t.id === Number(p.tipo_almacen_id)).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
                   </select>
                   <input style={{ ...styles.input, flex: 1.5 }} value={p.nota} onChange={e => setPaso(i, 'nota', e.target.value)} placeholder={i === 0 ? 'Nacimiento del producto' : 'Nota opcional'} />
                   <button style={styles.botonAccion} onClick={() => moverPaso(i, -1)} disabled={i === 0}>&#8593;</button>
@@ -278,6 +288,7 @@ const styles = {
   tabs: { display: 'flex', gap: '4px', marginBottom: '16px', borderBottom: '1px solid #e2e8f0' },
   tab: { padding: '8px 16px', border: 'none', backgroundColor: 'transparent', fontSize: '14px', color: '#64748b', cursor: 'pointer', borderBottom: '2px solid transparent' },
   tabActiva: { padding: '8px 16px', border: 'none', backgroundColor: 'transparent', fontSize: '14px', color: '#2563eb', fontWeight: '600', cursor: 'pointer', borderBottom: '2px solid #2563eb' },
+  ayuda: { fontSize: '13px', color: '#64748b', margin: '0 0 16px 0', lineHeight: '1.6', backgroundColor: '#fff', borderRadius: '10px', padding: '14px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   selectorBox: { backgroundColor: '#fff', borderRadius: '10px', padding: '14px 20px', marginBottom: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', display: 'flex', alignItems: 'center' },
   form: { backgroundColor: '#fff', borderRadius: '10px', padding: '24px', marginBottom: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   formTitulo: { fontSize: '15px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 16px 0' },
