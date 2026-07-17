@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
-// Capa 3 - Flujos de Almacen: plantillas con la secuencia de tipos de almacen
-// (catalogo unico y editable en la pantalla de Almacenes) que sigue un producto
-// en su fabricacion. El paso 1 es donde NACE el producto al reportar produccion.
-// Las plantillas se asignan a los articulos fabricados; sera la ruta que
-// respeten los movimientos de inventario.
+// Capa 3 - Flujos de Almacen: plantillas POR SITE cuyos pasos son ALMACENES REALES.
+// El paso 1 es donde NACE el producto al reportar produccion; el ultimo es de donde
+// se embarca. Un paso puede exigir liberacion de Calidad para poder avanzar al
+// siguiente (el estatus de calidad vive en el LOTE, no en la ubicacion).
+// Las plantillas se asignan a los articulos fabricados; los movimientos de
+// inventario respetaran este orden.
 
 export default function FlujosAlmacen() {
   const { perfil, tienePermiso } = useAuth()
@@ -14,7 +15,8 @@ export default function FlujosAlmacen() {
   const puedeEditar = tienePermiso('log_flujos', 'editar')
 
   const [vista, setVista] = useState('plantillas')
-  const [tipos, setTipos] = useState([])
+  const [sites, setSites] = useState([])
+  const [almacenes, setAlmacenes] = useState([])
   const [flujos, setFlujos] = useState([])
   const [pasos, setPasos] = useState([])
   const [articulos, setArticulos] = useState([])
@@ -22,7 +24,7 @@ export default function FlujosAlmacen() {
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
 
-  // Form plantilla: { id?, nombre, descripcion, pasos: [{ tipo_almacen_id, nota }] }
+  // Form plantilla: { id?, site_id, nombre, descripcion, pasos: [{ almacen_id, requiere_liberacion, nota }] }
   const [form, setForm] = useState(null)
   const [guardando, setGuardando] = useState(false)
   const [soloSinFlujo, setSoloSinFlujo] = useState(false)
@@ -31,39 +33,44 @@ export default function FlujosAlmacen() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [t, f, p, a] = await Promise.all([
-      supabase.from('tipos_almacen').select('*').order('nombre'),
+    const [s, a, f, p, art] = await Promise.all([
+      supabase.from('sites').select('id, nombre').eq('activo', true).order('nombre'),
+      supabase.from('almacenes').select('*').eq('activo', true).order('clave'),
       supabase.from('flujos_almacen').select('*').order('nombre'),
       supabase.from('flujo_pasos').select('*').order('secuencia'),
       supabase.from('articulos').select('id, codigo_interno, descripcion, flujo_id, tipo_proceso')
         .eq('empresa_id', perfil.empresa_id).eq('origen', 'fabricado').eq('activo', true).order('codigo_interno'),
     ])
-    setTipos(t.data || [])
+    setSites(s.data || [])
+    setAlmacenes(a.data || [])
     setFlujos(f.data || [])
     setPasos(p.data || [])
-    setArticulos(a.data || [])
+    setArticulos(art.data || [])
     setLoading(false)
   }
 
-  const tipoDe = (id) => tipos.find(t => t.id === id)
+  const siteDe = (id) => sites.find(s => s.id === id)
+  const almacenDe = (id) => almacenes.find(a => a.id === id)
   const pasosDe = (flujoId) => pasos.filter(p => p.flujo_id === flujoId)
   const articulosCon = (flujoId) => articulos.filter(a => a.flujo_id === flujoId)
 
-  const cadenaDe = (flujoId) => pasosDe(flujoId).map(p => tipoDe(p.tipo_almacen_id)?.nombre || '?').join(' -> ')
+  const cadenaDe = (flujoId) => pasosDe(flujoId)
+    .map(p => `${almacenDe(p.almacen_id)?.clave || '?'}${p.requiere_liberacion ? ' ✓Cal' : ''}`)
+    .join(' → ')
 
   // ---------- Plantillas ----------
-  const nuevoForm = () => setForm({ nombre: '', descripcion: '', pasos: [{ tipo_almacen_id: '', nota: '' }] })
+  const nuevoForm = () => setForm({ site_id: '', nombre: '', descripcion: '', pasos: [{ almacen_id: '', requiere_liberacion: false, nota: '' }] })
 
   const editarForm = (f) => setForm({
-    id: f.id, nombre: f.nombre, descripcion: f.descripcion || '',
-    pasos: pasosDe(f.id).map(p => ({ tipo_almacen_id: String(p.tipo_almacen_id), nota: p.nota || '' })),
+    id: f.id, site_id: f.site_id || '', nombre: f.nombre, descripcion: f.descripcion || '',
+    pasos: pasosDe(f.id).map(p => ({ almacen_id: String(p.almacen_id), requiere_liberacion: p.requiere_liberacion, nota: p.nota || '' })),
   })
 
   const setPaso = (i, campo, valor) => {
     const nuevos = form.pasos.map((p, j) => j === i ? { ...p, [campo]: valor } : p)
     setForm({ ...form, pasos: nuevos })
   }
-  const agregarPaso = () => setForm({ ...form, pasos: [...form.pasos, { tipo_almacen_id: '', nota: '' }] })
+  const agregarPaso = () => setForm({ ...form, pasos: [...form.pasos, { almacen_id: '', requiere_liberacion: false, nota: '' }] })
   const quitarPaso = (i) => setForm({ ...form, pasos: form.pasos.filter((_, j) => j !== i) })
   const moverPaso = (i, dir) => {
     const j = i + dir
@@ -72,30 +79,34 @@ export default function FlujosAlmacen() {
     ;[nuevos[i], nuevos[j]] = [nuevos[j], nuevos[i]]
     setForm({ ...form, pasos: nuevos })
   }
+  const cambiarSite = (siteId) => {
+    setForm({ ...form, site_id: siteId, pasos: form.pasos.map(p => ({ ...p, almacen_id: '' })) })
+  }
 
   const guardarFlujo = async () => {
     setError(''); setExito('')
+    if (!form.site_id) { setError('Selecciona el site del flujo'); return }
     if (!form.nombre.trim()) { setError('El nombre de la plantilla es obligatorio'); return }
-    const pasosValidos = form.pasos.filter(p => p.tipo_almacen_id)
+    const pasosValidos = form.pasos.filter(p => p.almacen_id)
     if (pasosValidos.length === 0) { setError('Agrega al menos un paso (el paso 1 es donde nace el producto)'); return }
     setGuardando(true)
     try {
       let flujoId = form.id
+      const cabecera = { site_id: Number(form.site_id), nombre: form.nombre.trim(), descripcion: form.descripcion.trim() || null }
       if (form.id) {
-        const { error: e1 } = await supabase.from('flujos_almacen')
-          .update({ nombre: form.nombre.trim(), descripcion: form.descripcion.trim() || null }).eq('id', form.id)
+        const { error: e1 } = await supabase.from('flujos_almacen').update(cabecera).eq('id', form.id)
         if (e1) throw e1
         const { error: e2 } = await supabase.from('flujo_pasos').delete().eq('flujo_id', form.id)
         if (e2) throw e2
       } else {
         const { data, error: e1 } = await supabase.from('flujos_almacen')
-          .insert({ empresa_id: perfil.empresa_id, nombre: form.nombre.trim(), descripcion: form.descripcion.trim() || null })
-          .select().single()
+          .insert({ ...cabecera, empresa_id: perfil.empresa_id }).select().single()
         if (e1) throw e1
         flujoId = data.id
       }
       const filas = pasosValidos.map((p, i) => ({
-        flujo_id: flujoId, secuencia: i + 1, tipo_almacen_id: Number(p.tipo_almacen_id), nota: p.nota.trim() || null,
+        flujo_id: flujoId, secuencia: i + 1, almacen_id: Number(p.almacen_id),
+        requiere_liberacion: p.requiere_liberacion, nota: p.nota.trim() || null,
       }))
       const { error: e3 } = await supabase.from('flujo_pasos').insert(filas)
       if (e3) throw e3
@@ -127,6 +138,7 @@ export default function FlujosAlmacen() {
 
   const articulosVisibles = soloSinFlujo ? articulos.filter(a => !a.flujo_id) : articulos
   const flujosActivos = flujos.filter(f => f.activo)
+  const almacenesDelForm = form ? almacenes.filter(a => a.site_id === Number(form.site_id)) : []
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando flujos...</p>
 
@@ -153,43 +165,60 @@ export default function FlujosAlmacen() {
         <>
           {!form && (
             <p style={styles.ayuda}>
-              Un flujo es el camino que recorre un producto fabricado dentro de la planta, como secuencia de tipos de almacen.
+              Un flujo es el camino que recorre un producto fabricado, como secuencia de <b>almacenes reales de un site</b>.
               El <b>paso 1 es donde nace</b> el producto al reportar produccion y el ultimo es de donde se embarca; los movimientos
-              de inventario respetaran este orden. Crea una plantilla por cada camino distinto (ej. "Inyeccion estandar":
-              Produccion &rarr; WIP &rarr; Calidad &rarr; Producto Terminado) y asignala a los articulos en la otra pestana.
-              Los tipos de almacen se administran en la pantalla <b>Almacenes</b> (boton "Tipos de almacen") y cada negocio puede crear los suyos.
+              de inventario respetaran este orden. Marca <b>"Libera Calidad"</b> en el paso donde el lote debe estar liberado antes
+              de poder avanzar (la liberacion cambia el estatus del lote, no su ubicacion). Ej. PROD &rarr; CAL (&#10003;Cal) &rarr; PT.
+              La ubicacion exacta (GP12, PT-MAQ1, rack) se define al momento de escanear el movimiento.
             </p>
           )}
           {form && (
             <div style={styles.form}>
               <h3 style={styles.formTitulo}>{form.id ? 'Editar plantilla' : 'Nueva plantilla de flujo'}</h3>
               <div style={styles.fila}>
+                <div style={{ ...styles.campo, flex: 0.7 }}>
+                  <label style={styles.label}>Site *</label>
+                  <select style={styles.input} value={form.site_id} onChange={e => cambiarSite(e.target.value)}>
+                    <option value="">Selecciona...</option>
+                    {sites.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                  </select>
+                </div>
                 <div style={styles.campo}>
                   <label style={styles.label}>Nombre *</label>
                   <input style={styles.input} value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} placeholder="Ej. Inyeccion estandar" />
                 </div>
-                <div style={{ ...styles.campo, flex: 2 }}>
+                <div style={{ ...styles.campo, flex: 1.5 }}>
                   <label style={styles.label}>Descripcion</label>
                   <input style={styles.input} value={form.descripcion} onChange={e => setForm({ ...form, descripcion: e.target.value })} placeholder="Opcional" />
                 </div>
               </div>
-              <p style={{ ...styles.label, margin: '4px 0 8px' }}>
-                Pasos del flujo (el <b>paso 1 es donde NACE el producto</b> al reportar produccion; el ultimo es de donde se embarca):
-              </p>
-              {form.pasos.map((p, i) => (
-                <div key={i} style={styles.filaPaso}>
-                  <span style={{ ...styles.numeroPaso, ...(i === 0 ? styles.numeroNace : {}) }}>{i + 1}</span>
-                  <select style={{ ...styles.input, flex: 1.2 }} value={p.tipo_almacen_id} onChange={e => setPaso(i, 'tipo_almacen_id', e.target.value)}>
-                    <option value="">Tipo de almacen...</option>
-                    {tipos.filter(t => t.activo || t.id === Number(p.tipo_almacen_id)).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                  </select>
-                  <input style={{ ...styles.input, flex: 1.5 }} value={p.nota} onChange={e => setPaso(i, 'nota', e.target.value)} placeholder={i === 0 ? 'Nacimiento del producto' : 'Nota opcional'} />
-                  <button style={styles.botonAccion} onClick={() => moverPaso(i, -1)} disabled={i === 0}>&#8593;</button>
-                  <button style={styles.botonAccion} onClick={() => moverPaso(i, 1)} disabled={i === form.pasos.length - 1}>&#8595;</button>
-                  <button style={styles.botonAccion} onClick={() => quitarPaso(i)} disabled={form.pasos.length === 1}>Quitar</button>
-                </div>
-              ))}
-              <button style={{ ...styles.botonAccion, margin: '4px 0 14px 34px' }} onClick={agregarPaso}>+ Agregar paso</button>
+              {!form.site_id ? (
+                <p style={{ fontSize: '13px', color: '#94a3b8', margin: '4px 0 12px' }}>Selecciona el site para elegir sus almacenes.</p>
+              ) : (
+                <>
+                  <p style={{ ...styles.label, margin: '4px 0 8px' }}>
+                    Pasos del flujo (el <b>paso 1 es donde NACE el producto</b>; el ultimo es de donde se embarca):
+                  </p>
+                  {form.pasos.map((p, i) => (
+                    <div key={i} style={styles.filaPaso}>
+                      <span style={{ ...styles.numeroPaso, ...(i === 0 ? styles.numeroNace : {}) }}>{i + 1}</span>
+                      <select style={{ ...styles.input, flex: 1.1 }} value={p.almacen_id} onChange={e => setPaso(i, 'almacen_id', e.target.value)}>
+                        <option value="">Almacen...</option>
+                        {almacenesDelForm.map(a => <option key={a.id} value={a.id}>{a.clave} - {a.nombre}</option>)}
+                      </select>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" checked={p.requiere_liberacion} onChange={e => setPaso(i, 'requiere_liberacion', e.target.checked)} />
+                        Libera Calidad
+                      </label>
+                      <input style={{ ...styles.input, flex: 1.2 }} value={p.nota} onChange={e => setPaso(i, 'nota', e.target.value)} placeholder={i === 0 ? 'Nacimiento del producto' : 'Nota opcional'} />
+                      <button style={styles.botonAccion} onClick={() => moverPaso(i, -1)} disabled={i === 0}>&#8593;</button>
+                      <button style={styles.botonAccion} onClick={() => moverPaso(i, 1)} disabled={i === form.pasos.length - 1}>&#8595;</button>
+                      <button style={styles.botonAccion} onClick={() => quitarPaso(i)} disabled={form.pasos.length === 1}>Quitar</button>
+                    </div>
+                  ))}
+                  <button style={{ ...styles.botonAccion, margin: '4px 0 14px 34px' }} onClick={agregarPaso}>+ Agregar paso</button>
+                </>
+              )}
               <div style={styles.botones}>
                 <button style={styles.botonSec} onClick={() => setForm(null)} disabled={guardando}>Cancelar</button>
                 <button style={styles.boton} onClick={guardarFlujo} disabled={guardando}>{guardando ? 'Guardando...' : form.id ? 'Guardar cambios' : 'Crear plantilla'}</button>
@@ -198,14 +227,15 @@ export default function FlujosAlmacen() {
           )}
 
           {flujos.length === 0 && !form ? (
-            <p style={{ color: '#666', padding: '10px 4px' }}>No hay plantillas. Crea la primera con "+ Nueva plantilla" (ej. Produccion -&gt; WIP -&gt; Calidad -&gt; Producto Terminado).</p>
+            <p style={{ color: '#666', padding: '10px 4px' }}>No hay plantillas. Crea la primera con "+ Nueva plantilla" (ej. PROD &rarr; CAL &rarr; PT).</p>
           ) : (
             <div style={styles.tabla}>
               <div style={styles.tablaHeader}>
                 <span style={{ flex: 1 }}>Plantilla</span>
-                <span style={{ flex: 2.5 }}>Flujo (paso 1 = nacimiento)</span>
-                <span style={{ flex: 0.7, textAlign: 'center' }}>Articulos</span>
-                <span style={{ flex: 0.7, textAlign: 'center' }}>Estatus</span>
+                <span style={{ flex: 0.8 }}>Site</span>
+                <span style={{ flex: 2.3 }}>Flujo (paso 1 = nacimiento, &#10003;Cal = requiere liberacion)</span>
+                <span style={{ flex: 0.6, textAlign: 'center' }}>Articulos</span>
+                <span style={{ flex: 0.6, textAlign: 'center' }}>Estatus</span>
                 <span style={{ width: '140px' }}></span>
               </div>
               {flujos.map(f => (
@@ -214,9 +244,10 @@ export default function FlujosAlmacen() {
                     <b>{f.nombre}</b>
                     {f.descripcion && <span style={{ color: '#64748b', fontSize: '12px', display: 'block' }}>{f.descripcion}</span>}
                   </span>
-                  <span style={{ flex: 2.5, fontSize: '13px', color: '#334155' }}>{cadenaDe(f.id) || 'Sin pasos'}</span>
-                  <span style={{ flex: 0.7, textAlign: 'center' }}>{articulosCon(f.id).length}</span>
-                  <span style={{ flex: 0.7, textAlign: 'center' }}>
+                  <span style={{ flex: 0.8, color: '#64748b' }}>{siteDe(f.site_id)?.nombre || '-'}</span>
+                  <span style={{ flex: 2.3, fontSize: '13px', color: '#334155' }}>{cadenaDe(f.id) || 'Sin pasos'}</span>
+                  <span style={{ flex: 0.6, textAlign: 'center' }}>{articulosCon(f.id).length}</span>
+                  <span style={{ flex: 0.6, textAlign: 'center' }}>
                     <span style={{ ...styles.badge, ...(f.activo ? styles.badgeVerde : styles.badgeGris) }}>{f.activo ? 'Activa' : 'Inactiva'}</span>
                   </span>
                   <span style={{ width: '140px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
@@ -249,8 +280,8 @@ export default function FlujosAlmacen() {
             <div style={styles.tabla}>
               <div style={styles.tablaHeader}>
                 <span style={{ flex: 2.2 }}>Articulo</span>
-                <span style={{ flex: 1.4 }}>Plantilla de flujo</span>
-                <span style={{ flex: 2.4 }}>Cadena</span>
+                <span style={{ flex: 1.5 }}>Plantilla de flujo</span>
+                <span style={{ flex: 2.3 }}>Cadena</span>
               </div>
               {articulosVisibles.map(a => (
                 <div key={a.id} style={styles.tablaFila} className="fila-hover">
@@ -258,17 +289,17 @@ export default function FlujosAlmacen() {
                     <b>{a.codigo_interno}</b>
                     <span style={{ color: '#64748b', fontSize: '13px' }}> - {a.descripcion}</span>
                   </span>
-                  <span style={{ flex: 1.4 }}>
+                  <span style={{ flex: 1.5 }}>
                     {puedeEditar ? (
                       <select style={{ ...styles.input, padding: '6px 10px', fontSize: '13px' }} value={a.flujo_id || ''} onChange={e => asignarFlujo(a.id, e.target.value)}>
                         <option value="">Sin flujo</option>
-                        {flujosActivos.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+                        {flujosActivos.map(f => <option key={f.id} value={f.id}>{f.nombre} ({siteDe(f.site_id)?.nombre || 'sin site'})</option>)}
                       </select>
                     ) : (
                       <span>{flujos.find(f => f.id === a.flujo_id)?.nombre || 'Sin flujo'}</span>
                     )}
                   </span>
-                  <span style={{ flex: 2.4, fontSize: '12px', color: a.flujo_id ? '#334155' : '#dc2626' }}>
+                  <span style={{ flex: 2.3, fontSize: '12px', color: a.flujo_id ? '#334155' : '#dc2626' }}>
                     {a.flujo_id ? cadenaDe(a.flujo_id) : 'Sin flujo asignado: no se podra mover en almacen'}
                   </span>
                 </div>
