@@ -5,13 +5,16 @@ import { useAuth } from '../../context/AuthContext'
 
 // Capa 2 - Customer Service: releases de clientes (firme/forecast) cargados via Excel.
 // - Reemplazo POR ARTICULO + FECHA: solo las lineas incluidas en el archivo sustituyen
-//   a la linea vigente de esa misma fecha; las fechas no incluidas siguen vigentes
-//   (aunque esten atrasadas o incompletas).
-// - Al reemplazar una fecha, las entregas ya registradas se HEREDAN a la linea nueva:
+//   a la linea vigente de esa misma fecha; las fechas no incluidas siguen vigentes.
+// - Al reemplazar una fecha, las entregas registradas se HEREDAN a la linea nueva:
 //   CS captura la cantidad original del pedido y el sistema descuenta lo entregado.
+// - Validaciones al cargar:
+//   1) Fecha pasada SIN registro vigente previo -> se bloquea el articulo completo (corregir el archivo).
+//   2) Fecha pasada CON registro pendiente/parcial (back order), decrementos y
+//      cancelaciones/cierres -> requieren palomear y justificar en pantalla;
+//      queda grabado en BD (releases_confirmaciones) para auditoria.
 // - Solo se acepta UNA linea por codigo y fecha (candado tambien en BD).
-// - Entregas por linea (manuales por ahora; en Capas 3/4 las alimentara Almacen/Embarques).
-// - Estatus por linea: cubierta / parcial / pendiente / vencida (fecha pasada sin cubrir).
+// - Estatus por linea: cubierta / parcial / pendiente / vencida.
 
 const fmtNum = (n) => (Number(n) || 0).toLocaleString('es-MX')
 const fmtFecha = (f) => {
@@ -80,10 +83,13 @@ export default function Releases() {
   const [erroresArchivo, setErroresArchivo] = useState([])
   const [guardando, setGuardando] = useState(false)
   const [detalleDiff, setDetalleDiff] = useState(null)
+  // Confirmaciones de hallazgos: { [articulo_id]: { acepta: bool, justificacion: '' } }
+  const [confirmaciones, setConfirmaciones] = useState({})
 
   // Historial
   const [cargaExpandida, setCargaExpandida] = useState(null)
   const [lineasCarga, setLineasCarga] = useState([])
+  const [confirmacionesCarga, setConfirmacionesCarga] = useState([])
 
   useEffect(() => { cargarDatos() }, [])
 
@@ -143,7 +149,7 @@ export default function Releases() {
 
   // ---------- Lectura del Excel ----------
   const leerArchivo = async (e) => {
-    setError(''); setExito(''); setLineasNuevas([]); setErroresArchivo([]); setDetalleDiff(null)
+    setError(''); setExito(''); setLineasNuevas([]); setErroresArchivo([]); setDetalleDiff(null); setConfirmaciones({})
     const file = e.target.files[0]
     if (!file) return
     if (!clienteId) { setError('Selecciona primero el cliente al que pertenece el release'); e.target.value = ''; return }
@@ -198,12 +204,26 @@ export default function Releases() {
       const duplicados = Object.keys(conteo).filter(k => conteo[k] > 1)
       if (duplicados.length > 0) {
         duplicados.forEach(k => {
-          const [aid, f] = k.split('|')
+          const [, f] = k.split('|')
           const l = lineas.find(x => `${x.articulo_id}|${x.fecha_requerida}` === k)
           errs.push(`El codigo "${l?.codigo_cliente}" aparece ${conteo[k]} veces con la fecha ${fmtFecha(f)}; deja una sola fila por codigo y fecha (se excluyeron todas)`)
         })
         lineas = lineas.filter(l => !duplicados.includes(`${l.articulo_id}|${l.fecha_requerida}`))
       }
+
+      // Caso 1: fecha pasada SIN registro vigente previo -> se bloquea el ARTICULO completo
+      const fechaHoy = hoy()
+      const bloqueados = new Set()
+      lineas.forEach(l => {
+        if (l.fecha_requerida < fechaHoy) {
+          const existe = vigentes.some(v => v.cliente_id === Number(clienteId) && v.articulo_id === l.articulo_id && v.fecha_requerida === l.fecha_requerida)
+          if (!existe) {
+            bloqueados.add(l.articulo_id)
+            errs.push(`El codigo "${l.codigo_cliente}" trae la fecha vencida ${fmtFecha(l.fecha_requerida)} que NO existe como pendiente en el sistema. Se bloqueo el articulo completo: corrige la fecha o quita la fila del archivo`)
+          }
+        }
+      })
+      if (bloqueados.size > 0) lineas = lineas.filter(l => !bloqueados.has(l.articulo_id))
 
       setErroresArchivo(errs)
       if (lineas.length === 0) { setError('No se pudo leer ninguna linea valida del archivo'); return }
@@ -214,10 +234,9 @@ export default function Releases() {
     e.target.value = ''
   }
 
-  // ---------- Comparativo incrementos / decrementos ----------
-  // Compara SOLO las fechas incluidas en el archivo; las demas fechas del articulo
-  // permanecen vigentes sin cambios.
+  // ---------- Comparativo incrementos / decrementos + hallazgos ----------
   const construirDiff = () => {
+    const fechaHoy = hoy()
     const articuloIds = [...new Set(lineasNuevas.map(l => l.articulo_id))]
     return articuloIds.map(id => {
       const nuevas = lineasNuevas.filter(l => l.articulo_id === id)
@@ -227,22 +246,42 @@ export default function Releases() {
       const intactas = vigentesArt.length - anteriores.length
       const totalNuevo = nuevas.reduce((s, l) => s + Number(l.cantidad), 0)
       const totalAnterior = anteriores.reduce((s, l) => s + Number(l.cantidad), 0)
+      const hallazgos = []
       const detalle = fechasArchivo.sort().map(f => {
         const cn = nuevas.filter(l => l.fecha_requerida === f).reduce((s, l) => s + Number(l.cantidad), 0)
         const ant = anteriores.find(a => a.fecha_requerida === f)
         const ca = ant ? Number(ant.cantidad) : 0
         const entregado = ant ? entregadoDe(ant.id) : 0
         const tipos = [...new Set(nuevas.filter(l => l.fecha_requerida === f).map(l => l.tipo))].join(', ')
+        if (ant) {
+          if (cn === 0) {
+            hallazgos.push(`Cancelacion de la fecha ${fmtFecha(f)} (tenia ${fmtNum(ca)}, entregado ${fmtNum(entregado)})`)
+          } else if (cn <= entregado) {
+            hallazgos.push(`Cierre de la fecha ${fmtFecha(f)}: la nueva cantidad ${fmtNum(cn)} queda cubierta con lo ya entregado (${fmtNum(entregado)})`)
+          } else if (f < fechaHoy) {
+            hallazgos.push(`Back order en fecha vencida ${fmtFecha(f)}: de ${fmtNum(ca)} a ${fmtNum(cn)}; entregado ${fmtNum(entregado)}, quedaran pendientes ${fmtNum(cn - entregado)}`)
+          } else if (cn < ca) {
+            hallazgos.push(`Decremento en ${fmtFecha(f)}: de ${fmtNum(ca)} a ${fmtNum(cn)}`)
+          }
+        }
         return { fecha: f, anterior: ca, nueva: cn, delta: cn - ca, entregado, tipos }
       })
-      return { articulo_id: id, articulo: articuloDe(id), esNuevo: vigentesArt.length === 0, totalNuevo, totalAnterior, delta: totalNuevo - totalAnterior, detalle, intactas }
+      return { articulo_id: id, articulo: articuloDe(id), esNuevo: vigentesArt.length === 0, totalNuevo, totalAnterior, delta: totalNuevo - totalAnterior, detalle, intactas, hallazgos }
     }).sort((a, b) => (a.articulo?.codigo_interno || '').localeCompare(b.articulo?.codigo_interno || ''))
   }
 
   const diff = lineasNuevas.length > 0 ? construirDiff() : []
+  const conHallazgos = diff.filter(d => d.hallazgos.length > 0)
+  const faltanConfirmar = conHallazgos.filter(d => !(confirmaciones[d.articulo_id]?.acepta && (confirmaciones[d.articulo_id]?.justificacion || '').trim()))
+  const puedeConfirmarCarga = lineasNuevas.length > 0 && faltanConfirmar.length === 0
+
+  const setConfirmacion = (articuloId, campo, valor) => {
+    setConfirmaciones(prev => ({ ...prev, [articuloId]: { acepta: false, justificacion: '', ...prev[articuloId], [campo]: valor } }))
+  }
 
   // ---------- Confirmar y guardar ----------
   const confirmarCarga = async () => {
+    if (!puedeConfirmarCarga) return
     setGuardando(true); setError('')
     try {
       const articuloIds = [...new Set(lineasNuevas.map(l => l.articulo_id))]
@@ -256,6 +295,19 @@ export default function Releases() {
         articulos_incluidos: articuloIds.length,
       }).select().single()
       if (e1) throw e1
+
+      // Guardar confirmaciones de hallazgos (trazabilidad de back orders / cancelaciones)
+      if (conHallazgos.length > 0) {
+        const filasConf = conHallazgos.map(d => ({
+          carga_id: carga.id,
+          articulo_id: d.articulo_id,
+          hallazgos: d.hallazgos.join(' | '),
+          justificacion: confirmaciones[d.articulo_id].justificacion.trim(),
+          confirmado_por: perfil.id,
+        }))
+        const { error: eC } = await supabase.from('releases_confirmaciones').insert(filasConf)
+        if (eC) throw eC
+      }
 
       // Lineas vigentes actuales de los articulos del archivo (frescas de BD)
       const { data: actuales, error: e2 } = await supabase.from('release_lineas')
@@ -282,8 +334,7 @@ export default function Releases() {
         insertadas.push(...(data || []))
       }
 
-      // Heredar entregas de la linea reemplazada a la nueva (mismo articulo+fecha),
-      // para que el pendiente se calcule contra la cantidad original sin perder historial
+      // Heredar entregas de la linea reemplazada a la nueva (mismo articulo+fecha)
       for (const old of reemplazadas) {
         const nueva = insertadas.find(n => n.articulo_id === old.articulo_id && n.fecha_requerida === old.fecha_requerida)
         if (nueva) {
@@ -293,8 +344,8 @@ export default function Releases() {
         }
       }
 
-      setExito(`Release cargado: ${lineasNuevas.length} lineas (${reemplazadas.length} reemplazadas con entregas heredadas, ${lineasNuevas.length - reemplazadas.length} nuevas)`)
-      setLineasNuevas([]); setErroresArchivo([]); setArchivoNombre(''); setNotas(''); setDetalleDiff(null)
+      setExito(`Release cargado: ${lineasNuevas.length} lineas (${reemplazadas.length} reemplazadas con entregas heredadas, ${lineasNuevas.length - reemplazadas.length} nuevas${conHallazgos.length > 0 ? `, ${conHallazgos.length} articulo(s) con hallazgos confirmados` : ''})`)
+      setLineasNuevas([]); setErroresArchivo([]); setArchivoNombre(''); setNotas(''); setDetalleDiff(null); setConfirmaciones({})
       await cargarDatos()
       setVista('vigente')
     } catch (err) {
@@ -362,9 +413,13 @@ export default function Releases() {
   }
 
   const verLineasCarga = async (cargaId) => {
-    if (cargaExpandida === cargaId) { setCargaExpandida(null); setLineasCarga([]); return }
-    const { data } = await supabase.from('release_lineas').select('*').eq('carga_id', cargaId).order('fecha_requerida')
-    setLineasCarga(data || [])
+    if (cargaExpandida === cargaId) { setCargaExpandida(null); setLineasCarga([]); setConfirmacionesCarga([]); return }
+    const [l, cf] = await Promise.all([
+      supabase.from('release_lineas').select('*').eq('carga_id', cargaId).order('fecha_requerida'),
+      supabase.from('releases_confirmaciones').select('*, usuario:usuarios!releases_confirmaciones_confirmado_por_fkey(nombre)').eq('carga_id', cargaId),
+    ])
+    setLineasCarga(l.data || [])
+    setConfirmacionesCarga(cf.data || [])
     setCargaExpandida(cargaId)
   }
 
@@ -403,15 +458,15 @@ export default function Releases() {
           <h3 style={styles.formTitulo}>Cargar release desde Excel</h3>
           <p style={styles.ayuda}>
             El Excel debe tener columnas: <b>Numero de Parte</b> (del cliente), <b>Fecha Requerida</b>, <b>Cantidad</b> y <b>Tipo</b> (firme/forecast; si falta, se asume firme).
-            <br />Solo se reemplazan las lineas de <b>articulo + fecha</b> incluidas en el archivo (con la <b>cantidad original</b> del pedido: lo ya entregado se hereda y se descuenta).
-            Las fechas no incluidas siguen vigentes aunque esten atrasadas. Para cancelar una fecha, incluyela con cantidad 0.
-            Solo se acepta una fila por codigo y fecha.
+            <br />Solo se reemplazan las lineas de <b>articulo + fecha</b> incluidas en el archivo (con la <b>cantidad original</b>: lo entregado se hereda y se descuenta).
+            Las fechas no incluidas siguen vigentes. Para cancelar o cerrar una fecha vencida, incluyela con cantidad 0 o con lo ya entregado (pedira justificacion).
+            Una fila por codigo y fecha; fechas vencidas nuevas no se aceptan.
             {' '}<button style={styles.link} onClick={descargarPlantilla}>Descargar plantilla</button>
           </p>
           <div style={styles.fila}>
             <div style={styles.campo}>
               <label style={styles.label}>Cliente *</label>
-              <select style={styles.input} value={clienteId} onChange={e => { setClienteId(e.target.value); setLineasNuevas([]); setErroresArchivo([]) }}>
+              <select style={styles.input} value={clienteId} onChange={e => { setClienteId(e.target.value); setLineasNuevas([]); setErroresArchivo([]); setConfirmaciones({}) }}>
                 <option value="">Selecciona cliente...</option>
                 {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
@@ -428,7 +483,7 @@ export default function Releases() {
 
           {erroresArchivo.length > 0 && (
             <div style={styles.cajaErrores}>
-              <p style={{ margin: '0 0 6px 0', fontWeight: '600', fontSize: '13px' }}>{erroresArchivo.length} problema(s) encontrados (esas filas no se cargaran):</p>
+              <p style={{ margin: '0 0 6px 0', fontWeight: '600', fontSize: '13px' }}>{erroresArchivo.length} problema(s) encontrados (esas filas/articulos no se cargaran):</p>
               {erroresArchivo.slice(0, 15).map((e, i) => <p key={i} style={{ margin: '2px 0', fontSize: '12px' }}>{e}</p>)}
               {erroresArchivo.length > 15 && <p style={{ margin: '2px 0', fontSize: '12px' }}>... y {erroresArchivo.length - 15} mas</p>}
             </div>
@@ -438,6 +493,11 @@ export default function Releases() {
           {diff.length > 0 && (
             <>
               <h3 style={{ ...styles.formTitulo, marginTop: '20px' }}>Analisis de cambios (solo fechas incluidas en el archivo)</h3>
+              {conHallazgos.length > 0 && (
+                <p style={{ ...styles.ayuda, color: '#92400e' }}>
+                  {conHallazgos.length} articulo(s) tienen hallazgos (back order, decremento, cancelacion o cierre): revisa, palomea y justifica cada uno para habilitar la carga.
+                </p>
+              )}
               <div style={styles.tabla}>
                 <div style={styles.tablaHeader}>
                   <span style={{ flex: 2.5 }}>Articulo</span>
@@ -471,6 +531,24 @@ export default function Releases() {
                         </button>
                       </span>
                     </div>
+
+                    {/* Hallazgos que requieren confirmacion y justificacion */}
+                    {d.hallazgos.length > 0 && (
+                      <div style={styles.cajaHallazgos}>
+                        {d.hallazgos.map((h, i) => <p key={i} style={{ margin: '2px 0', fontSize: '12px' }}>&#9888; {h}</p>)}
+                        <div style={{ display: 'flex', gap: '14px', alignItems: 'center', marginTop: '8px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                            <input type="checkbox" checked={confirmaciones[d.articulo_id]?.acepta || false}
+                              onChange={e => setConfirmacion(d.articulo_id, 'acepta', e.target.checked)} />
+                            Revisado y confirmado
+                          </label>
+                          <input style={{ ...styles.input, flex: 1 }} placeholder="Justificacion (obligatoria): ej. cliente ajusto por atraso de produccion"
+                            value={confirmaciones[d.articulo_id]?.justificacion || ''}
+                            onChange={e => setConfirmacion(d.articulo_id, 'justificacion', e.target.value)} />
+                        </div>
+                      </div>
+                    )}
+
                     {detalleDiff === d.articulo_id && (
                       <div style={styles.subTabla}>
                         <div style={{ ...styles.tablaHeader, backgroundColor: '#fff' }}>
@@ -498,9 +576,15 @@ export default function Releases() {
                   </div>
                 ))}
               </div>
-              <div style={{ ...styles.botones, marginTop: '16px' }}>
-                <button style={styles.botonSec} onClick={() => { setLineasNuevas([]); setErroresArchivo([]); setArchivoNombre('') }} disabled={guardando}>Cancelar</button>
-                <button style={styles.boton} onClick={confirmarCarga} disabled={guardando}>
+              <div style={{ ...styles.botones, marginTop: '16px', alignItems: 'center' }}>
+                {!puedeConfirmarCarga && faltanConfirmar.length > 0 && (
+                  <span style={{ fontSize: '12px', color: '#92400e', marginRight: 'auto' }}>
+                    Falta confirmar y justificar {faltanConfirmar.length} articulo(s) con hallazgos
+                  </span>
+                )}
+                <button style={styles.botonSec} onClick={() => { setLineasNuevas([]); setErroresArchivo([]); setArchivoNombre(''); setConfirmaciones({}) }} disabled={guardando}>Cancelar</button>
+                <button style={{ ...styles.boton, opacity: puedeConfirmarCarga && !guardando ? 1 : 0.5, cursor: puedeConfirmarCarga && !guardando ? 'pointer' : 'not-allowed' }}
+                  onClick={confirmarCarga} disabled={!puedeConfirmarCarga || guardando}>
                   {guardando ? 'Guardando...' : `Confirmar (${lineasNuevas.length} lineas)`}
                 </button>
               </div>
@@ -663,6 +747,17 @@ export default function Releases() {
                 </div>
                 {cargaExpandida === cg.id && (
                   <div style={styles.subTabla}>
+                    {confirmacionesCarga.length > 0 && (
+                      <div style={{ ...styles.cajaHallazgos, margin: '8px 20px' }}>
+                        <p style={{ margin: '0 0 4px 0', fontWeight: '600', fontSize: '12px' }}>Hallazgos confirmados en esta carga:</p>
+                        {confirmacionesCarga.map(cf => (
+                          <p key={cf.id} style={{ margin: '2px 0', fontSize: '12px' }}>
+                            <b>{articuloDe(cf.articulo_id)?.codigo_interno}</b>: {cf.hallazgos}
+                            <br />Justificacion: "{cf.justificacion}" - {cf.usuario?.nombre}, {new Date(cf.created_at).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                     {lineasCarga.map(l => {
                       const art = articuloDe(l.articulo_id)
                       return (
@@ -721,6 +816,7 @@ const styles = {
   badgeAzul: { backgroundColor: '#dbeafe', color: '#2563eb' },
   badgeGris: { backgroundColor: '#f1f5f9', color: '#64748b' },
   cajaErrores: { backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 16px', color: '#92400e', marginBottom: '12px' },
+  cajaHallazgos: { backgroundColor: '#fffbeb', borderTop: '1px solid #fcd34d', borderBottom: '1px solid #fcd34d', padding: '10px 20px', color: '#92400e' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
   exito: { color: '#16a34a', fontSize: '13px', marginBottom: '12px' },
 }
