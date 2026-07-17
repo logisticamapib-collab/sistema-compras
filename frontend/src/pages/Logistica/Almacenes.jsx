@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
-// Capa 3 - Almacen: instancias de almacen por site (con su TIPO de almacen virtual)
-// y ubicaciones de clave libre dentro de cada almacen.
+// Capa 3 - Almacen: instancias de almacen por site, con TIPO de almacen de un
+// catalogo editable (Materia Prima, Producto Terminado, Herramental, Refacciones,
+// Empaque, etc.) y ubicaciones de clave libre dentro de cada almacen.
 
 export default function Almacenes() {
   const { perfil, tienePermiso } = useAuth()
@@ -25,6 +26,9 @@ export default function Almacenes() {
   const [form, setForm] = useState(null) // { id?, site_id, tipo_id, clave, nombre }
   // Form ubicacion por almacen
   const [formUbi, setFormUbi] = useState(null) // { almacen_id, id?, clave, descripcion }
+  // Catalogo de tipos de almacen
+  const [mostrarTipos, setMostrarTipos] = useState(false)
+  const [formTipo, setFormTipo] = useState(null) // { id?, nombre }
 
   useEffect(() => { cargarDatos() }, [])
 
@@ -32,7 +36,7 @@ export default function Almacenes() {
     setLoading(true)
     const [s, t, a, u] = await Promise.all([
       supabase.from('sites').select('id, nombre').eq('activo', true).order('nombre'),
-      supabase.from('almacenes_virtuales').select('*').order('orden'),
+      supabase.from('tipos_almacen').select('*').order('nombre'),
       supabase.from('almacenes').select('*').order('site_id').order('clave'),
       supabase.from('ubicaciones').select('*').order('clave'),
     ])
@@ -97,6 +101,29 @@ export default function Almacenes() {
     await cargarDatos()
   }
 
+  const guardarTipo = async () => {
+    setError(''); setExito('')
+    if (!formTipo.nombre.trim()) { setError('El nombre del tipo es obligatorio'); return }
+    let res
+    if (formTipo.id) {
+      res = await supabase.from('tipos_almacen').update({ nombre: formTipo.nombre.trim() }).eq('id', formTipo.id)
+    } else {
+      res = await supabase.from('tipos_almacen').insert({ nombre: formTipo.nombre.trim(), empresa_id: perfil.empresa_id })
+    }
+    if (res.error) { setError('Error: ' + res.error.message); return }
+    setFormTipo(null)
+    await cargarDatos()
+  }
+
+  const toggleTipo = async (t) => {
+    if (t.activo && almacenes.some(a => a.tipo_id === t.id)) {
+      setError('No se puede desactivar: hay almacenes dados de alta con este tipo')
+      return
+    }
+    await supabase.from('tipos_almacen').update({ activo: !t.activo }).eq('id', t.id)
+    await cargarDatos()
+  }
+
   const tipoDe = (id) => tipos.find(t => t.id === id)
   const siteDe = (id) => sites.find(s => s.id === id)
   const ubisDe = (almacenId) => ubicaciones.filter(u => u.almacen_id === almacenId)
@@ -109,13 +136,52 @@ export default function Almacenes() {
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Almacenes y Ubicaciones</h2>
-        {puedeCrear && !form && (
-          <button style={styles.boton} onClick={() => setForm({ site_id: filtroSite || '', tipo_id: '', clave: '', nombre: '' })}>+ Nuevo almacen</button>
-        )}
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {puedeCrear && (
+            <button style={styles.botonSec} onClick={() => { setMostrarTipos(!mostrarTipos); setFormTipo(null) }}>
+              {mostrarTipos ? 'Ocultar tipos' : 'Tipos de almacen'}
+            </button>
+          )}
+          {puedeCrear && !form && (
+            <button style={styles.boton} onClick={() => setForm({ site_id: filtroSite || '', tipo_id: '', clave: '', nombre: '' })}>+ Nuevo almacen</button>
+          )}
+        </div>
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
+
+      {mostrarTipos && (
+        <div style={styles.form}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h3 style={{ ...styles.formTitulo, margin: 0 }}>Tipos de almacen</h3>
+            {puedeCrear && !formTipo && <button style={styles.botonAccion} onClick={() => setFormTipo({ nombre: '' })}>+ Nuevo tipo</button>}
+          </div>
+          {formTipo && (
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', alignItems: 'flex-end' }}>
+              <div style={{ ...styles.campo, flex: 1 }}>
+                <label style={styles.label}>Nombre del tipo *</label>
+                <input style={styles.input} value={formTipo.nombre} onChange={e => setFormTipo({ ...formTipo, nombre: e.target.value })} placeholder="Ej. Refacciones, Quimicos, Consumibles" autoFocus />
+              </div>
+              <button style={styles.botonSec} onClick={() => setFormTipo(null)}>Cancelar</button>
+              <button style={styles.boton} onClick={guardarTipo}>{formTipo.id ? 'Guardar' : 'Agregar'}</button>
+            </div>
+          )}
+          {tipos.map(t => (
+            <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 0', borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
+              <span style={{ flex: 1 }}>{t.nombre}</span>
+              <span style={{ fontSize: '12px', color: '#94a3b8' }}>{almacenes.filter(a => a.tipo_id === t.id).length} almacen(es)</span>
+              <span style={{ ...styles.badge, ...(t.activo ? styles.badgeVerde : styles.badgeGris) }}>{t.activo ? 'Activo' : 'Inactivo'}</span>
+              {puedeEditar && (
+                <>
+                  <button style={styles.botonAccion} onClick={() => setFormTipo({ id: t.id, nombre: t.nombre })}>Editar</button>
+                  <button style={styles.botonAccion} onClick={() => toggleTipo(t)}>{t.activo ? 'Desactivar' : 'Activar'}</button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {form && (
         <div style={styles.form}>
@@ -132,7 +198,7 @@ export default function Almacenes() {
               <label style={styles.label}>Tipo de almacen *</label>
               <select style={styles.input} value={form.tipo_id} onChange={e => setForm({ ...form, tipo_id: e.target.value })}>
                 <option value="">Selecciona...</option>
-                {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                {tipos.filter(t => t.activo || t.id === Number(form.tipo_id)).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
               </select>
             </div>
             <div style={styles.campo}>
