@@ -14,6 +14,7 @@ const roles = [
   { value: 'ingeniero_nuevos_proyectos', label: 'Ingeniero de Nuevos Proyectos' },
   { value: 'calidad', label: 'Calidad' },
   { value: 'customer_service', label: 'Customer Service' },
+  { value: 'gerente_logistica', label: 'Gerente de Logistica' },
   { value: 'direccion', label: 'Direccion / Director' },
   { value: 'admin', label: 'Administrador' },
 ]
