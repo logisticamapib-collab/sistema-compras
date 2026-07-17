@@ -39,6 +39,12 @@ export default function Inventario() {
 
   const [filtroAlmacen, setFiltroAlmacen] = useState('')
   const [filtroTexto, setFiltroTexto] = useState('')
+  // Filtros de la bitacora / kardex
+  const [movArticulo, setMovArticulo] = useState('') // id de articulo (kardex con saldo)
+  const [movTexto, setMovTexto] = useState('')
+  const [movTipo, setMovTipo] = useState('')
+  const [movAlmacen, setMovAlmacen] = useState('')
+  const [movSoloFuera, setMovSoloFuera] = useState(false)
 
   const [traspaso, setTraspaso] = useState(null) // { ex, almacen_destino_id, ubicacion_destino_id, cantidad, fuera_flujo, justificacion }
   const [ajuste, setAjuste] = useState(null) // { ex, signo, cantidad, motivo }
@@ -511,7 +517,9 @@ export default function Inventario() {
                       const lote = e._lote
                       const puedeTraspaso = puedeMover && Number(e.cantidad) > 0
                       return (
-                        <div key={e.id} style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
+                        <div key={e.id} style={{ ...styles.tablaFila, fontSize: '13px', cursor: 'pointer' }} className="fila-hover"
+                          onDoubleClick={() => { setMovArticulo(String(e._articuloId)); setMovTexto(''); setMovTipo(''); setMovAlmacen(''); setMovSoloFuera(false); setVista('movimientos') }}
+                          title="Doble clic para ver el kardex de este articulo">
                           <span style={{ flex: 2.4, paddingLeft: '12px', color: '#94a3b8' }}>&#8627;</span>
                           <span style={{ flex: 1.3, fontWeight: '600' }}>{lote.codigo_lote}</span>
                           <span style={{ flex: 1.4 }}>{almDe(e.almacen_id)?.clave}{e.ubicacion_id ? ` / ${ubiDe(e.ubicacion_id)?.clave}` : ''}</span>
@@ -540,41 +548,101 @@ export default function Inventario() {
         </>
       )}
 
-      {/* ==================== MOVIMIENTOS ==================== */}
-      {vista === 'movimientos' && (
-        movimientos.length === 0 ? (
-          <p style={{ color: '#666', padding: '10px 4px' }}>Aun no hay movimientos.</p>
-        ) : (
-          <div style={styles.tabla}>
-            <div style={styles.tablaHeader}>
-              <span style={{ flex: 1.3 }}>Fecha</span>
-              <span style={{ flex: 1.2 }}>Tipo</span>
-              <span style={{ flex: 1.8 }}>Articulo / Lote</span>
-              <span style={{ flex: 1.6 }}>Origen &rarr; Destino</span>
-              <span style={{ flex: 0.8, textAlign: 'right' }}>Cantidad</span>
-              <span style={{ flex: 1.3 }}>Usuario / Motivo</span>
+      {/* ==================== MOVIMIENTOS / KARDEX ==================== */}
+      {vista === 'movimientos' && (() => {
+        // Filtrado
+        let lista = movimientos.filter(m => {
+          if (movArticulo && m.articulo_id !== Number(movArticulo)) return false
+          if (movTipo && m.tipo !== movTipo) return false
+          if (movAlmacen && m.almacen_origen_id !== Number(movAlmacen) && m.almacen_destino_id !== Number(movAlmacen)) return false
+          if (movSoloFuera && !m.fuera_flujo) return false
+          if (movTexto) {
+            const art = artDe(m.articulo_id); const t = movTexto.toLowerCase()
+            if (!(art?.codigo_interno.toLowerCase().includes(t) || art?.descripcion.toLowerCase().includes(t) || loteDe(m.lote_id)?.codigo_lote.toLowerCase().includes(t))) return false
+          }
+          return true
+        })
+        // Kardex con saldo corrido solo si hay un articulo seleccionado (orden cronologico ascendente)
+        const esKardex = !!movArticulo
+        let conSaldo = lista
+        if (esKardex) {
+          const asc = [...lista].sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+          let saldo = 0
+          const mapa = {}
+          asc.forEach(m => {
+            const entra = ['entrada_inicial', 'ajuste_positivo'].includes(m.tipo) || (m.tipo === 'traspaso' && m.almacen_destino_id === Number(movAlmacen))
+            const sale = ['ajuste_negativo'].includes(m.tipo) || (m.tipo === 'traspaso' && m.almacen_origen_id === Number(movAlmacen))
+            let signo = 0
+            if (movAlmacen) { signo = entra ? 1 : sale ? -1 : 0 }
+            else { signo = ['entrada_inicial', 'ajuste_positivo'].includes(m.tipo) ? 1 : ['ajuste_negativo'].includes(m.tipo) ? -1 : 0 }
+            saldo += signo * Number(m.cantidad)
+            mapa[m.id] = saldo
+          })
+          conSaldo = [...lista].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).map(m => ({ ...m, _saldo: mapa[m.id] }))
+        }
+        const art = movArticulo ? artDe(Number(movArticulo)) : null
+        return (
+          <>
+            <div style={styles.selectorBox}>
+              <input style={{ ...styles.input, flex: 1, marginRight: '10px' }} placeholder="Buscar articulo o lote..." value={movTexto} onChange={e => setMovTexto(e.target.value)} />
+              <select style={{ ...styles.input, marginRight: '10px' }} value={movArticulo} onChange={e => setMovArticulo(e.target.value)}>
+                <option value="">Articulo (kardex)...</option>
+                {articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno}</option>)}
+              </select>
+              <select style={{ ...styles.input, marginRight: '10px' }} value={movTipo} onChange={e => setMovTipo(e.target.value)}>
+                <option value="">Todo tipo</option>
+                {Object.keys(NOMBRE_MOV).map(k => <option key={k} value={k}>{NOMBRE_MOV[k]}</option>)}
+              </select>
+              <select style={{ ...styles.input, marginRight: '10px' }} value={movAlmacen} onChange={e => setMovAlmacen(e.target.value)}>
+                <option value="">Todo almacen</option>
+                {almacenes.map(a => <option key={a.id} value={a.id}>{a.clave}</option>)}
+              </select>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                <input type="checkbox" checked={movSoloFuera} onChange={e => setMovSoloFuera(e.target.checked)} />
+                Fuera de flujo
+              </label>
             </div>
-            {movimientos.map(m => {
-              const art = artDe(m.articulo_id)
-              const oa = m.almacen_origen_id ? almDe(m.almacen_origen_id)?.clave : null
-              const da = m.almacen_destino_id ? almDe(m.almacen_destino_id)?.clave : null
-              return (
-                <div key={m.id} style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
-                  <span style={{ flex: 1.3, color: '#64748b' }}>{fmtFechaHora(m.fecha)}</span>
-                  <span style={{ flex: 1.2 }}>
-                    <span style={{ ...styles.badge, ...(m.fuera_flujo ? styles.badgeRojo : styles.badgeGris) }}>{NOMBRE_MOV[m.tipo]}</span>
-                    {m.fuera_flujo && <span style={{ fontSize: '11px', color: '#dc2626', display: 'block', marginTop: '2px' }}>fuera de flujo</span>}
-                  </span>
-                  <span style={{ flex: 1.8 }}>{art?.codigo_interno} <span style={{ color: '#94a3b8' }}>/ {loteDe(m.lote_id)?.codigo_lote}</span></span>
-                  <span style={{ flex: 1.6, color: '#64748b' }}>{oa || '-'} &rarr; {da || '-'}</span>
-                  <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600' }}>{fmtNum(m.cantidad)}</span>
-                  <span style={{ flex: 1.3, color: '#64748b', fontSize: '12px' }}>{m.usuario?.nombre}{m.motivo ? ` - ${m.motivo}` : ''}{m.justificacion ? ` - ${m.justificacion}` : ''}</span>
+            {esKardex && (
+              <p style={{ fontSize: '13px', color: '#334155', margin: '0 0 12px 4px' }}>
+                Kardex de <b>{art?.codigo_interno}</b>{movAlmacen ? ` en almacen ${almDe(Number(movAlmacen))?.clave}` : ' (todos los almacenes)'} - saldo corrido{!movAlmacen ? ' (entradas/ajustes; los traspasos no cambian el total global)' : ''}.
+              </p>
+            )}
+            {conSaldo.length === 0 ? (
+              <p style={{ color: '#666', padding: '10px 4px' }}>No hay movimientos con estos filtros.</p>
+            ) : (
+              <div style={styles.tabla}>
+                <div style={styles.tablaHeader}>
+                  <span style={{ flex: 1.3 }}>Fecha</span>
+                  <span style={{ flex: 1.2 }}>Tipo</span>
+                  <span style={{ flex: 1.8 }}>Articulo / Lote</span>
+                  <span style={{ flex: 1.6 }}>Origen &rarr; Destino</span>
+                  <span style={{ flex: 0.8, textAlign: 'right' }}>Cantidad</span>
+                  {esKardex && <span style={{ flex: 0.8, textAlign: 'right' }}>Saldo</span>}
+                  <span style={{ flex: 1.3 }}>Usuario / Motivo</span>
                 </div>
-              )
-            })}
-          </div>
+                {conSaldo.map(m => {
+                  const a2 = artDe(m.articulo_id)
+                  const oa = m.almacen_origen_id ? almDe(m.almacen_origen_id)?.clave : null
+                  const da = m.almacen_destino_id ? almDe(m.almacen_destino_id)?.clave : null
+                  return (
+                    <div key={m.id} style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
+                      <span style={{ flex: 1.3, color: '#64748b' }}>{fmtFechaHora(m.fecha)}</span>
+                      <span style={{ flex: 1.2 }}>
+                        <span style={{ ...styles.badge, ...(m.fuera_flujo ? styles.badgeRojo : styles.badgeGris) }}>{NOMBRE_MOV[m.tipo]}</span>
+                      </span>
+                      <span style={{ flex: 1.8 }}>{a2?.codigo_interno} <span style={{ color: '#94a3b8' }}>/ {loteDe(m.lote_id)?.codigo_lote}</span></span>
+                      <span style={{ flex: 1.6, color: '#64748b' }}>{oa || '-'} &rarr; {da || '-'}</span>
+                      <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600' }}>{fmtNum(m.cantidad)}</span>
+                      {esKardex && <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600', color: '#2563eb' }}>{fmtNum(m._saldo)}</span>}
+                      <span style={{ flex: 1.3, color: '#64748b', fontSize: '12px' }}>{m.usuario?.nombre}{m.motivo ? ` - ${m.motivo}` : ''}{m.justificacion ? ` - ${m.justificacion}` : ''}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </>
         )
-      )}
+      })()}
 
       {/* Modal traspaso */}
       {traspaso && (
