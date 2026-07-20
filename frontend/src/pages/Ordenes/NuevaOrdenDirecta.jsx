@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { ROLES_GERENCIALES } from '../../lib/roles'
 import { useAuth } from '../../context/AuthContext'
 
 const unidades = ['PZA','KG','LT','MT','CJ','RLL','PAR','JGO','SRV','TON','GR','ML','CM','M2','M3']
@@ -51,7 +52,7 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
       supabase.from('centros_costos').select('*').eq('site_id', perfil.site_id).eq('activo', true),
       supabase.from('cuentas_gastos').select('*').eq('site_id', perfil.site_id).eq('activo', true),
       supabase.from('usuarios').select('id, nombre, area, rol').eq('empresa_id', perfil.empresa_id).eq('activo', true)
-        .in('rol', ['gerente_area', 'gerente_planta', 'gerente_administrativo'])
+        .in('rol', ROLES_GERENCIALES)
     ])
     setArticulos(a || [])
     setProveedores(p || [])

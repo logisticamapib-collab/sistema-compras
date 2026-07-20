@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { ROLES_GERENCIALES } from '../../lib/roles'
 import { useAuth } from '../../context/AuthContext'
 import DetalleRequisicion from '../Requisiciones/DetalleRequisicion'
 import DetalleOrden from '../Ordenes/DetalleOrden'
@@ -21,7 +22,7 @@ export default function Aprobaciones() {
     const promesas = []
 
     // Requisiciones pendientes segun rol
-    if (['gerente_area', 'gerente_planta', 'gerente_administrativo', 'admin'].includes(perfil?.rol)) {
+    if (ROLES_GERENCIALES.includes(perfil?.rol)) {
       promesas.push(
         supabase.from('requisiciones')
           .select('*, solicitante:solicitante_id(nombre, area), sites(nombre, codigo)')
@@ -36,7 +37,7 @@ export default function Aprobaciones() {
 
     // Ordenes de compra pendientes segun rol
     let queryOC = null
-    if (['gerente_area', 'gerente_planta', 'gerente_administrativo'].includes(perfil?.rol)) {
+    if (ROLES_GERENCIALES.includes(perfil?.rol)) {
       // Estos niveles solo ven la OC si son especificamente la persona asignada como aprobador actual
       queryOC = supabase.from('ordenes_compra')
         .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')

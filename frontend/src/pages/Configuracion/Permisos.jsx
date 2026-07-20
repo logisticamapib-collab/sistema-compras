@@ -1,17 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { ROLES as roles } from '../../lib/roles'
 
-const roles = [
-  { value: 'solicitante', label: 'Solicitante' },
-  { value: 'gerente_area', label: 'Gerente de Area' },
-  { value: 'gerente_planta', label: 'Gerente de Planta' },
-  { value: 'gerente_administrativo', label: 'Gerente Administrativo' },
-  { value: 'compras', label: 'Compras' },
-  { value: 'gerente_compras', label: 'Gerente de Compras' },
-  { value: 'gerente_ingenieria', label: 'Gerente de Ingenieria' },
-  { value: 'ingeniero_nuevos_proyectos', label: 'Ingeniero de Nuevos Proyectos' },
-  { value: 'direccion', label: 'Direccion' },
-]
 
 const acciones = [
   { clave: 'ver', label: 'Ver' },

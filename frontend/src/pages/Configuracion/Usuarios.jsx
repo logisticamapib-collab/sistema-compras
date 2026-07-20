@@ -2,22 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase, supabaseAdmin } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import PermisosUsuario from './PermisosUsuario'
+import { ROLES as roles, ROLES_GERENCIALES } from '../../lib/roles'
 
-const roles = [
-  { value: 'solicitante', label: 'Solicitante' },
-  { value: 'gerente_area', label: 'Gerente de Area' },
-  { value: 'gerente_planta', label: 'Gerente de Planta' },
-  { value: 'gerente_administrativo', label: 'Gerente Administrativo' },
-  { value: 'compras', label: 'Compras' },
-  { value: 'gerente_compras', label: 'Gerente de Compras' },
-  { value: 'gerente_ingenieria', label: 'Gerente de Ingenieria' },
-  { value: 'ingeniero_nuevos_proyectos', label: 'Ingeniero de Nuevos Proyectos' },
-  { value: 'calidad', label: 'Calidad' },
-  { value: 'customer_service', label: 'Customer Service' },
-  { value: 'gerente_logistica', label: 'Gerente de Logistica' },
-  { value: 'direccion', label: 'Direccion / Director' },
-  { value: 'admin', label: 'Administrador' },
-]
 
 const niveles = [
   { value: 1, label: 'Nivel 1 - Solicitante' },
@@ -169,10 +155,7 @@ export default function Usuarios() {
     await cargarDatos()
   }
 
-  const gerentesDisponibles = usuarios.filter(u =>
-    ['gerente_area', 'gerente_planta', 'gerente_administrativo',
-      'gerente_compras', 'direccion', 'admin'].includes(u.rol)
-  )
+  const gerentesDisponibles = usuarios.filter(u => ROLES_GERENCIALES.includes(u.rol))
 
   if (usuarioPermisos) {
     return <PermisosUsuario usuario={usuarioPermisos} onVolver={() => setUsuarioPermisos(null)} />
