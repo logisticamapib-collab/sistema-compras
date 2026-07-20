@@ -31,6 +31,7 @@ export default function ConsultasInventario() {
   const [fProveedor, setFProveedor] = useState('')
   const [fAlmacen, setFAlmacen] = useState('')
   const [fCalidad, setFCalidad] = useState('')
+  const [expandido, setExpandido] = useState(null)
 
   useEffect(() => { cargarDatos() }, [])
 
@@ -87,6 +88,23 @@ export default function ConsultasInventario() {
     })
 
   const totalGeneral = filas.reduce((s, e) => s + Number(e.cantidad), 0)
+
+  // Agrupacion por articulo (solo para la vista; el export sigue usando 'filas')
+  const grupos = []
+  filas.forEach(e => {
+    let g = grupos.find(x => x.articulo_id === e._art.id)
+    if (!g) { g = { articulo_id: e._art.id, art: e._art, total: 0, lotes: new Set(), filas: [] }; grupos.push(g) }
+    g.total += Number(e.cantidad)
+    g.lotes.add(e._lote.codigo_lote)
+    g.filas.push(e)
+  })
+  grupos.forEach(g => {
+    g.filas.sort((a, b) => (almDe(a.almacen_id)?.clave || '').localeCompare(almDe(b.almacen_id)?.clave || ''))
+    g.retenido = g.filas.filter(f => f._lote.estatus_calidad === 'retenido').reduce((s, f) => s + Number(f.cantidad), 0)
+    g.liberado = g.filas.filter(f => f._lote.estatus_calidad === 'liberado').reduce((s, f) => s + Number(f.cantidad), 0)
+    g.rechazado = g.filas.filter(f => f._lote.estatus_calidad === 'rechazado').reduce((s, f) => s + Number(f.cantidad), 0)
+  })
+  grupos.sort((a, b) => a.art.codigo_interno.localeCompare(b.art.codigo_interno))
 
   // Bajos de inventario: total por articulo vs stock_minimo (>0)
   const totalesPorArt = {}
@@ -176,29 +194,56 @@ export default function ConsultasInventario() {
         ) : (
           <div style={styles.tabla}>
             <div style={styles.tablaHeader}>
-              <span style={{ flex: 2.2 }}>Articulo</span>
+              <span style={{ flex: 2.6 }}>Articulo</span>
               <span style={{ flex: 1 }}>Categoria</span>
-              <span style={{ flex: 1.1 }}>Lote</span>
-              <span style={{ flex: 1.3 }}>Ubicacion</span>
-              <span style={{ flex: 1, textAlign: 'right' }}>Cantidad</span>
-              <span style={{ flex: 0.9, textAlign: 'center' }}>Calidad</span>
+              <span style={{ flex: 0.8, textAlign: 'center' }}>Ubicaciones</span>
+              <span style={{ flex: 0.7, textAlign: 'center' }}>Lotes</span>
+              <span style={{ flex: 1, textAlign: 'right' }}>Existencia</span>
+              <span style={{ flex: 1.5, textAlign: 'center' }}>Por estatus</span>
             </div>
-            {filas.sort((a, b) => a._art.codigo_interno.localeCompare(b._art.codigo_interno)).map(e => (
-              <div key={e.id} style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
-                <span style={{ flex: 2.2 }}><b>{e._art.codigo_interno}</b> <span style={{ color: '#64748b' }}>- {e._art.descripcion}</span></span>
-                <span style={{ flex: 1, color: '#64748b' }}>{catDe(e._art.categoria_id)?.nombre || '-'}</span>
-                <span style={{ flex: 1.1 }}>{e._lote.codigo_lote}</span>
-                <span style={{ flex: 1.3 }}>{almDe(e.almacen_id)?.clave}{e.ubicacion_id ? ` / ${ubiDe(e.ubicacion_id)?.clave}` : ''}</span>
-                <span style={{ flex: 1, textAlign: 'right', fontWeight: '600' }}>{fmtNum(e.cantidad)} {e._art.unidad_medida || ''}</span>
-                <span style={{ flex: 0.9, textAlign: 'center' }}>
-                  <span style={{ ...styles.badge, ...(e._lote.estatus_calidad === 'liberado' ? styles.badgeVerde : e._lote.estatus_calidad === 'rechazado' ? styles.badgeRojo : styles.badgeAmbar) }}>{NOMBRE_CALIDAD[e._lote.estatus_calidad]}</span>
-                </span>
-              </div>
-            ))}
+            {grupos.map(g => {
+              const abierto = expandido === g.articulo_id
+              return (
+                <div key={g.articulo_id}>
+                  <div style={{ ...styles.tablaFila, cursor: 'pointer' }} className="fila-hover" onClick={() => setExpandido(abierto ? null : g.articulo_id)}>
+                    <span style={{ flex: 2.6 }}>{abierto ? '\u25BC' : '\u25B6'} <b>{g.art.codigo_interno}</b> <span style={{ color: '#64748b' }}>- {g.art.descripcion}</span></span>
+                    <span style={{ flex: 1, color: '#64748b', fontSize: '13px' }}>{catDe(g.art.categoria_id)?.nombre || '-'}</span>
+                    <span style={{ flex: 0.8, textAlign: 'center', fontWeight: '600' }}>{g.filas.length}</span>
+                    <span style={{ flex: 0.7, textAlign: 'center', color: '#64748b' }}>{g.lotes.size}</span>
+                    <span style={{ flex: 1, textAlign: 'right', fontWeight: '600' }}>{fmtNum(g.total)} {g.art.unidad_medida || ''}</span>
+                    <span style={{ flex: 1.5, textAlign: 'center', display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                      {g.liberado > 0 && <span style={{ ...styles.badge, ...styles.badgeVerde }}>Lib {fmtNum(g.liberado)}</span>}
+                      {g.retenido > 0 && <span style={{ ...styles.badge, ...styles.badgeAmbar }}>Ret {fmtNum(g.retenido)}</span>}
+                      {g.rechazado > 0 && <span style={{ ...styles.badge, ...styles.badgeRojo }}>Rech {fmtNum(g.rechazado)}</span>}
+                    </span>
+                  </div>
+                  {abierto && (
+                    <div style={styles.subTabla}>
+                      <div style={{ ...styles.tablaHeader, backgroundColor: '#fff' }}>
+                        <span style={{ flex: 1.6 }}>Almacen / Ubicacion</span>
+                        <span style={{ flex: 1.2 }}>Lote</span>
+                        <span style={{ flex: 1, textAlign: 'right' }}>Cantidad</span>
+                        <span style={{ flex: 0.9, textAlign: 'center' }}>Calidad</span>
+                      </div>
+                      {g.filas.map(e => (
+                        <div key={e.id} style={{ ...styles.tablaFila, padding: '8px 20px', fontSize: '13px' }}>
+                          <span style={{ flex: 1.6, fontWeight: '500' }}>{almDe(e.almacen_id)?.clave}{e.ubicacion_id ? ` / ${ubiDe(e.ubicacion_id)?.clave}` : ''}</span>
+                          <span style={{ flex: 1.2, color: '#64748b' }}>{e._lote.codigo_lote}</span>
+                          <span style={{ flex: 1, textAlign: 'right', fontWeight: '600' }}>{fmtNum(e.cantidad)} {e._art.unidad_medida || ''}</span>
+                          <span style={{ flex: 0.9, textAlign: 'center' }}>
+                            <span style={{ ...styles.badge, ...(e._lote.estatus_calidad === 'liberado' ? styles.badgeVerde : e._lote.estatus_calidad === 'rechazado' ? styles.badgeRojo : styles.badgeAmbar) }}>{NOMBRE_CALIDAD[e._lote.estatus_calidad]}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
             <div style={{ ...styles.tablaFila, backgroundColor: '#f8fafc', fontWeight: '600' }}>
-              <span style={{ flex: 4.3 }}>Total ({filas.length} renglon(es))</span>
+              <span style={{ flex: 5.1 }}>Total: {grupos.length} articulo(s) en {filas.length} ubicacion(es)</span>
               <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(totalGeneral)}</span>
-              <span style={{ flex: 0.9 }}></span>
+              <span style={{ flex: 1.5 }}></span>
             </div>
           </div>
         )
@@ -246,6 +291,7 @@ const styles = {
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '11px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
+  subTabla: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', padding: '2px 0 6px' },
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '600' },
   badgeVerde: { backgroundColor: '#dcfce7', color: '#16a34a' },
   badgeRojo: { backgroundColor: '#fee2e2', color: '#dc2626' },
