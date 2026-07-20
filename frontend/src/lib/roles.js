@@ -19,6 +19,7 @@ export const ROLES = [
   { value: 'compras', label: 'Compras' },
   { value: 'ingeniero_nuevos_proyectos', label: 'Ingeniero de Nuevos Proyectos' },
   { value: 'calidad', label: 'Calidad' },
+  { value: 'produccion', label: 'Produccion (operacion)' },
   { value: 'sgc', label: 'SGC (Sistema de Gestion de Calidad)' },
   { value: 'customer_service', label: 'Customer Service' },
   { value: 'direccion', label: 'Direccion / Director' },

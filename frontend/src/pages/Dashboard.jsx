@@ -6,6 +6,7 @@ import GrupoCompras from './Compras/index'
 import GrupoIngenieria from './Ingenieria/index'
 import GrupoLogistica from './Logistica/index'
 import GrupoCalidad from './Calidad/index'
+import GrupoProduccion from './Produccion/index'
 import ModuloPendiente from './ModuloPendiente'
 
 // Modulos "contenedor" -- agrupan varias pantallas y dependen de permisos granulares internos
@@ -13,6 +14,7 @@ const modulosGrupo = [
   { id: 'compras', titulo: 'Compras', desc: 'Requisiciones, ordenes, proveedores y KPI', color: '#2563eb' },
   { id: 'ingenieria', titulo: 'Ingenieria', desc: 'Articulos, rutas, BOM y niveles de ingenieria', color: '#059669' },
   { id: 'logistica', titulo: 'Logistica', desc: 'Almacen, Embarques, Customer Service y Clientes', color: '#0891b2' },
+  { id: 'produccion', titulo: 'Produccion', desc: 'Ordenes de trabajo, reporte de produccion y scrap', color: '#c2410c' },
   { id: 'calidad', titulo: 'Calidad', desc: 'Liberacion de lotes, cuarentena y no conformidades', color: '#b91c1c' },
 ]
 
@@ -22,7 +24,6 @@ const moduloConfiguracion = { id: 'configuracion', titulo: 'Configuracion', desc
 // Modulos del roadmap de MRP, todavia sin funcionalidad interna -- visibles para todos como referencia del plan
 const modulosPendientes = [
   { id: 'planeacion', titulo: 'Planeacion de Produccion', desc: 'Motor MRP: plan de produccion y necesidades', color: '#9333ea' },
-  { id: 'produccion', titulo: 'Produccion', desc: 'Ordenes de trabajo y consumo de materiales', color: '#c2410c' },
   { id: 'moldes', titulo: 'Mantenimiento de Moldes', desc: 'Conteo de shots y mantenimiento preventivo', color: '#a16207' },
   { id: 'mantenimiento', titulo: 'Mantenimiento', desc: 'Ordenes de mantenimiento general', color: '#57534e' },
 ]
@@ -57,6 +58,7 @@ export default function Dashboard() {
           {moduloActivo === 'ingenieria' && <GrupoIngenieria />}
           {moduloActivo === 'logistica' && <GrupoLogistica />}
           {moduloActivo === 'calidad' && <GrupoCalidad />}
+          {moduloActivo === 'produccion' && <GrupoProduccion />}
           {moduloActivo === 'configuracion' && <Configuracion />}
           {pendienteActivo && <ModuloPendiente titulo={pendienteActivo.titulo} />}
         </div>
