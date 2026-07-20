@@ -36,6 +36,8 @@ export default function Recibos() {
 
   const [ocActiva, setOcActiva] = useState(null)
   const [consActiva, setConsActiva] = useState(null)
+  const [expandido, setExpandido] = useState(null)      // 'oc-3' | 'cons-5'
+  const [seleccion, setSeleccion] = useState({})        // { [docKey]: { [lineaId]: true } }
   const [rec, setRec] = useState({})
   const [notas, setNotas] = useState('')
   const [procesando, setProcesando] = useState(false)
@@ -91,6 +93,27 @@ export default function Recibos() {
 
   const setCampo = (id, campo, valor) => setRec(r => ({ ...r, [id]: { ...r[id], [campo]: valor } }))
 
+  // --- Seleccion de lineas por documento ---
+  const seleccionadas = (docKey) => seleccion[docKey] || {}
+  const nSeleccionadas = (docKey) => Object.values(seleccionadas(docKey)).filter(Boolean).length
+  const toggleLinea = (docKey, lineaId) => setSeleccion(s => {
+    const act = { ...(s[docKey] || {}) }
+    act[lineaId] = !act[lineaId]
+    return { ...s, [docKey]: act }
+  })
+  const toggleTodas = (docKey, lineasIds) => setSeleccion(s => {
+    const act = { ...(s[docKey] || {}) }
+    const todas = lineasIds.every(id => act[id])
+    lineasIds.forEach(id => { act[id] = !todas })
+    return { ...s, [docKey]: act }
+  })
+  const abrirDoc = (docKey, lineasIds) => {
+    if (expandido === docKey) { setExpandido(null); return }
+    setExpandido(docKey)
+    // por defecto, todas las lineas pendientes seleccionadas
+    setSeleccion(s => s[docKey] ? s : { ...s, [docKey]: Object.fromEntries(lineasIds.map(id => [id, true])) })
+  }
+
   const subirCertificado = async (file) => {
     const nombre = `recibos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
     const { error: e } = await supabase.storage.from('calidad').upload(nombre, file)
@@ -100,14 +123,18 @@ export default function Recibos() {
 
   const abrirOc = (oc) => {
     setError(''); setExito(''); setConsActiva(null); setOcActiva(oc); setNotas('')
+    const sel = seleccionadas(`oc-${oc.id}`)
+    const hay = Object.values(sel).some(Boolean)
     const ini = {}
-    ocLineasDe(oc.id).filter(l => pendOc(l) > 0).forEach(l => { ini[l.id] = { cantidad: '', codigo_lote: '', almacen_id: '', ubicacion_id: '', certificado_ref: '', file: null } })
+    ocLineasDe(oc.id).filter(l => pendOc(l) > 0).filter(l => !hay || sel[l.id]).forEach(l => { ini[l.id] = { cantidad: '', codigo_lote: '', almacen_id: '', ubicacion_id: '', certificado_ref: '', file: null } })
     setRec(ini)
   }
   const abrirCons = (c) => {
     setError(''); setExito(''); setOcActiva(null); setConsActiva(c); setNotas('')
+    const sel = seleccionadas(`cons-${c.id}`)
+    const hay = Object.values(sel).some(Boolean)
     const ini = {}
-    consLineasDe(c.id).filter(l => pendCons(l) > 0).forEach(l => { ini[l.id] = { cantidad: '', codigo_lote: '', almacen_id: '', ubicacion_id: '', certificado_ref: '', file: null } })
+    consLineasDe(c.id).filter(l => pendCons(l) > 0).filter(l => !hay || sel[l.id]).forEach(l => { ini[l.id] = { cantidad: '', codigo_lote: '', almacen_id: '', ubicacion_id: '', certificado_ref: '', file: null } })
     setRec(ini)
   }
 
@@ -201,7 +228,7 @@ export default function Recibos() {
   const doc = ocActiva || consActiva
   if (doc) {
     const esConsigna = !!consActiva
-    const lns = esConsigna ? consLineasDe(doc.id).filter(l => pendCons(l) > 0) : ocLineasDe(doc.id).filter(l => pendOc(l) > 0)
+    const lns = (esConsigna ? consLineasDe(doc.id).filter(l => pendCons(l) > 0) : ocLineasDe(doc.id).filter(l => pendOc(l) > 0)).filter(l => rec[l.id])
     const siteId = esConsigna ? doc.site_id : doc.site_id
     return (
       <div style={styles.container} className="aparecer">
@@ -294,16 +321,52 @@ export default function Recibos() {
             <div style={styles.tablaHeader}>
               <span style={{ flex: 1 }}>Folio OC</span><span style={{ flex: 1.6 }}>Proveedor</span><span style={{ flex: 1 }}>Estatus</span><span style={{ flex: 1 }}>Entrega est.</span><span style={{ flex: 0.8, textAlign: 'center' }}>Lineas pend.</span><span style={{ width: '110px' }}></span>
             </div>
-            {ocsPendientes.map(o => (
-              <div key={o.id} style={styles.tablaFila} className="fila-hover">
-                <span style={{ flex: 1, fontWeight: '600' }}>{o.folio}</span>
-                <span style={{ flex: 1.6 }}>{provDe(o.proveedor_id)?.nombre}</span>
-                <span style={{ flex: 1 }}><span style={{ ...styles.badge, ...styles.badgeAmbar }}>{o.estatus.replace(/_/g, ' ')}</span></span>
-                <span style={{ flex: 1, color: '#64748b' }}>{fmtFecha(o.fecha_entrega_estimada)}</span>
-                <span style={{ flex: 0.8, textAlign: 'center' }}>{ocLineasDe(o.id).filter(l => pendOc(l) > 0).length}</span>
-                <span style={{ width: '110px', textAlign: 'right' }}>{puedeRecibir && <button style={styles.boton} onClick={() => abrirOc(o)}>Recibir</button>}</span>
-              </div>
-            ))}
+            {ocsPendientes.map(o => {
+              const lns = ocLineasDe(o.id).filter(l => pendOc(l) > 0)
+              const key = `oc-${o.id}`
+              const abierto = expandido === key
+              const nSel = nSeleccionadas(key)
+              return (
+                <div key={o.id}>
+                  <div style={{ ...styles.tablaFila, cursor: 'pointer' }} className="fila-hover" onClick={() => abrirDoc(key, lns.map(l => l.id))}>
+                    <span style={{ flex: 1, fontWeight: '600' }}>{abierto ? '\u25BC' : '\u25B6'} {o.folio}</span>
+                    <span style={{ flex: 1.6 }}>{provDe(o.proveedor_id)?.nombre}</span>
+                    <span style={{ flex: 1 }}><span style={{ ...styles.badge, ...styles.badgeAmbar }}>{o.estatus.replace(/_/g, ' ')}</span></span>
+                    <span style={{ flex: 1, color: '#64748b' }}>{fmtFecha(o.fecha_entrega_estimada)}</span>
+                    <span style={{ flex: 0.8, textAlign: 'center' }}>{abierto && nSel > 0 ? `${nSel}/${lns.length}` : lns.length}</span>
+                    <span style={{ width: '110px', textAlign: 'right' }} onClick={ev => ev.stopPropagation()}>
+                      {puedeRecibir && <button style={{ ...styles.boton, opacity: abierto && nSel === 0 ? 0.5 : 1 }} disabled={abierto && nSel === 0} onClick={() => abrirOc(o)}>Recibir</button>}
+                    </span>
+                  </div>
+                  {abierto && (
+                    <div style={styles.subTabla}>
+                      <div style={{ ...styles.tablaHeader, backgroundColor: '#fff' }}>
+                        <span style={{ width: '34px' }}>
+                          <input type="checkbox" checked={lns.every(l => seleccionadas(key)[l.id])} onChange={() => toggleTodas(key, lns.map(l => l.id))} />
+                        </span>
+                        <span style={{ flex: 2.4 }}>Articulo</span>
+                        <span style={{ flex: 1, textAlign: 'right' }}>Ordenado</span>
+                        <span style={{ flex: 1, textAlign: 'right' }}>Recibido</span>
+                        <span style={{ flex: 1, textAlign: 'right' }}>Pendiente</span>
+                        <span style={{ flex: 0.8 }}>UM</span>
+                      </div>
+                      {lns.map(l => (
+                        <label key={l.id} style={{ ...styles.tablaFila, padding: '8px 20px', fontSize: '13px', cursor: 'pointer' }}>
+                          <span style={{ width: '34px' }}>
+                            <input type="checkbox" checked={!!seleccionadas(key)[l.id]} onChange={() => toggleLinea(key, l.id)} />
+                          </span>
+                          <span style={{ flex: 2.4 }}><b>{artDe(l.articulo_id)?.codigo_interno}</b> <span style={{ color: '#64748b' }}>- {l.descripcion || artDe(l.articulo_id)?.descripcion}</span></span>
+                          <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(l.cantidad)}</span>
+                          <span style={{ flex: 1, textAlign: 'right', color: '#16a34a' }}>{fmtNum(l.cantidad_recibida || 0)}</span>
+                          <span style={{ flex: 1, textAlign: 'right', fontWeight: '600', color: '#b45309' }}>{fmtNum(pendOc(l))}</span>
+                          <span style={{ flex: 0.8, color: '#64748b' }}>{l.unidad_medida}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )
       )}
@@ -314,16 +377,52 @@ export default function Recibos() {
             <div style={styles.tablaHeader}>
               <span style={{ flex: 1 }}>Folio</span><span style={{ flex: 1.6 }}>Cliente</span><span style={{ flex: 1.3 }}>Referencia</span><span style={{ flex: 1 }}>Estatus</span><span style={{ flex: 0.8, textAlign: 'center' }}>Lineas pend.</span><span style={{ width: '110px' }}></span>
             </div>
-            {consPendientes.map(c => (
-              <div key={c.id} style={styles.tablaFila} className="fila-hover">
-                <span style={{ flex: 1, fontWeight: '600' }}>{c.folio}</span>
-                <span style={{ flex: 1.6 }}>{cliDe(c.cliente_id)?.nombre}</span>
-                <span style={{ flex: 1.3, color: '#64748b', fontSize: '13px' }}>{c.referencia || '-'}</span>
-                <span style={{ flex: 1 }}><span style={{ ...styles.badge, ...styles.badgeAzul }}>{c.estatus.replace(/_/g, ' ')}</span></span>
-                <span style={{ flex: 0.8, textAlign: 'center' }}>{consLineasDe(c.id).filter(l => pendCons(l) > 0).length}</span>
-                <span style={{ width: '110px', textAlign: 'right' }}>{puedeRecibir && <button style={styles.boton} onClick={() => abrirCons(c)}>Recibir</button>}</span>
-              </div>
-            ))}
+            {consPendientes.map(c => {
+              const lns = consLineasDe(c.id).filter(l => pendCons(l) > 0)
+              const key = `cons-${c.id}`
+              const abierto = expandido === key
+              const nSel = nSeleccionadas(key)
+              return (
+                <div key={c.id}>
+                  <div style={{ ...styles.tablaFila, cursor: 'pointer' }} className="fila-hover" onClick={() => abrirDoc(key, lns.map(l => l.id))}>
+                    <span style={{ flex: 1, fontWeight: '600' }}>{abierto ? '\u25BC' : '\u25B6'} {c.folio}</span>
+                    <span style={{ flex: 1.6 }}>{cliDe(c.cliente_id)?.nombre}</span>
+                    <span style={{ flex: 1.3, color: '#64748b', fontSize: '13px' }}>{c.referencia || '-'}</span>
+                    <span style={{ flex: 1 }}><span style={{ ...styles.badge, ...styles.badgeAzul }}>{c.estatus.replace(/_/g, ' ')}</span></span>
+                    <span style={{ flex: 0.8, textAlign: 'center' }}>{abierto && nSel > 0 ? `${nSel}/${lns.length}` : lns.length}</span>
+                    <span style={{ width: '110px', textAlign: 'right' }} onClick={ev => ev.stopPropagation()}>
+                      {puedeRecibir && <button style={{ ...styles.boton, opacity: abierto && nSel === 0 ? 0.5 : 1 }} disabled={abierto && nSel === 0} onClick={() => abrirCons(c)}>Recibir</button>}
+                    </span>
+                  </div>
+                  {abierto && (
+                    <div style={styles.subTabla}>
+                      <div style={{ ...styles.tablaHeader, backgroundColor: '#fff' }}>
+                        <span style={{ width: '34px' }}>
+                          <input type="checkbox" checked={lns.every(l => seleccionadas(key)[l.id])} onChange={() => toggleTodas(key, lns.map(l => l.id))} />
+                        </span>
+                        <span style={{ flex: 2.4 }}>Articulo</span>
+                        <span style={{ flex: 1, textAlign: 'right' }}>Autorizado</span>
+                        <span style={{ flex: 1, textAlign: 'right' }}>Recibido</span>
+                        <span style={{ flex: 1, textAlign: 'right' }}>Pendiente</span>
+                        <span style={{ flex: 0.9, textAlign: 'center' }}>Fecha / Tipo</span>
+                      </div>
+                      {lns.map(l => (
+                        <label key={l.id} style={{ ...styles.tablaFila, padding: '8px 20px', fontSize: '13px', cursor: 'pointer' }}>
+                          <span style={{ width: '34px' }}>
+                            <input type="checkbox" checked={!!seleccionadas(key)[l.id]} onChange={() => toggleLinea(key, l.id)} />
+                          </span>
+                          <span style={{ flex: 2.4 }}><b>{artDe(l.articulo_id)?.codigo_interno}</b> <span style={{ color: '#64748b' }}>- {artDe(l.articulo_id)?.descripcion}</span></span>
+                          <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(l.cantidad)}</span>
+                          <span style={{ flex: 1, textAlign: 'right', color: '#16a34a' }}>{fmtNum(l.cantidad_recibida || 0)}</span>
+                          <span style={{ flex: 1, textAlign: 'right', fontWeight: '600', color: '#b45309' }}>{fmtNum(pendCons(l))}</span>
+                          <span style={{ flex: 0.9, textAlign: 'center', color: '#64748b' }}>{fmtFecha(l.fecha_sugerida)} / {l.tipo}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )
       )}
@@ -370,6 +469,7 @@ const styles = {
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '11px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
+  subTabla: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', padding: '2px 0 6px' },
   bloqueo: { backgroundColor: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '7px', padding: '8px 12px', color: '#b91c1c', fontSize: '13px', margin: '0 0 10px' },
   avisoDesv: { backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '7px', padding: '8px 12px', color: '#92400e', fontSize: '13px', margin: '0 0 10px' },
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '600' },
