@@ -5,6 +5,7 @@ import EtiquetaProducto from '../../components/EtiquetaProducto'
 import PortalImpresion from '../../components/PortalImpresion'
 import { imprimirAislado } from '../../lib/impresion'
 import { datosEtiqueta } from '../../lib/etiquetas'
+import { crearCajas } from '../../lib/contenedores'
 
 // Capa 3 - Recibos. Dos fuentes:
 //  - Contra OC (compra): valida certificado y PPAP del proveedor.
@@ -138,14 +139,12 @@ export default function Recibos() {
     const nuevas = []
     for (const it of items) {
       const art = artDe(it.articulo_id)
-      const snp = Number(art?.snp || 0)
-      const cajas = snp > 0 ? Math.ceil(it.cantidad / snp) : 1
-      for (let i = 0; i < cajas; i++) {
-        const cant = snp > 0 ? (i === cajas - 1 ? it.cantidad - snp * (cajas - 1) : snp) : it.cantidad
+      for (const caja of (it.cajas || [])) {
         nuevas.push(datosEtiqueta({
           lote: it.lote, articulo: art, empresa,
           cliente: { nombre: clienteNombre || proveedorNombre || '' },
-          codigoCliente: art?.codigo_interno, maquina: null, cantidad: cant, bom,
+          codigoCliente: art?.codigo_interno, maquina: null, cantidad: Number(caja.cantidad), bom,
+          contenedor: caja, qrContenido: cfgEtiqueta?.qr_contenido || 'contenedor',
         }))
       }
     }
@@ -158,7 +157,11 @@ export default function Recibos() {
     const { data: filas, error: e1 } = await supabase
       .from('recibo_lineas').select('*, lote:lotes(*)').eq('recibo_id', recibo.id)
     if (e1) { setError('Error al leer el recibo: ' + e1.message); return }
-    const items = (filas || []).filter(f => f.lote_id).map(f => ({ articulo_id: f.articulo_id, cantidad: Number(f.cantidad), lote: f.lote }))
+    const items = []
+    for (const f of (filas || []).filter(x => x.lote_id)) {
+      const { data: cajas } = await supabase.from('contenedores').select('*').eq('lote_id', f.lote_id).eq('tipo', 'caja').order('folio')
+      items.push({ articulo_id: f.articulo_id, cantidad: Number(f.cantidad), lote: f.lote, cajas: cajas || [] })
+    }
     if (items.length === 0) { setError('Ese recibo no tiene lotes para etiquetar'); return }
     setEtiquetas(construirEtiquetas(items, { proveedorNombre: recibo.prov?.nombre, clienteNombre: null }))
   }
@@ -215,7 +218,13 @@ export default function Recibos() {
         await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, lote_id: lote.id, tipo: 'entrada_inicial', almacen_destino_id: Number(it.almacen_id), ubicacion_destino_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant, motivo: `Recibo ${recibo.folio} / OC ${ocActiva.folio}`, usuario_id: perfil.id })
         await supabase.from('recibo_lineas').insert({ recibo_id: recibo.id, oc_linea_id: l.id, articulo_id: l.articulo_id, cantidad: it.cant, lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, certificado_ref: it.certificado_ref.trim() || null, certificado_url: certUrl, ppap_estado: val.porDesviacion ? 'desviacion' : (requisitoDe(l.articulo_id, ocActiva.proveedor_id)?.requiere_ppap ? 'vigente' : 'no_requiere'), desviacion_id: val.desvId })
         await supabase.from('oc_lineas').update({ cantidad_recibida: Number(l.cantidad_recibida || 0) + it.cant }).eq('id', l.id)
-        paraEtiquetas.push({ articulo_id: l.articulo_id, cantidad: it.cant, lote })
+        const cajasOc = await crearCajas(supabase, {
+          empresaId: perfil.empresa_id, articuloId: l.articulo_id, loteId: lote.id, cantidad: it.cant,
+          snp: Number(artDe(l.articulo_id)?.snp || 0), almacenId: Number(it.almacen_id),
+          ubicacionId: it.ubicacion_id ? Number(it.ubicacion_id) : null,
+          origen: `Recibo ${recibo.folio}`, usuarioId: perfil.id,
+        })
+        paraEtiquetas.push({ articulo_id: l.articulo_id, cantidad: it.cant, lote, cajas: cajasOc })
         detalleSeg.push({ oc_linea_id: l.id, cantidad: it.cant })
       }
       const { data: seg } = await supabase.from('oc_seguimiento').insert({ oc_id: ocActiva.id, evento: 'recibo', usuario_id: perfil.id, comentario: `Recibo ${recibo.folio}: ${items.length} linea(s) a inventario (retenido)` }).select().single()
@@ -259,7 +268,13 @@ export default function Recibos() {
         await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, lote_id: lote.id, tipo: 'entrada_inicial', almacen_destino_id: Number(it.almacen_id), ubicacion_destino_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant, motivo: `Recibo consigna ${recibo.folio} / ${consActiva.folio}`, usuario_id: perfil.id })
         await supabase.from('recibo_lineas').insert({ recibo_id: recibo.id, consigna_linea_id: l.id, articulo_id: l.articulo_id, cantidad: it.cant, lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, certificado_ref: it.certificado_ref.trim() || null, certificado_url: certUrl, ppap_estado: 'consigna' })
         await supabase.from('consigna_autorizacion_lineas').update({ cantidad_recibida: Number(l.cantidad_recibida || 0) + it.cant }).eq('id', l.id)
-        paraEtiquetasC.push({ articulo_id: l.articulo_id, cantidad: it.cant, lote })
+        const cajasCon = await crearCajas(supabase, {
+          empresaId: perfil.empresa_id, articuloId: l.articulo_id, loteId: lote.id, cantidad: it.cant,
+          snp: Number(artDe(l.articulo_id)?.snp || 0), almacenId: Number(it.almacen_id),
+          ubicacionId: it.ubicacion_id ? Number(it.ubicacion_id) : null,
+          origen: `Recibo consigna ${recibo.folio}`, usuarioId: perfil.id,
+        })
+        paraEtiquetasC.push({ articulo_id: l.articulo_id, cantidad: it.cant, lote, cajas: cajasCon })
       }
       const todo = consLineasDe(consActiva.id).map(l => { const it = items.find(i => i.lineaId === l.id); return (Number(l.cantidad_recibida || 0) + (it ? it.cant : 0)) >= Number(l.cantidad) })
       await supabase.from('consigna_autorizaciones').update({ estatus: todo.every(Boolean) ? 'recibida' : 'recibida_parcial' }).eq('id', consActiva.id)

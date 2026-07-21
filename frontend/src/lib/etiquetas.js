@@ -27,9 +27,16 @@ export const fmtFechaEtiqueta = (d = new Date()) =>
 export const fmtHoraEtiqueta = (d = new Date()) =>
   d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true })
 
-// Arma los datos de una etiqueta a partir del lote y sus catalogos
-export function datosEtiqueta({ lote, articulo, empresa, cliente, codigoCliente, maquina, cantidad, bom }) {
+// Arma los datos de una etiqueta a partir del lote y sus catalogos.
+// contenedor  -> caja/tarima a la que pertenece la etiqueta (opcional)
+// qrContenido -> 'contenedor' (default) o 'lote': que se codifica en el QR
+export function datosEtiqueta({ lote, articulo, empresa, cliente, codigoCliente, maquina, cantidad, bom, contenedor = null, qrContenido = 'contenedor' }) {
+  const qr = qrContenido === 'lote'
+    ? (lote?.codigo_lote || '')
+    : (contenedor?.folio || lote?.codigo_lote || '')
   return {
+    folio: contenedor?.folio || '',
+    qr,
     numeroParte: codigoCliente || articulo?.codigo_interno || '',
     codigoInterno: articulo?.codigo_interno || '',
     descripcion: articulo?.descripcion || '',

@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import EtiquetaProducto from '../../components/EtiquetaProducto'
 import { datosEtiqueta } from '../../lib/etiquetas'
+import { crearCajas } from '../../lib/contenedores'
 import PortalImpresion from '../../components/PortalImpresion'
 import { imprimirAislado } from '../../lib/impresion'
 
@@ -222,7 +223,13 @@ export default function ReporteProduccion() {
           }
           if (!lote) throw new Error('No se pudo generar un codigo de lote unico, intenta de nuevo')
           lotesCreados.push(`${artDe(l.articulo_id)?.codigo_interno}: ${lote.codigo_lote}`)
-          paraEtiquetas.push({ lote, articuloId: l.articulo_id, cantidad: ok, piezasPorCaja: Number(l.piezas_por_caja || 0) })
+          // Cada caja nace con folio propio (unidad de manejo para mover y agrupar en tarima)
+          const cajas = await crearCajas(supabase, {
+            empresaId: perfil.empresa_id, articuloId: l.articulo_id, loteId: lote.id,
+            moldeId: ot.molde_id || null, cantidad: ok, snp: Number(l.piezas_por_caja || 0),
+            almacenId: alm.id, ubicacionId: ubicDestino, origen: `OT ${ot.folio}`, usuarioId: perfil.id,
+          })
+          paraEtiquetas.push({ lote, articuloId: l.articulo_id, cantidad: ok, piezasPorCaja: Number(l.piezas_por_caja || 0), cajas })
           await supabase.from('existencias').insert({
             lote_id: lote.id, almacen_id: alm.id, ubicacion_id: ubicDestino, cantidad: ok,
           })
@@ -280,15 +287,12 @@ export default function ReporteProduccion() {
         const art = artDe(p.articuloId)
         const rel = artCliente.find(x => x.articulo_id === p.articuloId)
         const cli = rel ? clientes.find(c => c.id === rel.cliente_id) : null
-        const cajas = p.piezasPorCaja > 0 ? Math.ceil(p.cantidad / p.piezasPorCaja) : 1
-        for (let i = 0; i < cajas; i++) {
-          const cant = p.piezasPorCaja > 0
-            ? (i === cajas - 1 ? p.cantidad - p.piezasPorCaja * (cajas - 1) : p.piezasPorCaja)
-            : p.cantidad
+        for (const caja of p.cajas) {
           nuevas.push(datosEtiqueta({
             lote: p.lote, articulo: art, empresa, cliente: cli,
             codigoCliente: rel?.codigo_cliente, maquina: maquinas.find(m => m.id === ot.maquina_id),
-            cantidad: cant, bom,
+            cantidad: Number(caja.cantidad), bom, contenedor: caja,
+            qrContenido: cfgEtiqueta?.qr_contenido || 'contenedor',
           }))
         }
       }
@@ -316,14 +320,13 @@ export default function ReporteProduccion() {
       const art = artDe(f.articulo_id)
       const rel = artCliente.find(x => x.articulo_id === f.articulo_id)
       const cli = rel ? clientes.find(c => c.id === rel.cliente_id) : null
-      const pxc = Number((otLineas || []).find(l => l.articulo_id === f.articulo_id)?.piezas_por_caja || 0)
-      const cant = Number(f.cantidad_ok)
-      const cajas = pxc > 0 ? Math.ceil(cant / pxc) : 1
-      for (let i = 0; i < cajas; i++) {
-        const c = pxc > 0 ? (i === cajas - 1 ? cant - pxc * (cajas - 1) : pxc) : cant
+      const { data: cajas } = await supabase.from('contenedores').select('*')
+        .eq('lote_id', f.lote_id).eq('tipo', 'caja').order('folio')
+      for (const caja of (cajas || [])) {
         nuevas.push(datosEtiqueta({
           lote: f.lote, articulo: art, empresa, cliente: cli, codigoCliente: rel?.codigo_cliente,
-          maquina: maquinas.find(m => m.id === otRow?.maquina_id), cantidad: c, bom,
+          maquina: maquinas.find(m => m.id === otRow?.maquina_id), cantidad: Number(caja.cantidad), bom,
+          contenedor: caja, qrContenido: cfgEtiqueta?.qr_contenido || 'contenedor',
         }))
       }
     }

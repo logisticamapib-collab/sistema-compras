@@ -20,13 +20,14 @@ export default function EtiquetaProducto({ datos, config }) {
 
   useEffect(() => {
     let vivo = true
-    if (datos?.lote && campos.qr) {
-      QRCode.toDataURL(datos.lote, { width: 400, margin: 0, errorCorrectionLevel: 'M' })
+    const contenido = datos?.qr || datos?.lote
+    if (contenido && campos.qr) {
+      QRCode.toDataURL(contenido, { width: 400, margin: 0, errorCorrectionLevel: 'M' })
         .then(url => { if (vivo) setQr(url) })
         .catch(() => { if (vivo) setQr('') })
     }
     return () => { vivo = false }
-  }, [datos?.lote, campos.qr])
+  }, [datos?.qr, datos?.lote, campos.qr])
 
   if (!datos) return null
 
@@ -70,6 +71,7 @@ export default function EtiquetaProducto({ datos, config }) {
             </div>
           )}
           {campos.maquina && datos.maquina && <div style={st.maquina}>MAQ: <b>{datos.maquina}</b></div>}
+          {datos.folio && <div style={st.maquina}>CAJA: <b>{datos.folio}</b></div>}
           {campos.fecha && <div style={st.fecha}>{datos.fecha}</div>}
           {campos.hora && <div style={st.hora}>{datos.hora}</div>}
         </div>
