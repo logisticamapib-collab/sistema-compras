@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import EtiquetaProducto from '../../components/EtiquetaProducto'
+import PortalImpresion from '../../components/PortalImpresion'
+import { imprimirAislado } from '../../lib/impresion'
+import { datosEtiqueta } from '../../lib/etiquetas'
 
 // Capa 3 - Recibos. Dos fuentes:
 //  - Contra OC (compra): valida certificado y PPAP del proveedor.
@@ -41,29 +45,37 @@ export default function Recibos() {
   const [rec, setRec] = useState({})
   const [notas, setNotas] = useState('')
   const [procesando, setProcesando] = useState(false)
+  const [empresa, setEmpresa] = useState(null)
+  const [bom, setBom] = useState([])
+  const [cfgEtiqueta, setCfgEtiqueta] = useState(null)
+  const [etiquetas, setEtiquetas] = useState([])
 
   useEffect(() => { cargarDatos() }, [])
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [o, l, cc, cl, p, cli, a, alm, ubi, rp, d, r] = await Promise.all([
+    const [o, l, cc, cl, p, cli, a, alm, ubi, rp, d, r, emp, bm, cfg] = await Promise.all([
       supabase.from('ordenes_compra').select('*').eq('empresa_id', perfil.empresa_id).in('estatus', RECIBIBLES).order('fecha_emision', { ascending: false }),
       supabase.from('oc_lineas').select('*'),
       supabase.from('consigna_autorizaciones').select('*').eq('empresa_id', perfil.empresa_id).in('estatus', ['aprobada', 'recibida_parcial']).order('fecha_creacion', { ascending: false }),
       supabase.from('consigna_autorizacion_lineas').select('*'),
       supabase.from('proveedores').select('id, nombre'),
       supabase.from('clientes').select('id, nombre'),
-      supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, es_consigna'),
+      supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, es_consigna, origen, snp'),
       supabase.from('almacenes').select('*').eq('activo', true),
       supabase.from('ubicaciones').select('*').eq('activo', true),
       supabase.from('articulo_proveedor').select('*').eq('activo', true),
       supabase.from('desviaciones_ppap').select('*').eq('activo', true),
       supabase.from('recibos').select('*, prov:proveedores(nombre), oc:ordenes_compra(folio), cons:consigna_autorizaciones(folio), usuario:usuarios!recibos_recibido_por_fkey(nombre)').order('fecha', { ascending: false }).limit(100),
+      supabase.from('empresas').select('*').eq('id', perfil.empresa_id).maybeSingle(),
+      supabase.from('bom').select('componente_articulo_id'),
+      supabase.from('config_etiquetas').select('*').eq('empresa_id', perfil.empresa_id).maybeSingle(),
     ])
     setOcs(o.data || []); setOcLineas(l.data || []); setCons(cc.data || []); setConsLineas(cl.data || [])
     setProveedores(p.data || []); setClientes(cli.data || []); setArticulos(a.data || [])
     setAlmacenes(alm.data || []); setUbicaciones(ubi.data || []); setRelProv(rp.data || [])
     setDesviaciones(d.data || []); setRecibos(r.data || [])
+    setEmpresa(emp.data || null); setBom(bm.data || []); setCfgEtiqueta(cfg.data || null)
     setLoading(false)
   }
 
@@ -121,6 +133,36 @@ export default function Recibos() {
     return supabase.storage.from('calidad').getPublicUrl(nombre).data.publicUrl
   }
 
+  // Arma las etiquetas de los lotes recibidos (una por empaque segun el SNP del articulo)
+  const construirEtiquetas = (items, { proveedorNombre, clienteNombre }) => {
+    const nuevas = []
+    for (const it of items) {
+      const art = artDe(it.articulo_id)
+      const snp = Number(art?.snp || 0)
+      const cajas = snp > 0 ? Math.ceil(it.cantidad / snp) : 1
+      for (let i = 0; i < cajas; i++) {
+        const cant = snp > 0 ? (i === cajas - 1 ? it.cantidad - snp * (cajas - 1) : snp) : it.cantidad
+        nuevas.push(datosEtiqueta({
+          lote: it.lote, articulo: art, empresa,
+          cliente: { nombre: clienteNombre || proveedorNombre || '' },
+          codigoCliente: art?.codigo_interno, maquina: null, cantidad: cant, bom,
+        }))
+      }
+    }
+    return nuevas
+  }
+
+  // Reimprime las etiquetas de un recibo ya guardado
+  const reimprimir = async (recibo) => {
+    setError(''); setExito('')
+    const { data: filas, error: e1 } = await supabase
+      .from('recibo_lineas').select('*, lote:lotes(*)').eq('recibo_id', recibo.id)
+    if (e1) { setError('Error al leer el recibo: ' + e1.message); return }
+    const items = (filas || []).filter(f => f.lote_id).map(f => ({ articulo_id: f.articulo_id, cantidad: Number(f.cantidad), lote: f.lote }))
+    if (items.length === 0) { setError('Ese recibo no tiene lotes para etiquetar'); return }
+    setEtiquetas(construirEtiquetas(items, { proveedorNombre: recibo.prov?.nombre, clienteNombre: null }))
+  }
+
   const abrirOc = (oc) => {
     setError(''); setExito(''); setConsActiva(null); setOcActiva(oc); setNotas('')
     const sel = seleccionadas(`oc-${oc.id}`)
@@ -160,6 +202,7 @@ export default function Recibos() {
       }).select().single()
       if (e0) throw e0
       const detalleSeg = []
+      const paraEtiquetas = []
       for (const it of items) {
         const l = ocLineas.find(x => x.id === it.lineaId)
         const val = validaCalidad(l.articulo_id, ocActiva.proveedor_id)
@@ -172,12 +215,14 @@ export default function Recibos() {
         await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, lote_id: lote.id, tipo: 'entrada_inicial', almacen_destino_id: Number(it.almacen_id), ubicacion_destino_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant, motivo: `Recibo ${recibo.folio} / OC ${ocActiva.folio}`, usuario_id: perfil.id })
         await supabase.from('recibo_lineas').insert({ recibo_id: recibo.id, oc_linea_id: l.id, articulo_id: l.articulo_id, cantidad: it.cant, lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, certificado_ref: it.certificado_ref.trim() || null, certificado_url: certUrl, ppap_estado: val.porDesviacion ? 'desviacion' : (requisitoDe(l.articulo_id, ocActiva.proveedor_id)?.requiere_ppap ? 'vigente' : 'no_requiere'), desviacion_id: val.desvId })
         await supabase.from('oc_lineas').update({ cantidad_recibida: Number(l.cantidad_recibida || 0) + it.cant }).eq('id', l.id)
+        paraEtiquetas.push({ articulo_id: l.articulo_id, cantidad: it.cant, lote })
         detalleSeg.push({ oc_linea_id: l.id, cantidad: it.cant })
       }
       const { data: seg } = await supabase.from('oc_seguimiento').insert({ oc_id: ocActiva.id, evento: 'recibo', usuario_id: perfil.id, comentario: `Recibo ${recibo.folio}: ${items.length} linea(s) a inventario (retenido)` }).select().single()
       if (seg) for (const d of detalleSeg) await supabase.from('oc_seguimiento_detalle').insert({ seguimiento_id: seg.id, oc_id: ocActiva.id, oc_linea_id: d.oc_linea_id, cantidad_recibida: d.cantidad })
       const todo = ocLineasDe(ocActiva.id).map(l => { const it = items.find(i => i.lineaId === l.id); return (Number(l.cantidad_recibida || 0) + (it ? it.cant : 0)) >= Number(l.cantidad) })
       await supabase.from('ordenes_compra').update({ estatus: todo.every(Boolean) ? 'recibida' : 'recibida_parcial', fecha_entrega_real: hoy() }).eq('id', ocActiva.id)
+      setEtiquetas(construirEtiquetas(paraEtiquetas, { proveedorNombre: provDe(ocActiva.proveedor_id)?.nombre }))
       setExito(`Recibo ${recibo.folio} registrado. Material RETENIDO, pendiente de liberacion por Calidad.`)
       setOcActiva(null); setRec({}); await cargarDatos()
     } catch (err) { setError('Error al recibir: ' + err.message) }
@@ -202,6 +247,7 @@ export default function Recibos() {
         site_id: consActiva.site_id, recibido_por: perfil.id, notas: notas || null,
       }).select().single()
       if (e0) throw e0
+      const paraEtiquetasC = []
       for (const it of items) {
         const l = consLineas.find(x => x.id === it.lineaId)
         let certUrl = it.file ? await subirCertificado(it.file) : null
@@ -213,9 +259,11 @@ export default function Recibos() {
         await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, lote_id: lote.id, tipo: 'entrada_inicial', almacen_destino_id: Number(it.almacen_id), ubicacion_destino_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant, motivo: `Recibo consigna ${recibo.folio} / ${consActiva.folio}`, usuario_id: perfil.id })
         await supabase.from('recibo_lineas').insert({ recibo_id: recibo.id, consigna_linea_id: l.id, articulo_id: l.articulo_id, cantidad: it.cant, lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, certificado_ref: it.certificado_ref.trim() || null, certificado_url: certUrl, ppap_estado: 'consigna' })
         await supabase.from('consigna_autorizacion_lineas').update({ cantidad_recibida: Number(l.cantidad_recibida || 0) + it.cant }).eq('id', l.id)
+        paraEtiquetasC.push({ articulo_id: l.articulo_id, cantidad: it.cant, lote })
       }
       const todo = consLineasDe(consActiva.id).map(l => { const it = items.find(i => i.lineaId === l.id); return (Number(l.cantidad_recibida || 0) + (it ? it.cant : 0)) >= Number(l.cantidad) })
       await supabase.from('consigna_autorizaciones').update({ estatus: todo.every(Boolean) ? 'recibida' : 'recibida_parcial' }).eq('id', consActiva.id)
+      setEtiquetas(construirEtiquetas(paraEtiquetasC, { clienteNombre: cliDe(consActiva.cliente_id)?.nombre }))
       setExito(`Recibo de consigna ${recibo.folio} registrado (costo 0). Material RETENIDO, pendiente de liberacion por Calidad.`)
       setConsActiva(null); setRec({}); await cargarDatos()
     } catch (err) { setError('Error al recibir: ' + err.message) }
@@ -223,6 +271,28 @@ export default function Recibos() {
   }
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
+
+  // ---------- Etiquetas del material recibido ----------
+  if (etiquetas.length > 0) {
+    return (
+      <div style={styles.container} className="aparecer">
+        <style>{`@media print { @page { size: ${cfgEtiqueta?.ancho_in || 4}in ${cfgEtiqueta?.alto_in || 2}in; margin: 0; } }`}</style>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }} className="no-imprimir">
+          <button style={styles.botonSec} onClick={() => setEtiquetas([])}>&larr; Volver a recibos</button>
+          <button style={styles.boton} onClick={imprimirAislado}>Imprimir {etiquetas.length} etiqueta(s)</button>
+        </div>
+        <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '18px' }} className="no-imprimir">
+          Una etiqueta por empaque segun el <b>SNP</b> del articulo (se captura en Articulos &gt; Datos de abastecimiento). El QR contiene el codigo de lote.
+        </p>
+        <PortalImpresion>
+          <div>{etiquetas.map((d, i) => <EtiquetaProducto key={i} datos={d} config={cfgEtiqueta} />)}</div>
+        </PortalImpresion>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {etiquetas.map((d, i) => <EtiquetaProducto key={i} datos={d} config={cfgEtiqueta} />)}
+        </div>
+      </div>
+    )
+  }
 
   // ---------- Formulario recibo (OC o consigna) ----------
   const doc = ocActiva || consActiva
@@ -431,7 +501,7 @@ export default function Recibos() {
         recibos.length === 0 ? <p style={{ color: '#666', padding: '10px 4px' }}>Aun no hay recibos.</p> : (
           <div style={styles.tabla}>
             <div style={styles.tablaHeader}>
-              <span style={{ flex: 1 }}>Folio</span><span style={{ flex: 1 }}>Origen</span><span style={{ flex: 1.6 }}>Proveedor / Cliente</span><span style={{ flex: 1.3 }}>Fecha</span><span style={{ flex: 1.3 }}>Recibio</span><span style={{ flex: 1.4 }}>Notas</span>
+              <span style={{ flex: 1 }}>Folio</span><span style={{ flex: 1 }}>Origen</span><span style={{ flex: 1.6 }}>Proveedor / Cliente</span><span style={{ flex: 1.3 }}>Fecha</span><span style={{ flex: 1.3 }}>Recibio</span><span style={{ flex: 1.2 }}>Notas</span><span style={{ width: '110px' }}></span>
             </div>
             {recibos.map(r => (
               <div key={r.id} style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
@@ -440,7 +510,10 @@ export default function Recibos() {
                 <span style={{ flex: 1.6 }}>{r.prov?.nombre || '-'}</span>
                 <span style={{ flex: 1.3, color: '#64748b' }}>{new Date(r.fecha).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })}</span>
                 <span style={{ flex: 1.3, color: '#64748b' }}>{r.usuario?.nombre}</span>
-                <span style={{ flex: 1.4, color: '#64748b' }}>{r.notas || '-'}</span>
+                <span style={{ flex: 1.2, color: '#64748b' }}>{r.notas || '-'}</span>
+                <span style={{ width: '110px', textAlign: 'right' }}>
+                  <button style={styles.botonAccion} onClick={() => reimprimir(r)}>Etiquetas</button>
+                </span>
               </div>
             ))}
           </div>
@@ -466,6 +539,7 @@ const styles = {
   botones: { display: 'flex', justifyContent: 'flex-end', gap: '10px' },
   boton: { padding: '8px 18px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonSec: { padding: '8px 18px', backgroundColor: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
+  botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '11px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
