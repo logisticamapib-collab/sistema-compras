@@ -31,6 +31,7 @@ export default function Embarques() {
   const [ubicaciones, setUbicaciones] = useState([])
   const [embarques, setEmbarques] = useState([])
   const [empresa, setEmpresa] = useState(null)
+  const [traspasos, setTraspasos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -45,7 +46,7 @@ export default function Embarques() {
 
   const cargar = async () => {
     setLoading(true)
-    const [c, a, ac, rl, en, ex, lo, al, ub, em, emp] = await Promise.all([
+    const [c, a, ac, rl, en, ex, lo, al, ub, em, emp, tr] = await Promise.all([
       supabase.from('clientes').select('id, nombre').eq('activo', true).order('nombre'),
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida'),
       supabase.from('articulo_cliente').select('*').eq('activo', true),
@@ -57,11 +58,12 @@ export default function Embarques() {
       supabase.from('ubicaciones').select('*'),
       supabase.from('embarques').select('*, cli:clientes(nombre), usuario:usuarios!embarques_creado_por_fkey(nombre)').order('fecha', { ascending: false }).limit(100),
       supabase.from('empresas').select('*').eq('id', perfil.empresa_id).maybeSingle(),
+      supabase.from('traspasos').select('*').eq('estatus', 'enviado'),
     ])
     setClientes(c.data || []); setArticulos(a.data || []); setArtCliente(ac.data || [])
     setLineasRel(rl.data || []); setEntregas(en.data || []); setExistencias(ex.data || [])
     setLotes(lo.data || []); setAlmacenes(al.data || []); setUbicaciones(ub.data || [])
-    setEmbarques(em.data || []); setEmpresa(emp.data || null)
+    setEmbarques(em.data || []); setEmpresa(emp.data || null); setTraspasos(tr.data || [])
     setLoading(false)
   }
 
@@ -87,6 +89,24 @@ export default function Embarques() {
     .sort((a, b) => (a._lote.fecha || '').localeCompare(b._lote.fecha || ''))
 
   const disponibleTotal = (articuloId) => disponiblesDe(articuloId).reduce((s, e) => s + Number(e.cantidad), 0)
+
+  // Material que existe pero NO se puede embarcar todavia (visibilidad, no se usa)
+  const noDisponibleDe = (articuloId) => {
+    const detalle = []
+    existencias.filter(e => Number(e.cantidad) > 0).forEach(e => {
+      const lote = lotes.find(l => l.id === e.lote_id)
+      if (!lote || lote.articulo_id !== articuloId || lote.estatus_calidad === 'liberado') return
+      detalle.push({
+        cantidad: Number(e.cantidad),
+        donde: `${almDe(e.almacen_id)?.clave || '?'}${e.ubicacion_id ? '/' + (ubiDe(e.ubicacion_id)?.clave || '') : ''}`,
+        motivo: lote.estatus_calidad === 'rechazado' ? 'rechazado' : 'pendiente de liberacion',
+      })
+    })
+    traspasos.filter(t => t.articulo_id === articuloId).forEach(t => {
+      detalle.push({ cantidad: Number(t.cantidad), donde: `en transito a ${almDe(t.almacen_destino_id)?.clave || '?'}`, motivo: 'sin confirmar recepcion' })
+    })
+    return detalle
+  }
 
   // Asignacion FIFO de lotes para la cantidad capturada
   const asignacionDe = (linea) => {
@@ -288,6 +308,7 @@ export default function Embarques() {
                   <span style={{ flex: 1 }}>Fecha req.</span>
                   <span style={{ flex: 0.8, textAlign: 'right' }}>Pendiente</span>
                   <span style={{ flex: 0.9, textAlign: 'right' }}>Disponible</span>
+                  <span style={{ flex: 1.4 }}>No disponible</span>
                   <span style={{ flex: 0.9, textAlign: 'center' }}>A embarcar</span>
                   <span style={{ flex: 1.8 }}>Lotes asignados (FIFO)</span>
                 </div>
@@ -304,6 +325,11 @@ export default function Embarques() {
                       <span style={{ flex: 1, color: vencida ? '#dc2626' : '#64748b', fontWeight: vencida ? '600' : '400' }}>{fmtFecha(l.fecha_requerida)}</span>
                       <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600' }}>{fmtNum(l._pend)}</span>
                       <span style={{ flex: 0.9, textAlign: 'right', color: disp > 0 ? '#16a34a' : '#dc2626' }}>{fmtNum(disp)}</span>
+                      <span style={{ flex: 1.4, fontSize: '11px', color: '#b45309' }}>
+                        {noDisponibleDe(l.articulo_id).length === 0
+                          ? <span style={{ color: '#cbd5e1' }}>-</span>
+                          : noDisponibleDe(l.articulo_id).map((nd, i) => <span key={i} style={{ display: 'block' }}>{fmtNum(nd.cantidad)} en {nd.donde} ({nd.motivo})</span>)}
+                      </span>
                       <span style={{ flex: 0.9, textAlign: 'center' }}>
                         <input type="number" min="0" max={l._pend} style={{ ...styles.input, width: '90px', padding: '5px 8px' }}
                           value={surtido[l.id] || ''} onChange={e => setCantidad(l.id, e.target.value)} disabled={!puedeEmbarcar} />
