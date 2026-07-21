@@ -39,6 +39,7 @@ export default function EtiquetaProducto({ datos, config }) {
         <div style={st.bloqueTexto}>
           {campos.numero_parte && <div style={st.numeroParte}>{datos.numeroParte}</div>}
           {campos.descripcion && <div style={st.descripcion}>{datos.descripcion}</div>}
+          {campos.cliente && datos.cliente && <div style={st.cliente}>{datos.cliente}</div>}
         </div>
         {campos.logo && (datos.logoUrl
           ? <img src={datos.logoUrl} alt={datos.empresa} style={st.logo} />
@@ -64,7 +65,6 @@ export default function EtiquetaProducto({ datos, config }) {
         <div style={st.bloqueLote}>
           {campos.lote && <div style={st.loteLinea}><span style={st.rotuloChico}>LOTE</span> <b style={st.loteValor}>{datos.lote}</b></div>}
           {campos.maquina && datos.maquina && <div style={st.maquina}>MAQ: <b>{datos.maquina}</b></div>}
-          {campos.cliente && datos.cliente && <div style={st.maquina}>{datos.cliente}</div>}
           {campos.fecha && <div style={st.fecha}>{datos.fecha}</div>}
           {campos.hora && <div style={st.hora}>{datos.hora}</div>}
         </div>
@@ -88,6 +88,7 @@ function estilos(cfg, tam, anchoQr) {
     bloqueTexto: { flex: 1, minWidth: 0 },
     numeroParte: { fontSize: `${tam.numero_parte}pt`, fontWeight: '700', lineHeight: '1.02', letterSpacing: '-0.2pt' },
     descripcion: { fontSize: `${tam.descripcion}pt`, fontWeight: '700', lineHeight: '1.1' },
+    cliente: { fontSize: `${Math.max(7, Number(tam.descripcion) - 3)}pt`, fontWeight: '600', lineHeight: '1.1' },
     logo: { height: '0.30in', maxWidth: '0.9in', objectFit: 'contain', flexShrink: 0 },
     logoTexto: { fontSize: '8pt', fontWeight: '700', border: '1px solid #000', padding: '2pt 4pt', flexShrink: 0 },
 

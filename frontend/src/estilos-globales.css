@@ -162,6 +162,10 @@ input:hover:not(:focus), select:hover:not(:focus) {
    Aisla la impresion: solo se imprime lo que este dentro de .zona-etiquetas,
    sin el resto de la pantalla (menus, encabezados, botones). */
 @media print {
+  /* margin 0 elimina el encabezado y pie de pagina del navegador */
+  @page {
+    margin: 0;
+  }
   html, body {
     margin: 0 !important;
     padding: 0 !important;
@@ -182,7 +186,9 @@ input:hover:not(:focus), select:hover:not(:focus) {
     margin: 0 !important;
     padding: 0 !important;
     gap: 0 !important;
+    border: none !important;
     background: #fff !important;
+    display: block !important;
   }
   .no-imprimir {
     display: none !important;

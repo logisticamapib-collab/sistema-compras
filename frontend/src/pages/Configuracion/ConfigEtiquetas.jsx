@@ -164,11 +164,11 @@ export default function ConfigEtiquetas() {
         <div style={styles.panel}>
           <h3 style={styles.subtitulo}>Vista previa</h3>
           <p style={{ fontSize: '12px', color: '#64748b', marginTop: 0 }}>Tamano real {cfg.ancho_in} x {cfg.alto_in} in</p>
+          <style>{`@media print { @page { size: ${cfg.ancho_in}in ${cfg.alto_in}in; margin: 0; } }`}</style>
           <div style={styles.previa}>
-            <EtiquetaProducto datos={ejemplo} config={{ ancho_in: cfg.ancho_in, alto_in: cfg.alto_in, campos, tamanos }} />
-          </div>
-          <div className="zona-etiquetas" style={{ display: 'none' }}>
-            <EtiquetaProducto datos={ejemplo} config={{ ancho_in: cfg.ancho_in, alto_in: cfg.alto_in, campos, tamanos }} />
+            <div className="zona-etiquetas">
+              <EtiquetaProducto datos={ejemplo} config={{ ancho_in: cfg.ancho_in, alto_in: cfg.alto_in, campos, tamanos }} />
+            </div>
           </div>
           <button style={{ ...styles.botonSec, marginTop: '14px' }} onClick={() => window.print()}>Imprimir prueba</button>
         </div>
