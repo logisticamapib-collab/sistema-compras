@@ -63,7 +63,12 @@ export default function EtiquetaProducto({ datos, config }) {
       {/* Pie: lote / maquina / fecha / hora, sello y QR */}
       <div style={st.pie}>
         <div style={st.bloqueLote}>
-          {campos.lote && <div style={st.loteLinea}><span style={st.rotuloChico}>LOTE</span> <b style={st.loteValor}>{datos.lote}</b></div>}
+          {campos.lote && (
+            <div style={st.bloqueLoteTexto}>
+              <div style={st.rotuloChico}>LOTE</div>
+              <div style={st.loteValor}>{datos.lote}</div>
+            </div>
+          )}
           {campos.maquina && datos.maquina && <div style={st.maquina}>MAQ: <b>{datos.maquina}</b></div>}
           {campos.fecha && <div style={st.fecha}>{datos.fecha}</div>}
           {campos.hora && <div style={st.hora}>{datos.hora}</div>}
@@ -103,9 +108,9 @@ function estilos(cfg, tam, anchoQr) {
     // El pie ya no se empuja al fondo: sube un poco para que nada se corte
     pie: { display: 'flex', alignItems: 'flex-end', gap: '0.07in', flexShrink: 0 },
     bloqueLote: { display: 'flex', flexDirection: 'column', gap: '0', width: '1.20in', flexShrink: 0, lineHeight: '1.06' },
-    loteLinea: { whiteSpace: 'nowrap' },
-    rotuloChico: { fontSize: '8pt', fontWeight: '600' },
-    loteValor: { fontSize: `${tam.lote}pt` },
+    bloqueLoteTexto: { lineHeight: '1.0' },
+    rotuloChico: { fontSize: '8pt', fontWeight: '600', letterSpacing: '0.3pt' },
+    loteValor: { fontSize: `${tam.lote}pt`, fontWeight: '700', whiteSpace: 'nowrap' },
     maquina: { fontSize: '7.5pt' },
     fecha: { fontSize: `${tam.fecha}pt`, fontWeight: '700' },
     hora: { fontSize: '8pt', fontWeight: '600' },
