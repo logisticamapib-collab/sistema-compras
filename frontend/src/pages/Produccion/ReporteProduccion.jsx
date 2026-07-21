@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import EtiquetaProducto from '../../components/EtiquetaProducto'
+import { datosEtiqueta } from '../../lib/etiquetas'
 
 // Reporte de produccion contra una OT (soporta molde familiar: varios articulos).
 // El codigo de lote lo genera el sistema (AAMMDD-turno-consecutivo diario).
@@ -37,12 +39,17 @@ export default function ReporteProduccion() {
   const [notas, setNotas] = useState('')
   const [porArt, setPorArt] = useState({}) // { [articuloId]: { ok, codigo_lote, ubicacion_pt_id, scrap: [{causa_id, cantidad}] } }
   const [paro, setParo] = useState({ causa_id: '', minutos: '', notas: '' })
+  const [empresa, setEmpresa] = useState(null)
+  const [artCliente, setArtCliente] = useState([])
+  const [clientes, setClientes] = useState([])
+  const [maquinas, setMaquinas] = useState([])
+  const [etiquetas, setEtiquetas] = useState([])
 
   useEffect(() => { cargar() }, [])
 
   const cargar = async () => {
     setLoading(true)
-    const [o, oa, b, a, ex, lo, ps, al, ub, cs, cp, rep] = await Promise.all([
+    const [o, oa, b, a, ex, lo, ps, al, ub, cs, cp, rep, emp, ac, cli, maq] = await Promise.all([
       supabase.from('ordenes_trabajo').select('*, maq:maquinas(clave, nombre)').eq('empresa_id', perfil.empresa_id).in('estatus', ['programada', 'en_proceso']).order('created_at', { ascending: false }),
       supabase.from('ot_articulos').select('*'),
       supabase.from('bom').select('*'),
@@ -55,10 +62,15 @@ export default function ReporteProduccion() {
       supabase.from('causas_scrap').select('*').eq('activo', true).order('nombre'),
       supabase.from('causas_paro').select('*').eq('activo', true).order('nombre'),
       supabase.from('ot_reportes').select('*, ot:ordenes_trabajo(folio), usuario:usuarios!ot_reportes_reportado_por_fkey(nombre)').order('fecha', { ascending: false }).limit(50),
+      supabase.from('empresas').select('*').eq('id', perfil.empresa_id).maybeSingle(),
+      supabase.from('articulo_cliente').select('*').eq('activo', true),
+      supabase.from('clientes').select('id, nombre'),
+      supabase.from('maquinas').select('id, clave, nombre'),
     ])
     setOts(o.data || []); setOtArts(oa.data || []); setBom(b.data || []); setArticulos(a.data || [])
     setExistencias(ex.data || []); setLotes(lo.data || []); setPasos(ps.data || []); setAlmacenes(al.data || [])
     setUbicaciones(ub.data || []); setCausasScrap(cs.data || []); setCausasParo(cp.data || []); setReportes(rep.data || [])
+    setEmpresa(emp.data || null); setArtCliente(ac.data || []); setClientes(cli.data || []); setMaquinas(maq.data || [])
     setLoading(false)
   }
 
@@ -156,6 +168,7 @@ export default function ReporteProduccion() {
       if (e0) throw e0
 
       const lotesCreados = []
+      const paraEtiquetas = []
       for (const l of conDatos) {
         const d = datos(l.articulo_id)
         const ok = Number(d.ok) || 0
@@ -179,6 +192,7 @@ export default function ReporteProduccion() {
           }
           if (!lote) throw new Error('No se pudo generar un codigo de lote unico, intenta de nuevo')
           lotesCreados.push(`${artDe(l.articulo_id)?.codigo_interno}: ${lote.codigo_lote}`)
+          paraEtiquetas.push({ lote, articuloId: l.articulo_id, cantidad: ok, piezasPorCaja: Number(l.piezas_por_caja || 0) })
           await supabase.from('existencias').insert({
             lote_id: lote.id, almacen_id: alm.id,
             ubicacion_id: d.ubicacion_pt_id ? Number(d.ubicacion_pt_id) : null, cantidad: ok,
@@ -231,7 +245,27 @@ export default function ReporteProduccion() {
         cantidad_producida: prodTotal, cantidad_scrap: Number(ot.cantidad_scrap || 0) + scrapTotalDe(principal.articulo_id), estatus: nuevoEstatus,
       }).eq('id', ot.id)
 
-      setExito(`Reporte registrado: ${fmtNum(okTotal)} OK${scrapTotal ? `, ${fmtNum(scrapTotal)} scrap` : ''}. Lotes RETENIDOS: ${lotesCreados.join(' | ') || 'ninguno'}`)
+      // Etiquetas: una por caja segun el SNP del articulo
+      const nuevas = []
+      for (const p of paraEtiquetas) {
+        const art = artDe(p.articuloId)
+        const rel = artCliente.find(x => x.articulo_id === p.articuloId)
+        const cli = rel ? clientes.find(c => c.id === rel.cliente_id) : null
+        const cajas = p.piezasPorCaja > 0 ? Math.ceil(p.cantidad / p.piezasPorCaja) : 1
+        for (let i = 0; i < cajas; i++) {
+          const cant = p.piezasPorCaja > 0
+            ? (i === cajas - 1 ? p.cantidad - p.piezasPorCaja * (cajas - 1) : p.piezasPorCaja)
+            : p.cantidad
+          nuevas.push(datosEtiqueta({
+            lote: p.lote, articulo: art, empresa, cliente: cli,
+            codigoCliente: rel?.codigo_cliente, maquina: maquinas.find(m => m.id === ot.maquina_id),
+            cantidad: cant, bom,
+          }))
+        }
+      }
+      setEtiquetas(nuevas)
+
+      setExito(`Reporte registrado: ${fmtNum(okTotal)} OK${scrapTotal ? `, ${fmtNum(scrapTotal)} scrap` : ''}. Lotes RETENIDOS: ${lotesCreados.join(' | ') || 'ninguno'}${nuevas.length ? `. ${nuevas.length} etiqueta(s) listas para imprimir.` : ''}`)
       setPorArt({}); setNotas('')
       await cargar()
     } catch (err) { setError('Error: ' + err.message) }
@@ -251,6 +285,25 @@ export default function ReporteProduccion() {
   }
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
+
+  // Vista de impresion de etiquetas
+  if (etiquetas.length > 0) {
+    return (
+      <div style={styles.container} className="aparecer">
+        <style>{`@media print { .no-imprimir { display: none !important; } .etiqueta-imp { page-break-after: always; } }`}</style>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }} className="no-imprimir">
+          <button style={styles.botonSec} onClick={() => setEtiquetas([])}>&larr; Volver al reporte</button>
+          <button style={styles.boton} onClick={() => window.print()}>Imprimir {etiquetas.length} etiqueta(s)</button>
+        </div>
+        <p style={{ ...styles.ayuda, marginBottom: '18px' }} className="no-imprimir">
+          Una etiqueta por caja segun el SNP del articulo. El QR contiene el <b>codigo de lote</b>: al escanearlo en traspasos, salidas o bajas, el sistema resuelve articulo, cliente, cantidad, maquina, lado y tipo.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {etiquetas.map((d, i) => <EtiquetaProducto key={i} datos={d} />)}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={styles.container} className="aparecer">
