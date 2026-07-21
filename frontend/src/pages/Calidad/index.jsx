@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import BandejaLiberacion from './BandejaLiberacion'
 import RequisitosProveedor from './RequisitosProveedor'
+import LiberacionesCalidad from './LiberacionesCalidad'
 import ModuloPendiente from '../ModuloPendiente'
 
 const secciones = [
   { id: 'bandeja', modulo: 'cal_bandeja', titulo: 'Liberacion de Lotes' },
+  { id: 'liberaciones', modulo: 'cal_liberaciones', titulo: 'Liberacion de Calidad (PSW/PPAP)' },
   { id: 'requisitos', modulo: 'cal_requisitos_prov', titulo: 'Requisitos de Proveedor' },
   { id: 'no_conformidades', modulo: null, titulo: 'No Conformidades', pendiente: true },
 ]
@@ -34,6 +36,7 @@ export default function GrupoCalidad() {
           <p style={{ color: '#666', padding: '28px' }}>Tu rol no tiene ninguna seccion de Calidad habilitada.</p>
         )}
         {seccion === 'bandeja' && <BandejaLiberacion />}
+        {seccion === 'liberaciones' && <LiberacionesCalidad />}
         {seccion === 'requisitos' && <RequisitosProveedor />}
         {seccion === 'no_conformidades' && <ModuloPendiente titulo="No Conformidades" />}
       </div>
