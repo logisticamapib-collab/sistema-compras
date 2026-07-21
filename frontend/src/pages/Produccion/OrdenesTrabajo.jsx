@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { evaluarSemaforo, cargarDatosSemaforo } from '../../lib/semaforo'
+import PortalImpresion from '../../components/PortalImpresion'
+import { imprimirAislado } from '../../lib/impresion'
 
 // Ordenes de trabajo.
 // - Candado: el semaforo de preparacion (8 puntos) debe estar completo. En molde
@@ -180,7 +182,41 @@ export default function OrdenesTrabajo() {
     return (
       <div style={styles.container} className="aparecer">
         <button style={{ ...styles.botonSec, marginBottom: '14px' }} className="no-imprimir" onClick={() => setDetalle(null)}>&larr; Volver</button>
-        <button style={{ ...styles.boton, marginLeft: '10px', marginBottom: '14px' }} className="no-imprimir" onClick={() => window.print()}>Imprimir</button>
+        <button style={{ ...styles.boton, marginLeft: '10px', marginBottom: '14px' }} className="no-imprimir" onClick={imprimirAislado}>Imprimir</button>
+        <PortalImpresion>
+          <div style={{ ...styles.hoja, boxShadow: 'none', padding: '0.5in' }}>
+            <h2 style={{ margin: '0 0 4px' }}>ORDEN DE TRABAJO</h2>
+            <p style={{ fontSize: '22px', fontWeight: '700', margin: '0 0 18px', letterSpacing: '1px' }}>{detalle.folio}</p>
+            <div style={styles.gridImp}>
+              <div><b>Maquina:</b> {detalle.maq?.clave} - {detalle.maq?.nombre}</div>
+              <div><b>Molde:</b> {detalle.mol?.clave || 'N/A (ensamble)'}</div>
+              <div><b>Fecha programada:</b> {fmtFecha(detalle.fecha_programada)}</div>
+              <div><b>Turno:</b> {detalle.turno || '-'}</div>
+              <div><b>Estatus:</b> {NOMBRE_EST[detalle.estatus]}</div>
+            </div>
+            <table style={{ width: '100%', marginTop: '20px', borderCollapse: 'collapse', fontSize: '14px' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#f1f5f9' }}>
+                  <th style={styles.th}>Articulo</th><th style={styles.th}>Cav.</th><th style={styles.th}>Programado</th>
+                  <th style={styles.th}>SNP</th><th style={styles.th}>Cajas</th><th style={styles.th}>Producido</th>
+                </tr>
+              </thead>
+              <tbody>
+                {artsDeOt(detalle.id).map(x => (
+                  <tr key={x.id}>
+                    <td style={styles.td}>{artDe(x.articulo_id)?.codigo_interno} - {artDe(x.articulo_id)?.descripcion}</td>
+                    <td style={styles.td}>{x.cavidades || '-'}</td>
+                    <td style={styles.td}>{fmtNum(x.cantidad_programada)}</td>
+                    <td style={styles.td}>{fmtNum(x.piezas_por_caja)}</td>
+                    <td style={styles.td}>{fmtNum(x.cajas_estimadas)}</td>
+                    <td style={styles.td}>{fmtNum(x.cantidad_producida)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {detalle.notas && <p style={{ marginTop: '16px' }}><b>Notas:</b> {detalle.notas}</p>}
+          </div>
+        </PortalImpresion>
         <div style={styles.hoja}>
           <h2 style={{ margin: '0 0 4px' }}>ORDEN DE TRABAJO</h2>
           <p style={{ fontSize: '22px', fontWeight: '700', margin: '0 0 18px', letterSpacing: '1px' }}>{detalle.folio}</p>

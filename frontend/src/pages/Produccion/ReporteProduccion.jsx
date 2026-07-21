@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import EtiquetaProducto from '../../components/EtiquetaProducto'
 import { datosEtiqueta } from '../../lib/etiquetas'
+import PortalImpresion from '../../components/PortalImpresion'
+import { imprimirAislado } from '../../lib/impresion'
 
 // Reporte de produccion contra una OT (soporta molde familiar: varios articulos).
 // El codigo de lote lo genera el sistema (AAMMDD-turno-consecutivo diario).
@@ -275,6 +277,35 @@ export default function ReporteProduccion() {
     setProcesando(false)
   }
 
+  // Reimprime las etiquetas de un reporte ya guardado
+  const reimprimir = async (reporte) => {
+    setError(''); setExito('')
+    const { data: filas, error: e1 } = await supabase
+      .from('ot_reporte_articulos').select('*, lote:lotes(*)').eq('reporte_id', reporte.id)
+    if (e1) { setError('Error al leer el reporte: ' + e1.message); return }
+    const conLote = (filas || []).filter(f => f.lote_id && Number(f.cantidad_ok) > 0)
+    if (conLote.length === 0) { setError('Ese reporte no genero etiquetas (sin piezas OK)'); return }
+    const { data: otLineas } = await supabase.from('ot_articulos').select('*').eq('ot_id', reporte.ot_id)
+    const { data: otRow } = await supabase.from('ordenes_trabajo').select('maquina_id').eq('id', reporte.ot_id).maybeSingle()
+    const nuevas = []
+    for (const f of conLote) {
+      const art = artDe(f.articulo_id)
+      const rel = artCliente.find(x => x.articulo_id === f.articulo_id)
+      const cli = rel ? clientes.find(c => c.id === rel.cliente_id) : null
+      const pxc = Number((otLineas || []).find(l => l.articulo_id === f.articulo_id)?.piezas_por_caja || 0)
+      const cant = Number(f.cantidad_ok)
+      const cajas = pxc > 0 ? Math.ceil(cant / pxc) : 1
+      for (let i = 0; i < cajas; i++) {
+        const c = pxc > 0 ? (i === cajas - 1 ? cant - pxc * (cajas - 1) : pxc) : cant
+        nuevas.push(datosEtiqueta({
+          lote: f.lote, articulo: art, empresa, cliente: cli, codigoCliente: rel?.codigo_cliente,
+          maquina: maquinas.find(m => m.id === otRow?.maquina_id), cantidad: c, bom,
+        }))
+      }
+    }
+    setEtiquetas(nuevas)
+  }
+
   const registrarParo = async () => {
     setError(''); setExito('')
     if (!ot) { setError('Selecciona la OT'); return }
@@ -296,12 +327,17 @@ export default function ReporteProduccion() {
         <style>{`@media print { @page { size: ${cfgEtiqueta?.ancho_in || 4}in ${cfgEtiqueta?.alto_in || 2}in; margin: 0; } }`}</style>
         <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }} className="no-imprimir">
           <button style={styles.botonSec} onClick={() => setEtiquetas([])}>&larr; Volver al reporte</button>
-          <button style={styles.boton} onClick={() => window.print()}>Imprimir {etiquetas.length} etiqueta(s)</button>
+          <button style={styles.boton} onClick={imprimirAislado}>Imprimir {etiquetas.length} etiqueta(s)</button>
         </div>
+        <PortalImpresion>
+          <div>
+            {etiquetas.map((d, i) => <EtiquetaProducto key={i} datos={d} config={cfgEtiqueta} />)}
+          </div>
+        </PortalImpresion>
         <p style={{ ...styles.ayuda, marginBottom: '18px' }} className="no-imprimir">
           Formato <b>{cfgEtiqueta?.ancho_in || 4} x {cfgEtiqueta?.alto_in || 2} in</b> (ajustable en Configuracion &gt; Configuracion de Etiquetas). Una etiqueta por caja segun el SNP del articulo. El QR contiene el <b>codigo de lote</b>: al escanearlo en traspasos, salidas o bajas, el sistema resuelve articulo, cliente, cantidad, maquina, lado y tipo.
         </p>
-        <div className="zona-etiquetas" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {etiquetas.map((d, i) => <EtiquetaProducto key={i} datos={d} config={cfgEtiqueta} />)}
         </div>
       </div>
@@ -445,7 +481,8 @@ export default function ReporteProduccion() {
             <span style={{ flex: 0.9, textAlign: 'right' }}>OK</span>
             <span style={{ flex: 0.9, textAlign: 'right' }}>Scrap</span>
             <span style={{ flex: 1.3 }}>Reporto</span>
-            <span style={{ flex: 1.4 }}>Notas</span>
+            <span style={{ flex: 1.2 }}>Notas</span>
+            <span style={{ width: '110px' }}></span>
           </div>
           {reportes.map(r => (
             <div key={r.id} style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
@@ -455,7 +492,10 @@ export default function ReporteProduccion() {
               <span style={{ flex: 0.9, textAlign: 'right', fontWeight: '600', color: '#16a34a' }}>{fmtNum(r.cantidad_ok)}</span>
               <span style={{ flex: 0.9, textAlign: 'right', color: Number(r.cantidad_scrap) > 0 ? '#dc2626' : '#94a3b8' }}>{fmtNum(r.cantidad_scrap)}</span>
               <span style={{ flex: 1.3, color: '#64748b' }}>{r.usuario?.nombre}</span>
-              <span style={{ flex: 1.4, color: '#64748b' }}>{r.notas || '-'}</span>
+              <span style={{ flex: 1.2, color: '#64748b' }}>{r.notas || '-'}</span>
+              <span style={{ width: '110px', textAlign: 'right' }}>
+                {Number(r.cantidad_ok) > 0 && <button style={styles.botonAccion} onClick={() => reimprimir(r)}>Etiquetas</button>}
+              </span>
             </div>
           ))}
         </div>

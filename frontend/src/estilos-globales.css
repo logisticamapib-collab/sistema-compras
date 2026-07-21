@@ -158,48 +158,50 @@ input:hover:not(:focus), select:hover:not(:focus) {
 }
 
 
-/* ---------- Impresion de etiquetas ----------
-   Aisla la impresion: solo se imprime lo que este dentro de .zona-etiquetas,
-   sin el resto de la pantalla (menus, encabezados, botones). */
+/* ---------- Impresion aislada ----------
+   .contenedor-impresion vive como hijo directo de <body> (portal) y solo se
+   muestra al imprimir, cuando el body lleva la clase modo-aislado. Asi se
+   imprime unicamente el documento (etiqueta, OT, reporte) sin la pantalla,
+   y sin hojas en blanco (se usa display:none, no visibility). */
+.contenedor-impresion {
+  display: none;
+}
+
 @media print {
   /* margin 0 elimina el encabezado y pie de pagina del navegador */
   @page {
     margin: 0;
   }
+
   html, body {
     margin: 0 !important;
     padding: 0 !important;
     background: #fff !important;
   }
-  body * {
-    visibility: hidden !important;
-    box-shadow: none !important;
-  }
-  .zona-etiquetas,
-  .zona-etiquetas * {
-    visibility: visible !important;
-  }
-  .zona-etiquetas {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    gap: 0 !important;
-    border: none !important;
-    background: #fff !important;
-    display: block !important;
-  }
+
   .no-imprimir {
     display: none !important;
   }
+
+  /* Solo el contenedor de impresion se imprime */
+  body.modo-aislado > *:not(.contenedor-impresion) {
+    display: none !important;
+  }
+
+  body.modo-aislado .contenedor-impresion {
+    display: block !important;
+  }
+
+  /* Una etiqueta por hoja */
   .etiqueta-imp {
     border: none !important;
-    page-break-after: always;
+    box-shadow: none !important;
     break-after: page;
+    page-break-after: always;
   }
+
   .etiqueta-imp:last-child {
-    page-break-after: auto;
     break-after: auto;
+    page-break-after: auto;
   }
 }

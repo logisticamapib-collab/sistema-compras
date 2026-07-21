@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import EtiquetaProducto, { CONFIG_DEFECTO } from '../../components/EtiquetaProducto'
+import PortalImpresion from '../../components/PortalImpresion'
+import { imprimirAislado } from '../../lib/impresion'
 
 // Configuracion de la etiqueta de material: tamano fisico, campos visibles y
 // tamanos de fuente. Pensado para que cada empresa la ajuste a su impresora
@@ -166,11 +168,12 @@ export default function ConfigEtiquetas() {
           <p style={{ fontSize: '12px', color: '#64748b', marginTop: 0 }}>Tamano real {cfg.ancho_in} x {cfg.alto_in} in</p>
           <style>{`@media print { @page { size: ${cfg.ancho_in}in ${cfg.alto_in}in; margin: 0; } }`}</style>
           <div style={styles.previa}>
-            <div className="zona-etiquetas">
-              <EtiquetaProducto datos={ejemplo} config={{ ancho_in: cfg.ancho_in, alto_in: cfg.alto_in, campos, tamanos }} />
-            </div>
+            <EtiquetaProducto datos={ejemplo} config={{ ancho_in: cfg.ancho_in, alto_in: cfg.alto_in, campos, tamanos }} />
           </div>
-          <button style={{ ...styles.botonSec, marginTop: '14px' }} onClick={() => window.print()}>Imprimir prueba</button>
+          <PortalImpresion>
+            <EtiquetaProducto datos={ejemplo} config={{ ancho_in: cfg.ancho_in, alto_in: cfg.alto_in, campos, tamanos }} />
+          </PortalImpresion>
+          <button style={{ ...styles.botonSec, marginTop: '14px' }} onClick={imprimirAislado}>Imprimir prueba</button>
         </div>
       </div>
     </div>
