@@ -106,6 +106,23 @@ export default function Recibos() {
 
   const setCampo = (id, campo, valor) => setRec(r => ({ ...r, [id]: { ...r[id], [campo]: valor } }))
 
+  // El sistema genera el codigo de lote del material recibido (AAMMDD-R-###)
+  const insertarLoteRecibo = async (articuloId, origen) => {
+    let intento = 0
+    while (intento < 6) {
+      intento++
+      const { data: codigo, error: ec } = await supabase.rpc('generar_lote_recibo', { p_empresa_id: perfil.empresa_id })
+      if (ec) throw new Error('No se pudo generar el codigo de lote: ' + ec.message)
+      const { data, error: e1 } = await supabase.from('lotes').insert({
+        empresa_id: perfil.empresa_id, articulo_id: articuloId, codigo_lote: codigo,
+        origen, estatus_calidad: 'retenido', creado_por: perfil.id,
+      }).select().single()
+      if (e1) { if (e1.message.includes('duplicate') && intento < 6) continue; throw e1 }
+      return data
+    }
+    throw new Error('No se pudo generar un codigo de lote unico, intenta de nuevo')
+  }
+
   // --- Seleccion de lineas por documento ---
   const seleccionadas = (docKey) => seleccion[docKey] || {}
   const nSeleccionadas = (docKey) => Object.values(seleccionadas(docKey)).filter(Boolean).length
@@ -179,7 +196,7 @@ export default function Recibos() {
     const sel = seleccionadas(`oc-${oc.id}`)
     const hay = Object.values(sel).some(Boolean)
     const ini = {}
-    ocLineasDe(oc.id).filter(l => pendOc(l) > 0).filter(l => !hay || sel[l.id]).forEach(l => { ini[l.id] = { cantidad: '', codigo_lote: '', almacen_id: '', ubicacion_id: '', certificado_ref: '', file: null } })
+    ocLineasDe(oc.id).filter(l => pendOc(l) > 0).filter(l => !hay || sel[l.id]).forEach(l => { ini[l.id] = { cantidad: '', almacen_id: '', ubicacion_id: '', certificado_ref: '', file: null } })
     setRec(ini)
   }
   const abrirCons = (c) => {
@@ -187,7 +204,7 @@ export default function Recibos() {
     const sel = seleccionadas(`cons-${c.id}`)
     const hay = Object.values(sel).some(Boolean)
     const ini = {}
-    consLineasDe(c.id).filter(l => pendCons(l) > 0).filter(l => !hay || sel[l.id]).forEach(l => { ini[l.id] = { cantidad: '', codigo_lote: '', almacen_id: '', ubicacion_id: '', certificado_ref: '', file: null } })
+    consLineasDe(c.id).filter(l => pendCons(l) > 0).filter(l => !hay || sel[l.id]).forEach(l => { ini[l.id] = { cantidad: '', almacen_id: '', ubicacion_id: '', certificado_ref: '', file: null } })
     setRec(ini)
   }
 
@@ -199,7 +216,6 @@ export default function Recibos() {
     for (const it of items) {
       const l = ocLineas.find(x => x.id === it.lineaId); const art = artDe(l.articulo_id)
       if (it.cant > pendOc(l)) { setError(`${art?.codigo_interno}: excede lo pendiente (${fmtNum(pendOc(l))})`); return }
-      if (!it.codigo_lote.trim()) { setError(`${art?.codigo_interno}: captura codigo de lote`); return }
       if (!it.almacen_id) { setError(`${art?.codigo_interno}: selecciona almacen`); return }
       const val = validaCalidad(l.articulo_id, ocActiva.proveedor_id)
       if (!val.ppapOk) { setError(`${art?.codigo_interno}: ${val.motivo}. Calidad debe autorizar desviacion o renovar PPAP`); return }
@@ -218,10 +234,7 @@ export default function Recibos() {
         const l = ocLineas.find(x => x.id === it.lineaId)
         const val = validaCalidad(l.articulo_id, ocActiva.proveedor_id)
         let certUrl = it.file ? await subirCertificado(it.file) : null
-        const { data: lote, error: e1 } = await supabase.from('lotes').insert({
-          empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, codigo_lote: it.codigo_lote.trim(), origen: 'compra', estatus_calidad: 'retenido', creado_por: perfil.id,
-        }).select().single()
-        if (e1) throw (e1.message.includes('duplicate') ? new Error(`El lote "${it.codigo_lote.trim()}" ya existe`) : e1)
+        const lote = await insertarLoteRecibo(l.articulo_id, 'compra')
         await supabase.from('existencias').insert({ lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant })
         await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, lote_id: lote.id, tipo: 'entrada_inicial', almacen_destino_id: Number(it.almacen_id), ubicacion_destino_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant, motivo: `Recibo ${recibo.folio} / OC ${ocActiva.folio}`, usuario_id: perfil.id })
         await supabase.from('recibo_lineas').insert({ recibo_id: recibo.id, oc_linea_id: l.id, articulo_id: l.articulo_id, cantidad: it.cant, lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, certificado_ref: it.certificado_ref.trim() || null, certificado_url: certUrl, ppap_estado: val.porDesviacion ? 'desviacion' : (requisitoDe(l.articulo_id, ocActiva.proveedor_id)?.requiere_ppap ? 'vigente' : 'no_requiere'), desviacion_id: val.desvId })
@@ -254,7 +267,6 @@ export default function Recibos() {
     for (const it of items) {
       const l = consLineas.find(x => x.id === it.lineaId); const art = artDe(l.articulo_id)
       if (it.cant > pendCons(l)) { setError(`${art?.codigo_interno}: excede lo pendiente (${fmtNum(pendCons(l))})`); return }
-      if (!it.codigo_lote.trim()) { setError(`${art?.codigo_interno}: captura codigo de lote`); return }
       if (!it.almacen_id) { setError(`${art?.codigo_interno}: selecciona almacen`); return }
     }
     setProcesando(true)
@@ -268,10 +280,7 @@ export default function Recibos() {
       for (const it of items) {
         const l = consLineas.find(x => x.id === it.lineaId)
         let certUrl = it.file ? await subirCertificado(it.file) : null
-        const { data: lote, error: e1 } = await supabase.from('lotes').insert({
-          empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, codigo_lote: it.codigo_lote.trim(), origen: 'consigna', estatus_calidad: 'retenido', creado_por: perfil.id,
-        }).select().single()
-        if (e1) throw (e1.message.includes('duplicate') ? new Error(`El lote "${it.codigo_lote.trim()}" ya existe`) : e1)
+        const lote = await insertarLoteRecibo(l.articulo_id, 'consigna')
         await supabase.from('existencias').insert({ lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant })
         await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, lote_id: lote.id, tipo: 'entrada_inicial', almacen_destino_id: Number(it.almacen_id), ubicacion_destino_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant, motivo: `Recibo consigna ${recibo.folio} / ${consActiva.folio}`, usuario_id: perfil.id })
         await supabase.from('recibo_lineas').insert({ recibo_id: recibo.id, consigna_linea_id: l.id, articulo_id: l.articulo_id, cantidad: it.cant, lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, certificado_ref: it.certificado_ref.trim() || null, certificado_url: certUrl, ppap_estado: 'consigna' })
@@ -351,8 +360,8 @@ export default function Recibos() {
                   <input type="number" min="0" style={styles.input} value={v.cantidad || ''} disabled={!val.ppapOk} onChange={e => setCampo(l.id, 'cantidad', e.target.value)} />
                 </div>
                 <div style={{ ...styles.campo, flex: 0.9 }}>
-                  <label style={styles.label}>Codigo de lote *</label>
-                  <input style={styles.input} value={v.codigo_lote || ''} disabled={!val.ppapOk} onChange={e => setCampo(l.id, 'codigo_lote', e.target.value)} placeholder="Lote" />
+                  <label style={styles.label}>Codigo de lote</label>
+                  <div style={styles.loteAuto}>Lo genera el sistema</div>
                 </div>
                 <div style={styles.campo}>
                   <label style={styles.label}>Almacen destino *</label>
@@ -563,6 +572,7 @@ const styles = {
   boton: { padding: '8px 18px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonSec: { padding: '8px 18px', backgroundColor: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
   botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
+  loteAuto: { padding: '9px 12px', borderRadius: '7px', border: '1px dashed #cbd5e1', fontSize: '12px', color: '#64748b', backgroundColor: '#f8fafc' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '11px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
