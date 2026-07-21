@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import EtiquetaProducto from '../../components/EtiquetaProducto'
 import { datosEtiqueta } from '../../lib/etiquetas'
-import { crearCajas } from '../../lib/contenedores'
+import { crearCajas, asegurarCajas } from '../../lib/contenedores'
 import PortalImpresion from '../../components/PortalImpresion'
 import { imprimirAislado } from '../../lib/impresion'
 
@@ -320,8 +320,13 @@ export default function ReporteProduccion() {
       const art = artDe(f.articulo_id)
       const rel = artCliente.find(x => x.articulo_id === f.articulo_id)
       const cli = rel ? clientes.find(c => c.id === rel.cliente_id) : null
-      const { data: cajas } = await supabase.from('contenedores').select('*')
-        .eq('lote_id', f.lote_id).eq('tipo', 'caja').order('folio')
+      // Lotes anteriores a las cajas: se generan al vuelo para poder etiquetar
+      const cajas = await asegurarCajas(supabase, {
+        empresaId: perfil.empresa_id, loteId: f.lote_id, articuloId: f.articulo_id,
+        cantidad: Number(f.cantidad_ok),
+        snp: Number((otLineas || []).find(l => l.articulo_id === f.articulo_id)?.piezas_por_caja || 0),
+        origen: `Reimpresion OT`, usuarioId: perfil.id,
+      })
       for (const caja of (cajas || [])) {
         nuevas.push(datosEtiqueta({
           lote: f.lote, articulo: art, empresa, cliente: cli, codigoCliente: rel?.codigo_cliente,
@@ -330,6 +335,7 @@ export default function ReporteProduccion() {
         }))
       }
     }
+    if (nuevas.length === 0) { setError('No se pudieron generar etiquetas para ese reporte'); return }
     setEtiquetas(nuevas)
   }
 

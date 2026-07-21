@@ -5,7 +5,7 @@ import EtiquetaProducto from '../../components/EtiquetaProducto'
 import PortalImpresion from '../../components/PortalImpresion'
 import { imprimirAislado } from '../../lib/impresion'
 import { datosEtiqueta } from '../../lib/etiquetas'
-import { crearCajas } from '../../lib/contenedores'
+import { crearCajas, asegurarCajas } from '../../lib/contenedores'
 
 // Capa 3 - Recibos. Dos fuentes:
 //  - Contra OC (compra): valida certificado y PPAP del proveedor.
@@ -159,11 +159,19 @@ export default function Recibos() {
     if (e1) { setError('Error al leer el recibo: ' + e1.message); return }
     const items = []
     for (const f of (filas || []).filter(x => x.lote_id)) {
-      const { data: cajas } = await supabase.from('contenedores').select('*').eq('lote_id', f.lote_id).eq('tipo', 'caja').order('folio')
-      items.push({ articulo_id: f.articulo_id, cantidad: Number(f.cantidad), lote: f.lote, cajas: cajas || [] })
+      // Lotes anteriores a las cajas: se generan al vuelo para poder etiquetar
+      const cajas = await asegurarCajas(supabase, {
+        empresaId: perfil.empresa_id, loteId: f.lote_id, articuloId: f.articulo_id,
+        cantidad: Number(f.cantidad), snp: Number(artDe(f.articulo_id)?.snp || 0),
+        almacenId: f.almacen_id, ubicacionId: f.ubicacion_id,
+        origen: `Reimpresion recibo ${recibo.folio}`, usuarioId: perfil.id,
+      })
+      items.push({ articulo_id: f.articulo_id, cantidad: Number(f.cantidad), lote: f.lote, cajas })
     }
     if (items.length === 0) { setError('Ese recibo no tiene lotes para etiquetar'); return }
-    setEtiquetas(construirEtiquetas(items, { proveedorNombre: recibo.prov?.nombre, clienteNombre: null }))
+    const nuevas = construirEtiquetas(items, { proveedorNombre: recibo.prov?.nombre, clienteNombre: null })
+    if (nuevas.length === 0) { setError('No se pudieron generar etiquetas para ese recibo'); return }
+    setEtiquetas(nuevas)
   }
 
   const abrirOc = (oc) => {

@@ -70,3 +70,28 @@ export async function moverContenedor(supabase, contenedorId, { almacenId, ubica
     .or(`id.eq.${contenedorId},padre_id.eq.${contenedorId}`)
   if (error) throw error
 }
+
+// Devuelve las cajas de un lote; si no existen (lotes anteriores a esta funcion,
+// o material cargado desde inventario inicial) las crea con el SNP indicado
+// tomando la ubicacion donde esta la existencia. Asi cualquier lote puede
+// etiquetarse y agruparse en tarima.
+export async function asegurarCajas(supabase, {
+  empresaId, loteId, articuloId, cantidad, snp = 0, moldeId = null,
+  almacenId = null, ubicacionId = null, origen = 'Regularizacion', usuarioId,
+}) {
+  const { data: existentes, error } = await supabase
+    .from('contenedores').select('*').eq('lote_id', loteId).eq('tipo', 'caja').order('folio')
+  if (error) throw error
+  if (existentes && existentes.length > 0) return existentes
+
+  // Si no se indico ubicacion, se toma de la existencia actual del lote
+  let alm = almacenId, ubi = ubicacionId
+  if (!alm) {
+    const { data: ex } = await supabase.from('existencias').select('*').eq('lote_id', loteId).limit(1)
+    if (ex && ex.length) { alm = ex[0].almacen_id; ubi = ex[0].ubicacion_id }
+  }
+  return crearCajas(supabase, {
+    empresaId, articuloId, loteId, moldeId, cantidad, snp,
+    almacenId: alm, ubicacionId: ubi, origen, usuarioId,
+  })
+}
