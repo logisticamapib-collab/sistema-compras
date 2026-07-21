@@ -9,6 +9,7 @@ import Delegaciones from './Delegaciones'
 import Permisos from './Permisos'
 import Notificaciones from './Notificaciones'
 import DatosEmpresa from './DatosEmpresa'
+import ConfigEtiquetas from './ConfigEtiquetas'
 
 const secciones = [
   { id: 'empresa', modulo: 'config_empresa', titulo: 'Datos de la Empresa' },
@@ -20,6 +21,7 @@ const secciones = [
   { id: 'delegaciones', modulo: 'config_delegaciones', titulo: 'Delegacion de Autoridad' },
   { id: 'permisos', modulo: 'config_permisos', titulo: 'Permisos por Rol' },
   { id: 'notificaciones', modulo: 'config_notificaciones', titulo: 'Notificaciones' },
+  { id: 'etiquetas', modulo: 'config_etiquetas', titulo: 'Configuracion de Etiquetas' },
 ]
 
 export default function Configuracion() {
@@ -66,6 +68,7 @@ export default function Configuracion() {
         {seccion === 'delegaciones' && <Delegaciones />}
         {seccion === 'permisos' && <Permisos />}
         {seccion === 'notificaciones' && <Notificaciones />}
+        {seccion === 'etiquetas' && <ConfigEtiquetas />}
       </div>
     </div>
   )

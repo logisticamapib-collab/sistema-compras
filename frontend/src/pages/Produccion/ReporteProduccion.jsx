@@ -44,12 +44,13 @@ export default function ReporteProduccion() {
   const [clientes, setClientes] = useState([])
   const [maquinas, setMaquinas] = useState([])
   const [etiquetas, setEtiquetas] = useState([])
+  const [cfgEtiqueta, setCfgEtiqueta] = useState(null)
 
   useEffect(() => { cargar() }, [])
 
   const cargar = async () => {
     setLoading(true)
-    const [o, oa, b, a, ex, lo, ps, al, ub, cs, cp, rep, emp, ac, cli, maq] = await Promise.all([
+    const [o, oa, b, a, ex, lo, ps, al, ub, cs, cp, rep, emp, ac, cli, maq, cfgEt] = await Promise.all([
       supabase.from('ordenes_trabajo').select('*, maq:maquinas(clave, nombre)').eq('empresa_id', perfil.empresa_id).in('estatus', ['programada', 'en_proceso']).order('created_at', { ascending: false }),
       supabase.from('ot_articulos').select('*'),
       supabase.from('bom').select('*'),
@@ -66,11 +67,13 @@ export default function ReporteProduccion() {
       supabase.from('articulo_cliente').select('*').eq('activo', true),
       supabase.from('clientes').select('id, nombre'),
       supabase.from('maquinas').select('id, clave, nombre'),
+      supabase.from('config_etiquetas').select('*').eq('empresa_id', perfil.empresa_id).maybeSingle(),
     ])
     setOts(o.data || []); setOtArts(oa.data || []); setBom(b.data || []); setArticulos(a.data || [])
     setExistencias(ex.data || []); setLotes(lo.data || []); setPasos(ps.data || []); setAlmacenes(al.data || [])
     setUbicaciones(ub.data || []); setCausasScrap(cs.data || []); setCausasParo(cp.data || []); setReportes(rep.data || [])
     setEmpresa(emp.data || null); setArtCliente(ac.data || []); setClientes(cli.data || []); setMaquinas(maq.data || [])
+    setCfgEtiqueta(cfgEt.data || null)
     setLoading(false)
   }
 
@@ -290,24 +293,16 @@ export default function ReporteProduccion() {
   if (etiquetas.length > 0) {
     return (
       <div style={styles.container} className="aparecer">
-        <style>{`
-          @media print {
-            @page { size: 4in 2in; margin: 0; }
-            body { margin: 0; }
-            .no-imprimir { display: none !important; }
-            .etiqueta-imp { page-break-after: always; border: none !important; }
-            .etiqueta-imp:last-child { page-break-after: auto; }
-          }
-        `}</style>
+        <style>{`@media print { @page { size: ${cfgEtiqueta?.ancho_in || 4}in ${cfgEtiqueta?.alto_in || 2}in; margin: 0; } }`}</style>
         <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }} className="no-imprimir">
           <button style={styles.botonSec} onClick={() => setEtiquetas([])}>&larr; Volver al reporte</button>
           <button style={styles.boton} onClick={() => window.print()}>Imprimir {etiquetas.length} etiqueta(s)</button>
         </div>
         <p style={{ ...styles.ayuda, marginBottom: '18px' }} className="no-imprimir">
-          Formato <b>4 x 2 in</b> para impresora Zebra. Una etiqueta por caja segun el SNP del articulo. El QR contiene el <b>codigo de lote</b>: al escanearlo en traspasos, salidas o bajas, el sistema resuelve articulo, cliente, cantidad, maquina, lado y tipo.
+          Formato <b>{cfgEtiqueta?.ancho_in || 4} x {cfgEtiqueta?.alto_in || 2} in</b> (ajustable en Configuracion &gt; Configuracion de Etiquetas). Una etiqueta por caja segun el SNP del articulo. El QR contiene el <b>codigo de lote</b>: al escanearlo en traspasos, salidas o bajas, el sistema resuelve articulo, cliente, cantidad, maquina, lado y tipo.
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {etiquetas.map((d, i) => <EtiquetaProducto key={i} datos={d} />)}
+        <div className="zona-etiquetas" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {etiquetas.map((d, i) => <EtiquetaProducto key={i} datos={d} config={cfgEtiqueta} />)}
         </div>
       </div>
     )

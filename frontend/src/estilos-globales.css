@@ -156,3 +156,44 @@ input:hover:not(:focus), select:hover:not(:focus) {
 ::selection {
   background-color: rgba(37, 99, 235, 0.18);
 }
+
+
+/* ---------- Impresion de etiquetas ----------
+   Aisla la impresion: solo se imprime lo que este dentro de .zona-etiquetas,
+   sin el resto de la pantalla (menus, encabezados, botones). */
+@media print {
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  body * {
+    visibility: hidden !important;
+    box-shadow: none !important;
+  }
+  .zona-etiquetas,
+  .zona-etiquetas * {
+    visibility: visible !important;
+  }
+  .zona-etiquetas {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    background: #fff !important;
+  }
+  .no-imprimir {
+    display: none !important;
+  }
+  .etiqueta-imp {
+    border: none !important;
+    page-break-after: always;
+    break-after: page;
+  }
+  .etiqueta-imp:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}
