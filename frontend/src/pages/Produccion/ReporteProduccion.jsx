@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
 // Reporte de produccion contra una OT (soporta molde familiar: varios articulos).
+// El codigo de lote lo genera el sistema (AAMMDD-turno-consecutivo diario).
 // Por cada articulo con piezas OK se genera su propio lote RETENIDO en el almacen
 // del paso 1 de su flujo. El backflush descuenta la MP del BOM de cada articulo
 // desde la UBICACION DE MAQUINA de la OT, solo lotes LIBERADOS y por FIFO.
@@ -74,7 +75,7 @@ export default function ReporteProduccion() {
     return ps.length ? almDe(ps[0].almacen_id) : null
   }
 
-  const datos = (artId) => porArt[artId] || { ok: '', codigo_lote: '', ubicacion_pt_id: '', scrap: [] }
+  const datos = (artId) => porArt[artId] || { ok: '', ubicacion_pt_id: '', scrap: [] }
   const setDato = (artId, campo, val) => setPorArt(p => ({ ...p, [artId]: { ...datos(artId), [campo]: val } }))
   const addScrap = (artId) => setPorArt(p => ({ ...p, [artId]: { ...datos(artId), scrap: [...datos(artId).scrap, { causa_id: '', cantidad: '' }] } }))
   const setScrap = (artId, i, campo, val) => setPorArt(p => ({ ...p, [artId]: { ...datos(artId), scrap: datos(artId).scrap.map((s, j) => j === i ? { ...s, [campo]: val } : s) } }))
@@ -125,6 +126,13 @@ export default function ReporteProduccion() {
   const hayFaltante = plan.some(p => p.faltante > 0.000001)
   const totalGeneral = lineasOt.reduce((s, l) => s + piezasDe(l.articulo_id), 0)
 
+  // El sistema genera el lote: AAMMDD-turno-consecutivo (reinicia cada dia)
+  const generarLote = async () => {
+    const { data, error: e } = await supabase.rpc('generar_codigo_lote', { p_empresa_id: perfil.empresa_id, p_turno: turno })
+    if (e) throw new Error('No se pudo generar el codigo de lote: ' + e.message)
+    return data
+  }
+
   const reportar = async () => {
     setError(''); setExito('')
     if (!ot) { setError('Selecciona la orden de trabajo'); return }
@@ -132,7 +140,6 @@ export default function ReporteProduccion() {
     if (conDatos.length === 0) { setError('Captura piezas OK o scrap de al menos un articulo'); return }
     for (const l of conDatos) {
       const d = datos(l.articulo_id); const art = artDe(l.articulo_id)
-      if (Number(d.ok) > 0 && !d.codigo_lote.trim()) { setError(`${art?.codigo_interno}: captura el codigo de lote`); return }
       if (Number(d.ok) > 0 && !almacenNacimientoDe(l.articulo_id)) { setError(`${art?.codigo_interno}: sin flujo de almacen asignado (Logistica > Flujos de Almacen)`); return }
       if (d.scrap.some(s => Number(s.cantidad) > 0 && !s.causa_id)) { setError(`${art?.codigo_interno}: cada renglon de scrap necesita causa`); return }
     }
@@ -155,12 +162,22 @@ export default function ReporteProduccion() {
         let lote = null
         if (ok > 0) {
           const alm = almacenNacimientoDe(l.articulo_id)
-          const { data, error: e1 } = await supabase.from('lotes').insert({
-            empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, codigo_lote: d.codigo_lote.trim(),
-            origen: 'produccion', estatus_calidad: 'retenido', creado_por: perfil.id,
-          }).select().single()
-          if (e1) throw (e1.message.includes('duplicate') ? new Error(`El lote "${d.codigo_lote.trim()}" ya existe`) : e1)
-          lote = data
+          // Genera el codigo y reintenta si otro reporte tomo el mismo consecutivo
+          let intento = 0
+          while (!lote && intento < 6) {
+            intento++
+            const codigo = await generarLote()
+            const { data, error: e1 } = await supabase.from('lotes').insert({
+              empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, codigo_lote: codigo,
+              origen: 'produccion', estatus_calidad: 'retenido', creado_por: perfil.id,
+            }).select().single()
+            if (e1) {
+              if (e1.message.includes('duplicate') && intento < 6) continue
+              throw e1
+            }
+            lote = data
+          }
+          if (!lote) throw new Error('No se pudo generar un codigo de lote unico, intenta de nuevo')
           lotesCreados.push(`${artDe(l.articulo_id)?.codigo_interno}: ${lote.codigo_lote}`)
           await supabase.from('existencias').insert({
             lote_id: lote.id, almacen_id: alm.id,
@@ -238,7 +255,7 @@ export default function ReporteProduccion() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Reporte de Produccion</h2>
-      <p style={styles.ayuda}>Captura manual por turno. Si la OT es de molde familiar se reporta cada articulo por separado (cada uno genera su lote). La MP se descuenta por BOM desde la <b>ubicacion de la maquina</b>, usando solo lotes <b>liberados</b> (FIFO).</p>
+      <p style={styles.ayuda}>Captura manual por turno. Si la OT es de molde familiar se reporta cada articulo por separado (cada uno genera su lote). La MP se descuenta por BOM desde la <b>ubicacion de la maquina</b>, usando solo lotes <b>liberados</b> (FIFO). El <b>codigo de lote lo asigna el sistema</b> con formato uniforme.</p>
 
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
@@ -295,8 +312,8 @@ export default function ReporteProduccion() {
                       <input type="number" min="0" style={styles.input} value={d.ok} onChange={e => setDato(l.articulo_id, 'ok', e.target.value)} />
                     </div>
                     <div style={styles.campo}>
-                      <label style={styles.label}>Codigo de lote {Number(d.ok) > 0 ? '*' : ''}</label>
-                      <input style={styles.input} value={d.codigo_lote} onChange={e => setDato(l.articulo_id, 'codigo_lote', e.target.value)} placeholder={`${ot.folio}-${art?.codigo_interno?.slice(-4) || ''}-T${turno}`} />
+                      <label style={styles.label}>Codigo de lote</label>
+                      <div style={styles.loteAuto}>Lo genera el sistema (AAMMDD-{turno.replace(/\D/g, '') || '1'}-###)</div>
                     </div>
                     <div style={styles.campo}>
                       <label style={styles.label}>Ubicacion destino</label>
@@ -402,6 +419,7 @@ const styles = {
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', fontFamily: 'inherit', backgroundColor: '#fff' },
   info: { display: 'flex', gap: '22px', backgroundColor: '#f8fafc', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', color: '#334155', marginBottom: '14px', flexWrap: 'wrap' },
   artBox: { border: '1px solid #e2e8f0', borderRadius: '8px', padding: '14px 16px', marginBottom: '12px' },
+  loteAuto: { padding: '9px 12px', borderRadius: '7px', border: '1px dashed #cbd5e1', fontSize: '13px', color: '#64748b', backgroundColor: '#f8fafc' },
   planBox: { backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 16px', marginBottom: '14px' },
   paroBox: { backgroundColor: '#f8fafc', borderRadius: '8px', padding: '14px 16px', marginTop: '18px', borderTop: '1px solid #e2e8f0' },
   botones: { display: 'flex', justifyContent: 'flex-end', gap: '10px' },
