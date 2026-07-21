@@ -41,12 +41,19 @@ export default function OrdenesTrabajo() {
   const [procesando, setProcesando] = useState(false)
   const [detalle, setDetalle] = useState(null)
   const [expandido, setExpandido] = useState(null)
+  const [fDesde, setFDesde] = useState('')
+  const [fHasta, setFHasta] = useState('')
+  const [fMaquina, setFMaquina] = useState('')
+  const [fCliente, setFCliente] = useState('')
+  const [clientes, setClientes] = useState([])
+  const [artCliente, setArtCliente] = useState([])
+  const [listado, setListado] = useState(false)
 
   useEffect(() => { cargar() }, [])
 
   const cargar = async () => {
     setLoading(true)
-    const [o, oa, a, m, mo, cav, n, u, ds] = await Promise.all([
+    const [o, oa, a, m, mo, cav, n, u, ds, cli, ac] = await Promise.all([
       supabase.from('ordenes_trabajo').select('*, maq:maquinas(clave, nombre, tipo), mol:moldes(clave)').eq('empresa_id', perfil.empresa_id).order('created_at', { ascending: false }),
       supabase.from('ot_articulos').select('*'),
       supabase.from('articulos').select('*').eq('empresa_id', perfil.empresa_id).eq('origen', 'fabricado').eq('activo', true).order('codigo_interno'),
@@ -56,10 +63,12 @@ export default function OrdenesTrabajo() {
       supabase.from('normas_empaque').select('*').eq('activa', true).eq('tipo', 'oficial'),
       supabase.from('ubicaciones').select('*').eq('activo', true),
       cargarDatosSemaforo(supabase, perfil.empresa_id),
+      supabase.from('clientes').select('id, nombre').eq('activo', true),
+      supabase.from('articulo_cliente').select('articulo_id, cliente_id').eq('activo', true),
     ])
     setOts(o.data || []); setOtArts(oa.data || []); setArticulos(a.data || []); setMaquinas(m.data || [])
     setMoldes(mo.data || []); setCavidades(cav.data || []); setNormas(n.data || [])
-    setUbicaciones(u.data || []); setDatosSem(ds)
+    setUbicaciones(u.data || []); setDatosSem(ds); setClientes(cli.data || []); setArtCliente(ac.data || [])
     setLoading(false)
   }
 
@@ -171,10 +180,74 @@ export default function OrdenesTrabajo() {
     await cargar()
   }
 
-  const lista = ots.filter(o => filtro === 'todas' ? true : filtro === 'activas' ? ['programada', 'en_proceso'].includes(o.estatus) : o.estatus === filtro)
+  const clientesDeOt = (otId) => {
+    const arts = artsDeOt(otId).map(x => x.articulo_id)
+    return artCliente.filter(x => arts.includes(x.articulo_id)).map(x => x.cliente_id)
+  }
+  const lista = ots
+    .filter(o => filtro === 'todas' ? true : filtro === 'activas' ? ['programada', 'en_proceso'].includes(o.estatus) : o.estatus === filtro)
+    .filter(o => !fDesde || (o.fecha_programada && o.fecha_programada >= fDesde))
+    .filter(o => !fHasta || (o.fecha_programada && o.fecha_programada <= fHasta))
+    .filter(o => !fMaquina || o.maquina_id === Number(fMaquina))
+    .filter(o => !fCliente || clientesDeOt(o.id).includes(Number(fCliente)))
   const badgeEst = (e) => e === 'en_proceso' ? styles.badgeAzul : e === 'programada' ? styles.badgeAmbar : e === 'cancelada' ? styles.badgeRojo : styles.badgeVerde
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
+
+  // Listado imprimible segun los filtros activos
+  if (listado) {
+    const desc = [
+      filtro !== 'todas' ? `Estatus: ${filtro === 'activas' ? 'activas' : NOMBRE_EST[filtro]}` : 'Todas',
+      fDesde ? `desde ${fmtFecha(fDesde)}` : '', fHasta ? `hasta ${fmtFecha(fHasta)}` : '',
+      fMaquina ? `Maquina: ${maquinas.find(m => m.id === Number(fMaquina))?.clave}` : '',
+      fCliente ? `Cliente: ${clientes.find(c => c.id === Number(fCliente))?.nombre}` : '',
+    ].filter(Boolean).join('  |  ')
+    const hoja = (
+      <div style={{ padding: '0.5in', fontFamily: 'Arial, Helvetica, sans-serif', color: '#000' }}>
+        <h2 style={{ margin: '0 0 2px' }}>LISTADO DE ORDENES DE TRABAJO</h2>
+        <p style={{ fontSize: '12px', color: '#444', margin: '0 0 4px' }}>{desc}</p>
+        <p style={{ fontSize: '11px', color: '#666', margin: '0 0 14px' }}>Generado {new Date().toLocaleString('es-MX')} - {lista.length} orden(es)</p>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#f1f5f9' }}>
+              <th style={styles.th}>Folio</th><th style={styles.th}>Articulo(s)</th><th style={styles.th}>Maquina</th>
+              <th style={styles.th}>Molde</th><th style={styles.th}>Fecha</th><th style={styles.th}>Turno</th>
+              <th style={styles.th}>Programado</th><th style={styles.th}>Producido</th><th style={styles.th}>Estatus</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lista.map(o => {
+              const arts = artsDeOt(o.id)
+              return (
+                <tr key={o.id}>
+                  <td style={styles.td}>{o.folio}</td>
+                  <td style={styles.td}>{arts.map(x => artDe(x.articulo_id)?.codigo_interno).join(' + ') || artDe(o.articulo_id)?.codigo_interno}</td>
+                  <td style={styles.td}>{o.maq?.clave}</td>
+                  <td style={styles.td}>{o.mol?.clave || '-'}</td>
+                  <td style={styles.td}>{fmtFecha(o.fecha_programada)}</td>
+                  <td style={styles.td}>{o.turno || '-'}</td>
+                  <td style={styles.td}>{arts.map(x => fmtNum(x.cantidad_programada)).join(' / ')}</td>
+                  <td style={styles.td}>{arts.map(x => fmtNum(x.cantidad_producida)).join(' / ')}</td>
+                  <td style={styles.td}>{NOMBRE_EST[o.estatus]}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
+    return (
+      <div style={styles.container} className="aparecer">
+        <style>{`@media print { @page { size: letter landscape; margin: 0; } }`}</style>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }} className="no-imprimir">
+          <button style={styles.botonSec} onClick={() => setListado(false)}>&larr; Volver</button>
+          <button style={styles.boton} onClick={imprimirAislado}>Imprimir</button>
+        </div>
+        <PortalImpresion>{hoja}</PortalImpresion>
+        <div style={{ backgroundColor: '#fff', borderRadius: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>{hoja}</div>
+      </div>
+    )
+  }
 
   // Impresion
   if (detalle) {
@@ -360,14 +433,28 @@ export default function OrdenesTrabajo() {
       )}
 
       <div style={styles.filtros}>
-        <label style={{ ...styles.label, marginRight: '8px' }}>Ver:</label>
+        <label style={styles.label}>Ver:</label>
         <select style={styles.input} value={filtro} onChange={e => setFiltro(e.target.value)}>
-          <option value="activas">Activas (programadas y en proceso)</option>
+          <option value="activas">Activas</option>
           <option value="programada">Programadas</option>
           <option value="en_proceso">En proceso</option>
           <option value="terminada">Terminadas</option>
           <option value="todas">Todas</option>
         </select>
+        <label style={styles.label}>Del:</label>
+        <input type="date" style={styles.input} value={fDesde} onChange={e => setFDesde(e.target.value)} />
+        <label style={styles.label}>Al:</label>
+        <input type="date" style={styles.input} value={fHasta} onChange={e => setFHasta(e.target.value)} />
+        <select style={styles.input} value={fMaquina} onChange={e => setFMaquina(e.target.value)}>
+          <option value="">Toda maquina</option>
+          {maquinas.map(m => <option key={m.id} value={m.id}>{m.clave}</option>)}
+        </select>
+        <select style={styles.input} value={fCliente} onChange={e => setFCliente(e.target.value)}>
+          <option value="">Todo cliente</option>
+          {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+        </select>
+        <button style={styles.botonSec} onClick={() => { setFiltro('activas'); setFDesde(''); setFHasta(''); setFMaquina(''); setFCliente('') }}>Limpiar</button>
+        {lista.length > 0 && <button style={styles.boton} onClick={() => setListado(true)}>Imprimir listado ({lista.length})</button>}
       </div>
 
       {lista.length === 0 ? (
@@ -453,7 +540,7 @@ const styles = {
   resumen: { backgroundColor: '#f8fafc', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', color: '#334155', marginBottom: '14px' },
   familiaBox: { backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '12px 16px', marginBottom: '14px' },
   bloqueados: { backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 16px', color: '#92400e', marginTop: '16px' },
-  filtros: { display: 'flex', alignItems: 'center', marginBottom: '16px', backgroundColor: '#fff', borderRadius: '10px', padding: '14px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
+  filtros: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '16px', backgroundColor: '#fff', borderRadius: '10px', padding: '14px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   botones: { display: 'flex', justifyContent: 'flex-end', gap: '10px' },
   boton: { padding: '9px 20px', backgroundColor: '#c2410c', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonSec: { padding: '9px 20px', backgroundColor: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
