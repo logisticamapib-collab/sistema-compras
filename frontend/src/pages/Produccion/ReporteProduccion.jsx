@@ -290,13 +290,21 @@ export default function ReporteProduccion() {
   if (etiquetas.length > 0) {
     return (
       <div style={styles.container} className="aparecer">
-        <style>{`@media print { .no-imprimir { display: none !important; } .etiqueta-imp { page-break-after: always; } }`}</style>
+        <style>{`
+          @media print {
+            @page { size: 4in 2in; margin: 0; }
+            body { margin: 0; }
+            .no-imprimir { display: none !important; }
+            .etiqueta-imp { page-break-after: always; border: none !important; }
+            .etiqueta-imp:last-child { page-break-after: auto; }
+          }
+        `}</style>
         <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }} className="no-imprimir">
           <button style={styles.botonSec} onClick={() => setEtiquetas([])}>&larr; Volver al reporte</button>
           <button style={styles.boton} onClick={() => window.print()}>Imprimir {etiquetas.length} etiqueta(s)</button>
         </div>
         <p style={{ ...styles.ayuda, marginBottom: '18px' }} className="no-imprimir">
-          Una etiqueta por caja segun el SNP del articulo. El QR contiene el <b>codigo de lote</b>: al escanearlo en traspasos, salidas o bajas, el sistema resuelve articulo, cliente, cantidad, maquina, lado y tipo.
+          Formato <b>4 x 2 in</b> para impresora Zebra. Una etiqueta por caja segun el SNP del articulo. El QR contiene el <b>codigo de lote</b>: al escanearlo en traspasos, salidas o bajas, el sistema resuelve articulo, cliente, cantidad, maquina, lado y tipo.
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {etiquetas.map((d, i) => <EtiquetaProducto key={i} datos={d} />)}
