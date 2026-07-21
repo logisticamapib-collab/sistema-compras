@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { ROLES } from '../../lib/roles'
 
 // Capa 3 - Flujos de Almacen: plantillas POR SITE cuyos pasos son ALMACENES REALES.
 // El paso 1 es donde NACE el producto al reportar produccion; el ultimo es de donde
@@ -17,6 +18,7 @@ export default function FlujosAlmacen() {
   const [vista, setVista] = useState('plantillas')
   const [sites, setSites] = useState([])
   const [almacenes, setAlmacenes] = useState([])
+  const [ubicaciones, setUbicaciones] = useState([])
   const [flujos, setFlujos] = useState([])
   const [pasos, setPasos] = useState([])
   const [articulos, setArticulos] = useState([])
@@ -33,9 +35,10 @@ export default function FlujosAlmacen() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [s, a, f, p, art] = await Promise.all([
+    const [s, a, u, f, p, art] = await Promise.all([
       supabase.from('sites').select('id, nombre').eq('activo', true).order('nombre'),
       supabase.from('almacenes').select('*').eq('activo', true).order('clave'),
+      supabase.from('ubicaciones').select('*').eq('activo', true).order('clave'),
       supabase.from('flujos_almacen').select('*').order('nombre'),
       supabase.from('flujo_pasos').select('*').order('secuencia'),
       supabase.from('articulos').select('id, codigo_interno, descripcion, flujo_id, tipo_proceso')
@@ -43,6 +46,7 @@ export default function FlujosAlmacen() {
     ])
     setSites(s.data || [])
     setAlmacenes(a.data || [])
+    setUbicaciones(u.data || [])
     setFlujos(f.data || [])
     setPasos(p.data || [])
     setArticulos(art.data || [])
@@ -51,26 +55,32 @@ export default function FlujosAlmacen() {
 
   const siteDe = (id) => sites.find(s => s.id === id)
   const almacenDe = (id) => almacenes.find(a => a.id === id)
+  const ubiDe = (id) => ubicaciones.find(u => u.id === id)
+  const ubisDe = (almId) => ubicaciones.filter(u => u.almacen_id === Number(almId))
   const pasosDe = (flujoId) => pasos.filter(p => p.flujo_id === flujoId)
   const articulosCon = (flujoId) => articulos.filter(a => a.flujo_id === flujoId)
 
+  const textoUbicacion = (p) => p.ubicacion_modo === 'fija'
+    ? (ubiDe(p.ubicacion_id)?.clave || '?')
+    : p.ubicacion_modo === 'maquina' ? 'ubic. maquina' : 'libre'
   const cadenaDe = (flujoId) => pasosDe(flujoId)
-    .map(p => `${almacenDe(p.almacen_id)?.clave || '?'}${p.requiere_liberacion ? ' ✓Cal' : ''}`)
+    .map(p => `${almacenDe(p.almacen_id)?.clave || '?'}/${textoUbicacion(p)}${p.requiere_liberacion ? ' ✓firma' : ''}`)
     .join(' → ')
 
   // ---------- Plantillas ----------
-  const nuevoForm = () => setForm({ site_id: '', nombre: '', descripcion: '', pasos: [{ almacen_id: '', requiere_liberacion: false, nota: '' }] })
+  const PASO_VACIO = { almacen_id: '', ubicacion_modo: 'libre', ubicacion_id: '', requiere_liberacion: false, rol_libera: 'calidad', nota: '' }
+  const nuevoForm = () => setForm({ site_id: '', nombre: '', descripcion: '', pasos: [{ ...PASO_VACIO }] })
 
   const editarForm = (f) => setForm({
     id: f.id, site_id: f.site_id || '', nombre: f.nombre, descripcion: f.descripcion || '',
-    pasos: pasosDe(f.id).map(p => ({ almacen_id: String(p.almacen_id), requiere_liberacion: p.requiere_liberacion, nota: p.nota || '' })),
+    pasos: pasosDe(f.id).map(p => ({ almacen_id: String(p.almacen_id), ubicacion_modo: p.ubicacion_modo || 'libre', ubicacion_id: p.ubicacion_id ? String(p.ubicacion_id) : '', requiere_liberacion: p.requiere_liberacion, rol_libera: p.rol_libera || 'calidad', nota: p.nota || '' })),
   })
 
   const setPaso = (i, campo, valor) => {
     const nuevos = form.pasos.map((p, j) => j === i ? { ...p, [campo]: valor } : p)
     setForm({ ...form, pasos: nuevos })
   }
-  const agregarPaso = () => setForm({ ...form, pasos: [...form.pasos, { almacen_id: '', requiere_liberacion: false, nota: '' }] })
+  const agregarPaso = () => setForm({ ...form, pasos: [...form.pasos, { ...PASO_VACIO }] })
   const quitarPaso = (i) => setForm({ ...form, pasos: form.pasos.filter((_, j) => j !== i) })
   const moverPaso = (i, dir) => {
     const j = i + dir
@@ -80,7 +90,7 @@ export default function FlujosAlmacen() {
     setForm({ ...form, pasos: nuevos })
   }
   const cambiarSite = (siteId) => {
-    setForm({ ...form, site_id: siteId, pasos: form.pasos.map(p => ({ ...p, almacen_id: '' })) })
+    setForm({ ...form, site_id: siteId, pasos: form.pasos.map(p => ({ ...p, almacen_id: '', ubicacion_id: '' })) })
   }
 
   const guardarFlujo = async () => {
@@ -89,6 +99,7 @@ export default function FlujosAlmacen() {
     if (!form.nombre.trim()) { setError('El nombre de la plantilla es obligatorio'); return }
     const pasosValidos = form.pasos.filter(p => p.almacen_id)
     if (pasosValidos.length === 0) { setError('Agrega al menos un paso (el paso 1 es donde nace el producto)'); return }
+    if (pasosValidos.some(p => p.ubicacion_modo === 'fija' && !p.ubicacion_id)) { setError('Los pasos con ubicacion fija requieren que elijas la ubicacion'); return }
     setGuardando(true)
     try {
       let flujoId = form.id
@@ -106,7 +117,11 @@ export default function FlujosAlmacen() {
       }
       const filas = pasosValidos.map((p, i) => ({
         flujo_id: flujoId, secuencia: i + 1, almacen_id: Number(p.almacen_id),
-        requiere_liberacion: p.requiere_liberacion, nota: p.nota.trim() || null,
+        ubicacion_modo: p.ubicacion_modo,
+        ubicacion_id: p.ubicacion_modo === 'fija' && p.ubicacion_id ? Number(p.ubicacion_id) : null,
+        requiere_liberacion: p.requiere_liberacion,
+        rol_libera: p.requiere_liberacion ? (p.rol_libera || 'calidad') : null,
+        nota: p.nota.trim() || null,
       }))
       const { error: e3 } = await supabase.from('flujo_pasos').insert(filas)
       if (e3) throw e3
@@ -200,20 +215,40 @@ export default function FlujosAlmacen() {
                     Pasos del flujo (el <b>paso 1 es donde NACE el producto</b>; el ultimo es de donde se embarca):
                   </p>
                   {form.pasos.map((p, i) => (
-                    <div key={i} style={styles.filaPaso}>
-                      <span style={{ ...styles.numeroPaso, ...(i === 0 ? styles.numeroNace : {}) }}>{i + 1}</span>
-                      <select style={{ ...styles.input, flex: 1.1 }} value={p.almacen_id} onChange={e => setPaso(i, 'almacen_id', e.target.value)}>
-                        <option value="">Almacen...</option>
-                        {almacenesDelForm.map(a => <option key={a.id} value={a.id}>{a.clave} - {a.nombre}</option>)}
-                      </select>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                        <input type="checkbox" checked={p.requiere_liberacion} onChange={e => setPaso(i, 'requiere_liberacion', e.target.checked)} />
-                        Libera Calidad
-                      </label>
-                      <input style={{ ...styles.input, flex: 1.2 }} value={p.nota} onChange={e => setPaso(i, 'nota', e.target.value)} placeholder={i === 0 ? 'Nacimiento del producto' : 'Nota opcional'} />
-                      <button style={styles.botonAccion} onClick={() => moverPaso(i, -1)} disabled={i === 0}>&#8593;</button>
-                      <button style={styles.botonAccion} onClick={() => moverPaso(i, 1)} disabled={i === form.pasos.length - 1}>&#8595;</button>
-                      <button style={styles.botonAccion} onClick={() => quitarPaso(i)} disabled={form.pasos.length === 1}>Quitar</button>
+                    <div key={i} style={styles.cajaPaso}>
+                      <div style={styles.filaPaso}>
+                        <span style={{ ...styles.numeroPaso, ...(i === 0 ? styles.numeroNace : {}) }}>{i + 1}</span>
+                        <select style={{ ...styles.input, flex: 1.2 }} value={p.almacen_id} onChange={e => setPaso(i, 'almacen_id', e.target.value)}>
+                          <option value="">Almacen...</option>
+                          {almacenesDelForm.map(a => <option key={a.id} value={a.id}>{a.clave} - {a.nombre}</option>)}
+                        </select>
+                        <select style={{ ...styles.input, flex: 0.95 }} value={p.ubicacion_modo} onChange={e => setPaso(i, 'ubicacion_modo', e.target.value)}>
+                          <option value="libre">Ubicacion: libre</option>
+                          <option value="fija">Ubicacion: fija</option>
+                          <option value="maquina">Ubicacion: de la maquina</option>
+                        </select>
+                        {p.ubicacion_modo === 'fija' && (
+                          <select style={{ ...styles.input, flex: 0.95 }} value={p.ubicacion_id} onChange={e => setPaso(i, 'ubicacion_id', e.target.value)} disabled={!p.almacen_id}>
+                            <option value="">Elige ubicacion...</option>
+                            {ubisDe(p.almacen_id).map(u => <option key={u.id} value={u.id}>{u.clave}{u.es_cuarentena ? ' (cuarentena)' : ''}</option>)}
+                          </select>
+                        )}
+                        <button style={styles.botonAccion} onClick={() => moverPaso(i, -1)} disabled={i === 0}>&#8593;</button>
+                        <button style={styles.botonAccion} onClick={() => moverPaso(i, 1)} disabled={i === form.pasos.length - 1}>&#8595;</button>
+                        <button style={styles.botonAccion} onClick={() => quitarPaso(i)} disabled={form.pasos.length === 1}>Quitar</button>
+                      </div>
+                      <div style={{ ...styles.filaPaso, marginLeft: '34px' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                          <input type="checkbox" checked={p.requiere_liberacion} onChange={e => setPaso(i, 'requiere_liberacion', e.target.checked)} />
+                          Requiere firma para salir
+                        </label>
+                        {p.requiere_liberacion && (
+                          <select style={{ ...styles.input, flex: 0.9 }} value={p.rol_libera} onChange={e => setPaso(i, 'rol_libera', e.target.value)}>
+                            {ROLES.map(r => <option key={r.value} value={r.value}>Firma: {r.label}</option>)}
+                          </select>
+                        )}
+                        <input style={{ ...styles.input, flex: 1.6 }} value={p.nota} onChange={e => setPaso(i, 'nota', e.target.value)} placeholder={i === 0 ? 'Nacimiento del producto' : 'Nota opcional'} />
+                      </div>
                     </div>
                   ))}
                   <button style={{ ...styles.botonAccion, margin: '4px 0 14px 34px' }} onClick={agregarPaso}>+ Agregar paso</button>
@@ -324,7 +359,8 @@ const styles = {
   form: { backgroundColor: '#fff', borderRadius: '10px', padding: '24px', marginBottom: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   formTitulo: { fontSize: '15px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 16px 0' },
   fila: { display: 'flex', gap: '16px', marginBottom: '12px' },
-  filaPaso: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' },
+  filaPaso: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' },
+  cajaPaso: { border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px 4px', marginBottom: '10px' },
   numeroPaso: { width: '26px', height: '26px', borderRadius: '50%', backgroundColor: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '600', flexShrink: 0 },
   numeroNace: { backgroundColor: '#dcfce7', color: '#16a34a' },
   campo: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 },

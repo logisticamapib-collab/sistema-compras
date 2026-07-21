@@ -114,6 +114,7 @@ export default function Almacenes() {
       clave: formUbi.clave.trim().toUpperCase(),
       descripcion: formUbi.descripcion?.trim() || null,
       maquina_id: formUbi.maquina_id ? Number(formUbi.maquina_id) : null,
+      es_cuarentena: !!formUbi.es_cuarentena,
     }
     let res
     if (formUbi.id) {
@@ -481,7 +482,7 @@ export default function Almacenes() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 20px 4px' }}>
                       <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>Ubicaciones de {a.clave}</span>
                       {puedeEditar && !formUbi && (
-                        <button style={styles.botonAccion} onClick={() => setFormUbi({ almacen_id: a.id, clave: '', descripcion: '', maquina_id: '' })}>+ Agregar ubicacion</button>
+                        <button style={styles.botonAccion} onClick={() => setFormUbi({ almacen_id: a.id, clave: '', descripcion: '', maquina_id: '', es_cuarentena: false })}>+ Agregar ubicacion</button>
                       )}
                     </div>
                     {formUbi?.almacen_id === a.id && (
@@ -501,6 +502,10 @@ export default function Almacenes() {
                             {maquinas.filter(m => m.site_id === a.site_id).map(m => <option key={m.id} value={m.id}>{m.clave} - {m.nombre}</option>)}
                           </select>
                         </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', paddingBottom: '9px', whiteSpace: 'nowrap' }}>
+                          <input type="checkbox" checked={!!formUbi.es_cuarentena} onChange={e => setFormUbi({ ...formUbi, es_cuarentena: e.target.checked })} />
+                          Es cuarentena
+                        </label>
                         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                           <button style={styles.botonSec} onClick={() => setFormUbi(null)}>Cancelar</button>
                           <button style={styles.boton} onClick={guardarUbicacion}>{formUbi.id ? 'Guardar' : 'Agregar'}</button>
@@ -514,14 +519,17 @@ export default function Almacenes() {
                         <div key={u.id} style={{ ...styles.tablaFila, padding: '7px 20px', fontSize: '13px' }}>
                           <span style={{ flex: 0.7, fontWeight: '600' }}>{u.clave}</span>
                           <span style={{ flex: 1.2, color: '#64748b' }}>{u.descripcion || '-'}</span>
-                          <span style={{ flex: 0.9, color: '#64748b' }}>{u.maquina_id ? `Maq: ${maquinaDe(u.maquina_id)?.clave || u.maquina_id}` : '-'}</span>
+                          <span style={{ flex: 0.9, color: '#64748b' }}>
+                            {u.maquina_id ? `Maq: ${maquinaDe(u.maquina_id)?.clave || u.maquina_id}` : '-'}
+                            {u.es_cuarentena && <span style={{ ...styles.badge, ...styles.badgeAmbar, marginLeft: '6px' }}>Cuarentena</span>}
+                          </span>
                           <span style={{ flex: 0.5, textAlign: 'center' }}>
                             <span style={{ ...styles.badge, ...(u.activo ? styles.badgeVerde : styles.badgeGris) }}>{u.activo ? 'Activa' : 'Inactiva'}</span>
                           </span>
                           <span style={{ width: '150px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
                             {puedeEditar && (
                               <>
-                                <button style={styles.botonAccion} onClick={() => setFormUbi({ almacen_id: a.id, id: u.id, clave: u.clave, descripcion: u.descripcion || '', maquina_id: u.maquina_id || '' })}>Editar</button>
+                                <button style={styles.botonAccion} onClick={() => setFormUbi({ almacen_id: a.id, id: u.id, clave: u.clave, descripcion: u.descripcion || '', maquina_id: u.maquina_id || '', es_cuarentena: !!u.es_cuarentena })}>Editar</button>
                                 <button style={styles.botonAccion} onClick={() => toggleUbicacion(u)}>{u.activo ? 'Desactivar' : 'Activar'}</button>
                               </>
                             )}
@@ -563,6 +571,7 @@ const styles = {
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '600' },
   badgeVerde: { backgroundColor: '#dcfce7', color: '#16a34a' },
   badgeAzul: { backgroundColor: '#dbeafe', color: '#2563eb' },
+  badgeAmbar: { backgroundColor: '#fef3c7', color: '#b45309' },
   badgeGris: { backgroundColor: '#f1f5f9', color: '#64748b' },
   cajaErrores: { backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 16px', color: '#92400e', marginBottom: '12px' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },

@@ -85,11 +85,26 @@ export default function ReporteProduccion() {
   const ubiDe = (id) => ubicaciones.find(u => u.id === id)
   const lineasOt = ot ? otArts.filter(x => x.ot_id === ot.id) : []
 
-  const almacenNacimientoDe = (articuloId) => {
+  const pasoNacimientoDe = (articuloId) => {
     const art = artDe(articuloId)
     if (!art?.flujo_id) return null
     const ps = pasos.filter(p => p.flujo_id === art.flujo_id)
-    return ps.length ? almDe(ps[0].almacen_id) : null
+    return ps.length ? ps[0] : null
+  }
+  const almacenNacimientoDe = (articuloId) => {
+    const p = pasoNacimientoDe(articuloId)
+    return p ? almDe(p.almacen_id) : null
+  }
+  // Ubicacion destino del paso 1 segun su modo: fija, de la maquina o libre
+  const ubicacionNacimientoDe = (articuloId) => {
+    const p = pasoNacimientoDe(articuloId)
+    if (!p) return { ubicacion: null, modo: null, falta: false }
+    if (p.ubicacion_modo === 'fija') return { ubicacion: ubiDe(p.ubicacion_id), modo: 'fija', falta: !p.ubicacion_id }
+    if (p.ubicacion_modo === 'maquina') {
+      const u = ubicaciones.find(x => x.maquina_id === ot?.maquina_id && x.almacen_id === p.almacen_id)
+      return { ubicacion: u, modo: 'maquina', falta: !u }
+    }
+    return { ubicacion: null, modo: 'libre', falta: false }
   }
 
   const datos = (artId) => porArt[artId] || { ok: '', ubicacion_pt_id: '', scrap: [] }
@@ -158,6 +173,14 @@ export default function ReporteProduccion() {
     for (const l of conDatos) {
       const d = datos(l.articulo_id); const art = artDe(l.articulo_id)
       if (Number(d.ok) > 0 && !almacenNacimientoDe(l.articulo_id)) { setError(`${art?.codigo_interno}: sin flujo de almacen asignado (Logistica > Flujos de Almacen)`); return }
+      const un = ubicacionNacimientoDe(l.articulo_id)
+      if (Number(d.ok) > 0 && un.falta) {
+        setError(un.modo === 'maquina'
+          ? `${art?.codigo_interno}: la maquina de la OT no tiene ubicacion en el almacen del paso 1 del flujo. Crea la ubicacion y ligala a la maquina en Almacenes.`
+          : `${art?.codigo_interno}: el paso 1 del flujo tiene ubicacion fija sin definir.`)
+        return
+      }
+      if (Number(d.ok) > 0 && un.modo === 'libre' && !d.ubicacion_pt_id) { setError(`${art?.codigo_interno}: selecciona la ubicacion destino (el paso 1 del flujo es de ubicacion libre)`); return }
       if (d.scrap.some(s => Number(s.cantidad) > 0 && !s.causa_id)) { setError(`${art?.codigo_interno}: cada renglon de scrap necesita causa`); return }
     }
     if (hayFaltante) { setError('No hay suficiente materia prima liberada en la ubicacion de la maquina. Revisa el plan de consumo.'); return }
@@ -180,6 +203,8 @@ export default function ReporteProduccion() {
         let lote = null
         if (ok > 0) {
           const alm = almacenNacimientoDe(l.articulo_id)
+          const un = ubicacionNacimientoDe(l.articulo_id)
+          const ubicDestino = un.modo === 'libre' ? (d.ubicacion_pt_id ? Number(d.ubicacion_pt_id) : null) : (un.ubicacion?.id || null)
           // Genera el codigo y reintenta si otro reporte tomo el mismo consecutivo
           let intento = 0
           while (!lote && intento < 6) {
@@ -199,12 +224,11 @@ export default function ReporteProduccion() {
           lotesCreados.push(`${artDe(l.articulo_id)?.codigo_interno}: ${lote.codigo_lote}`)
           paraEtiquetas.push({ lote, articuloId: l.articulo_id, cantidad: ok, piezasPorCaja: Number(l.piezas_por_caja || 0) })
           await supabase.from('existencias').insert({
-            lote_id: lote.id, almacen_id: alm.id,
-            ubicacion_id: d.ubicacion_pt_id ? Number(d.ubicacion_pt_id) : null, cantidad: ok,
+            lote_id: lote.id, almacen_id: alm.id, ubicacion_id: ubicDestino, cantidad: ok,
           })
           await supabase.from('movimientos').insert({
             empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, lote_id: lote.id, tipo: 'entrada_produccion',
-            almacen_destino_id: alm.id, ubicacion_destino_id: d.ubicacion_pt_id ? Number(d.ubicacion_pt_id) : null,
+            almacen_destino_id: alm.id, ubicacion_destino_id: ubicDestino,
             cantidad: ok, motivo: `Produccion OT ${ot.folio}`, usuario_id: perfil.id,
           })
         }
@@ -395,7 +419,7 @@ export default function ReporteProduccion() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                     <span><b>{art?.codigo_interno}</b> - {art?.descripcion} {l.principal && <span style={{ ...styles.badge, ...styles.badgeAzul }}>principal</span>}</span>
                     <span style={{ fontSize: '13px', color: '#64748b' }}>
-                      Avance {fmtNum(l.cantidad_producida)}/{fmtNum(l.cantidad_programada)} - Pendiente <b>{fmtNum(pend > 0 ? pend : 0)}</b> - Nace en <b>{alm ? alm.clave : 'sin flujo'}</b>
+                      Avance {fmtNum(l.cantidad_producida)}/{fmtNum(l.cantidad_programada)} - Pendiente <b>{fmtNum(pend > 0 ? pend : 0)}</b> - Nace en <b>{alm ? alm.clave : 'sin flujo'}</b>{ubicacionNacimientoDe(l.articulo_id).ubicacion ? ` / ${ubicacionNacimientoDe(l.articulo_id).ubicacion.clave}` : ''}
                     </span>
                   </div>
                   <div style={styles.fila}>
@@ -408,11 +432,19 @@ export default function ReporteProduccion() {
                       <div style={styles.loteAuto}>Lo genera el sistema (AAMMDD-{turno.replace(/\D/g, '') || '1'}-###)</div>
                     </div>
                     <div style={styles.campo}>
-                      <label style={styles.label}>Ubicacion destino</label>
-                      <select style={styles.input} value={d.ubicacion_pt_id} onChange={e => setDato(l.articulo_id, 'ubicacion_pt_id', e.target.value)} disabled={!alm}>
-                        <option value="">Sin ubicacion</option>
-                        {alm && ubicaciones.filter(u => u.almacen_id === alm.id).map(u => <option key={u.id} value={u.id}>{u.clave}</option>)}
-                      </select>
+                      <label style={styles.label}>Ubicacion destino (paso 1 del flujo)</label>
+                      {ubicacionNacimientoDe(l.articulo_id).modo === 'libre' ? (
+                        <select style={styles.input} value={d.ubicacion_pt_id} onChange={e => setDato(l.articulo_id, 'ubicacion_pt_id', e.target.value)} disabled={!alm}>
+                          <option value="">Selecciona...</option>
+                          {alm && ubicaciones.filter(u => u.almacen_id === alm.id).map(u => <option key={u.id} value={u.id}>{u.clave}</option>)}
+                        </select>
+                      ) : (
+                        <div style={styles.destinoAuto}>
+                          {ubicacionNacimientoDe(l.articulo_id).falta
+                            ? <span style={{ color: '#dc2626' }}>Sin ubicacion definida en el flujo</span>
+                            : <b>{ubicacionNacimientoDe(l.articulo_id).ubicacion?.clave}</b>}
+                        </div>
+                      )}
                     </div>
                     <div style={{ ...styles.campo, flex: 0.5, justifyContent: 'flex-end' }}>
                       <button style={{ ...styles.botonAccion, marginBottom: '9px' }} onClick={() => addScrap(l.articulo_id)}>+ Scrap</button>
@@ -515,6 +547,7 @@ const styles = {
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', fontFamily: 'inherit', backgroundColor: '#fff' },
   info: { display: 'flex', gap: '22px', backgroundColor: '#f8fafc', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', color: '#334155', marginBottom: '14px', flexWrap: 'wrap' },
   artBox: { border: '1px solid #e2e8f0', borderRadius: '8px', padding: '14px 16px', marginBottom: '12px' },
+  destinoAuto: { padding: '9px 12px', borderRadius: '7px', border: '1px dashed #cbd5e1', fontSize: '13px', color: '#334155', backgroundColor: '#f8fafc' },
   loteAuto: { padding: '9px 12px', borderRadius: '7px', border: '1px dashed #cbd5e1', fontSize: '13px', color: '#64748b', backgroundColor: '#f8fafc' },
   planBox: { backgroundColor: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 16px', marginBottom: '14px' },
   paroBox: { backgroundColor: '#f8fafc', borderRadius: '8px', padding: '14px 16px', marginTop: '18px', borderTop: '1px solid #e2e8f0' },
