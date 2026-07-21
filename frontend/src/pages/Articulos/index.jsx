@@ -20,7 +20,7 @@ const formVacio = {
   categoria_id: '', tipo_moneda: 'MXN', iva_porcentaje: 16,
   retencion_iva: 0,
   origen: 'comprado', es_consigna: false,
-  lead_time_dias: '', moq: '', tiempo_transito_dias: '', stock_minimo: '',
+  lead_time_dias: '', moq: '', tiempo_transito_dias: '', stock_minimo: '', snp: '',
   tipo_proceso: 'solo_inyeccion', articulo_wip_origen_id: '',
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
@@ -107,6 +107,7 @@ export default function Articulos() {
       moq: articulo.moq ?? '',
       tiempo_transito_dias: articulo.tiempo_transito_dias ?? '',
       stock_minimo: articulo.stock_minimo ?? '',
+      snp: articulo.snp ?? '',
       tipo_proceso: articulo.tipo_proceso || 'solo_inyeccion',
       articulo_wip_origen_id: articulo.articulo_wip_origen_id?.toString() || '',
       peso_pieza_g: articulo.peso_pieza_g ?? '',
@@ -153,6 +154,7 @@ export default function Articulos() {
       moq: !esFabricado && form.moq !== '' ? parseFloat(form.moq) : 0,
       tiempo_transito_dias: !esFabricado && form.tiempo_transito_dias !== '' ? parseInt(form.tiempo_transito_dias) : 0,
       stock_minimo: form.stock_minimo !== '' ? parseFloat(form.stock_minimo) : 0,
+      snp: form.snp !== '' ? parseFloat(form.snp) : 0,
       tipo_proceso: esFabricado ? form.tipo_proceso : null,
       articulo_wip_origen_id: esFabricado && form.articulo_wip_origen_id ? parseInt(form.articulo_wip_origen_id) : null,
       peso_pieza_g: esFabricado && form.peso_pieza_g !== '' ? parseFloat(form.peso_pieza_g) : null,
@@ -494,6 +496,11 @@ export default function Articulos() {
                   <label style={styles.label}>Stock minimo (alerta)</label>
                   <input style={styles.input} type="number" min="0" step="0.01" value={form.stock_minimo}
                     onChange={e => setForm({ ...form, stock_minimo: e.target.value })} placeholder="0" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>SNP (cantidad por empaque)</label>
+                  <input style={styles.input} type="number" min="0" step="0.01" value={form.snp}
+                    onChange={e => setForm({ ...form, snp: e.target.value })} placeholder="0" />
                 </div>
               </div>
             </>
