@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { etiquetaRol } from '../../lib/roles'
+import { moverContenedor } from '../../lib/contenedores'
 
 // Movimiento guiado por el flujo del articulo. El usuario no elige destino:
 // el sistema le dice el siguiente paso (almacen + ubicacion) y solo confirma.
@@ -30,6 +31,7 @@ export default function MovimientoMaterial() {
   const [firmas, setFirmas] = useState([])
   const [traspasos, setTraspasos] = useState([])
   const [maquinas, setMaquinas] = useState([])
+  const [contenedores, setContenedores] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -43,7 +45,7 @@ export default function MovimientoMaterial() {
 
   const cargar = async () => {
     setLoading(true)
-    const [a, al, ub, ps, lo, ex, fi, tr, mq] = await Promise.all([
+    const [a, al, ub, ps, lo, ex, fi, tr, mq, ct] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, flujo_id').eq('empresa_id', perfil.empresa_id),
       supabase.from('almacenes').select('*'),
       supabase.from('ubicaciones').select('*'),
@@ -53,10 +55,11 @@ export default function MovimientoMaterial() {
       supabase.from('lote_firmas').select('*, usuario:usuarios!lote_firmas_firmado_por_fkey(nombre)'),
       supabase.from('traspasos').select('*, envio:usuarios!traspasos_enviado_por_fkey(nombre)').eq('estatus', 'enviado').order('fecha_envio'),
       supabase.from('maquinas').select('id, clave'),
+      supabase.from('contenedores').select('*').eq('estatus', 'activo'),
     ])
     setArticulos(a.data || []); setAlmacenes(al.data || []); setUbicaciones(ub.data || []); setPasos(ps.data || [])
     setLotes(lo.data || []); setExistencias(ex.data || []); setFirmas(fi.data || []); setTraspasos(tr.data || [])
-    setMaquinas(mq.data || [])
+    setMaquinas(mq.data || []); setContenedores(ct.data || [])
     setLoading(false)
   }
 
@@ -176,6 +179,14 @@ export default function MovimientoMaterial() {
         estatus: 'recibido', recibido_por: perfil.id, fecha_recepcion: new Date().toISOString(), ubicacion_destino_id: ubicFinal,
       }).eq('id', traspaso.id)
 
+      // Las cajas y tarimas del lote que estaban en el origen se reubican al destino
+      const enOrigen = contenedores.filter(c => c.lote_id === traspaso.lote_id
+        && c.almacen_id === traspaso.almacen_origen_id
+        && (c.ubicacion_id || null) === (traspaso.ubicacion_origen_id || null))
+      for (const c of enOrigen.filter(x => !x.padre_id)) {
+        await moverContenedor(supabase, c.id, { almacenId: traspaso.almacen_destino_id, ubicacionId: ubicFinal })
+      }
+
       setExito(`Recepcion confirmada en ${almDe(traspaso.almacen_destino_id)?.clave}${ubicFinal ? ' / ' + ubiDe(ubicFinal)?.clave : ''}`)
       setRecepcion(null); await cargar()
     } catch (err) { setError('Error: ' + err.message) }
@@ -219,7 +230,7 @@ export default function MovimientoMaterial() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Movimiento de Material</h2>
-      <p style={styles.ayuda}>El sistema indica el <b>siguiente paso del flujo</b> (almacen y ubicacion): el origen envia y el destino confirma la recepcion. Los pasos marcados exigen la firma del rol configurado para poder avanzar.</p>
+      <p style={styles.ayuda}>El sistema indica el <b>siguiente paso del flujo</b> (almacen y ubicacion): el origen envia y el destino confirma la recepcion. Las cajas y tarimas del lote se reubican solas al confirmar. Los pasos marcados exigen la firma del rol configurado para poder avanzar.</p>
 
       <div style={styles.tabs}>
         {[['enviar', 'Enviar al siguiente paso'], ['recibir', `Por recibir${pendientesRecepcion.length ? ` (${pendientesRecepcion.length})` : ''}`]].map(([id, n]) => (
@@ -261,7 +272,18 @@ export default function MovimientoMaterial() {
                       {almDe(f.almacen_id)?.clave}{f.ubicacion_id ? ` / ${ubiDe(f.ubicacion_id)?.clave}` : ''}
                       {f._paso && <span style={{ display: 'block', color: '#94a3b8', fontSize: '11px' }}>paso {f._idx + 1} de {f._pasos.length}</span>}
                     </span>
-                    <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600' }}>{fmtNum(f.cantidad)}</span>
+                    <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600' }}>
+                      {fmtNum(f.cantidad)}
+                      {(() => {
+                        const aqui = contenedores.filter(c => c.lote_id === f._lote.id && c.almacen_id === f.almacen_id && (c.ubicacion_id || null) === (f.ubicacion_id || null))
+                        const tar = aqui.filter(c => c.tipo === 'tarima').length
+                        const caj = aqui.filter(c => c.tipo === 'caja' && !c.padre_id).length
+                        if (!tar && !caj) return null
+                        return <span style={{ display: 'block', fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>
+                          {tar ? `${tar} tarima(s) ` : ''}{caj ? `${caj} caja(s) libres` : ''}
+                        </span>
+                      })()}
+                    </span>
                     <span style={{ flex: 0.8, textAlign: 'center' }}>
                       <span style={{ ...styles.badge, ...badgeCal(f._lote.estatus_calidad) }}>{f._lote.estatus_calidad}</span>
                     </span>
