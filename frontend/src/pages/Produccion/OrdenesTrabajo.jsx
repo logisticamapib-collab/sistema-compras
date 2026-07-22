@@ -278,7 +278,7 @@ export default function OrdenesTrabajo() {
                 onChange={e => setEtqOT({ ...etqOT, lineas: etqOT.lineas.map((x, j) => j === i ? { ...x, cantidad: e.target.value } : x) })} />
             </div>
           ))}
-          <button style={{ ...styles.boton, marginTop: '8px' }} onClick={() => window.print()}>Imprimir {paraImprimir.length} etiqueta(s)</button>
+          <button style={{ ...styles.boton, marginTop: '8px' }} onClick={imprimirAislado}>Imprimir {paraImprimir.length} etiqueta(s)</button>
         </div>
         <PortalImpresion><div>{paraImprimir.map((d, i) => <EtiquetaOT key={i} datos={d} />)}</div></PortalImpresion>
       </div>
