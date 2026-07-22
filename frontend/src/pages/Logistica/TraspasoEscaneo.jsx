@@ -2,6 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { etiquetaRol } from '../../lib/roles'
+import { folioContenedor } from '../../lib/contenedores'
+import { datosEtiqueta } from '../../lib/etiquetas'
+import EtiquetaProducto from '../../components/EtiquetaProducto'
+import PortalImpresion from '../../components/PortalImpresion'
+import { imprimirAislado } from '../../lib/impresion'
 
 // Traspaso rapido por escaneo:
 //   1) Almacen destino  2) Ubicacion (escanea/teclea)  3) Escanea caja/tarima/lote
@@ -32,6 +37,14 @@ export default function TraspasoEscaneo() {
   const [escaneo, setEscaneo] = useState('')
   const [pendiente, setPendiente] = useState(null)  // item por confirmar
   const [historial, setHistorial] = useState([])
+  const [empresa, setEmpresa] = useState(null)
+  const [cfgEt, setCfgEt] = useState(null)
+  const [artCliente, setArtCliente] = useState([])
+  const [clientes, setClientes] = useState([])
+  const [proveedores, setProveedores] = useState([])
+  const [artProv, setArtProv] = useState([])
+  const [bom, setBom] = useState([])
+  const [etiquetaNueva, setEtiquetaNueva] = useState(null)
   const escaneoRef = useRef(null)
   const cantRef = useRef(null)
 
@@ -39,16 +52,25 @@ export default function TraspasoEscaneo() {
 
   const cargarCatalogos = async () => {
     setLoading(true)
-    const [a, al, ub, ps, at, ta] = await Promise.all([
+    const [a, al, ub, ps, at, ta, emp, cfg, ac, cli, pv, ap, bm] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, flujo_id, origen, es_consigna').eq('empresa_id', perfil.empresa_id),
       supabase.from('almacenes').select('*').eq('activo', true).order('clave'),
       supabase.from('ubicaciones').select('*').eq('activo', true).order('clave'),
       supabase.from('flujo_pasos').select('*').order('secuencia'),
       supabase.from('almacen_tipos').select('*'),
       supabase.from('tipos_almacen').select('*'),
+      supabase.from('empresas').select('*').eq('id', perfil.empresa_id).maybeSingle(),
+      supabase.from('config_etiquetas').select('*').eq('empresa_id', perfil.empresa_id).maybeSingle(),
+      supabase.from('articulo_cliente').select('*').eq('activo', true),
+      supabase.from('clientes').select('id, nombre'),
+      supabase.from('proveedores').select('id, nombre'),
+      supabase.from('articulo_proveedor').select('articulo_id, proveedor_id').eq('activo', true),
+      supabase.from('bom').select('componente_articulo_id'),
     ])
     setArticulos(a.data || []); setAlmacenes(al.data || []); setUbicaciones(ub.data || []); setPasos(ps.data || [])
     setAlmacenTipos(at.data || []); setTiposAlmacen(ta.data || [])
+    setEmpresa(emp.data || null); setCfgEt(cfg.data || null); setArtCliente(ac.data || []); setClientes(cli.data || [])
+    setProveedores(pv.data || []); setArtProv(ap.data || []); setBom(bm.data || [])
     setLoading(false)
   }
 
@@ -180,9 +202,25 @@ export default function TraspasoEscaneo() {
       if (exD) await supabase.from('existencias').update({ cantidad: Number(exD.cantidad) + cant }).eq('id', exD.id)
       else await supabase.from('existencias').insert({ lote_id: p.lote.id, almacen_id: p.destAlm, ubicacion_id: p.destUbi, cantidad: cant })
 
-      // Cajas: solo se mueven completas (si se movio toda la caja/existencia)
+      // Contenedores y etiqueta
       const movioTodo = Math.abs(cant - p.maxCant) < 0.000001
-      if (p.cajasIds.length && movioTodo) await supabase.from('contenedores').update({ almacen_id: p.destAlm, ubicacion_id: p.destUbi }).in('id', p.cajasIds)
+      let cajaNueva = null
+      if (movioTodo && p.cajasIds.length) {
+        // Se movio completo: la(s) caja(s) viajan al destino con su etiqueta original
+        await supabase.from('contenedores').update({ almacen_id: p.destAlm, ubicacion_id: p.destUbi }).in('id', p.cajasIds)
+      } else if (!movioTodo) {
+        // Parcial: se genera una CAJA NUEVA con la cantidad transferida (nueva etiqueta)
+        if (p.esCaja && p.cont) {
+          // La caja de origen se queda con el remanente
+          await supabase.from('contenedores').update({ cantidad: Number(p.cont.cantidad) - cant }).eq('id', p.cont.id)
+        }
+        const folio = await folioContenedor(supabase, perfil.empresa_id, 'caja')
+        const { data: nc } = await supabase.from('contenedores').insert({
+          empresa_id: perfil.empresa_id, folio, tipo: 'caja', articulo_id: p.lote.articulo_id, lote_id: p.lote.id,
+          cantidad: cant, almacen_id: p.destAlm, ubicacion_id: p.destUbi, origen: `Parcial de ${p.cont ? p.cont.folio : p.lote.codigo_lote}`, creado_por: perfil.id,
+        }).select().single()
+        cajaNueva = nc
+      }
 
       await supabase.from('movimientos').insert({
         empresa_id: perfil.empresa_id, articulo_id: p.lote.articulo_id, lote_id: p.lote.id, tipo: 'traspaso',
@@ -190,15 +228,43 @@ export default function TraspasoEscaneo() {
         cantidad: cant, motivo: `Traspaso por escaneo (${p.cont ? p.cont.folio : p.lote.codigo_lote})`, usuario_id: perfil.id,
       })
 
-      setExito(`${p.cont ? p.cont.folio : p.lote.codigo_lote} - ${p.art?.codigo_interno}: ${fmtNum(cant)} ${p.art?.unidad_medida || ''} -> ${almDe(p.destAlm)?.clave}${p.destUbi ? '/' + ubiDe(p.destUbi)?.clave : ''}`)
-      setHistorial(h => [{ ref: p.cont ? p.cont.folio : p.lote.codigo_lote, lote: p.lote.codigo_lote, art: p.art?.codigo_interno, cant, um: p.art?.unidad_medida, destino: `${almDe(p.destAlm)?.clave}${p.destUbi ? '/' + ubiDe(p.destUbi)?.clave : ''}` }, ...h].slice(0, 15))
+      setExito(`${p.cont ? p.cont.folio : p.lote.codigo_lote} - ${p.art?.codigo_interno}: ${fmtNum(cant)} ${p.art?.unidad_medida || ''} -> ${almDe(p.destAlm)?.clave}${p.destUbi ? '/' + ubiDe(p.destUbi)?.clave : ''}${cajaNueva ? `. Nueva caja ${cajaNueva.folio}` : ''}`)
+      setHistorial(h => [{ ref: cajaNueva ? cajaNueva.folio : (p.cont ? p.cont.folio : p.lote.codigo_lote), lote: p.lote.codigo_lote, art: p.art?.codigo_interno, cant, um: p.art?.unidad_medida, destino: `${almDe(p.destAlm)?.clave}${p.destUbi ? '/' + ubiDe(p.destUbi)?.clave : ''}` }, ...h].slice(0, 15))
       setPendiente(null)
+      // Etiqueta de la caja nueva (parcial)
+      if (cajaNueva) {
+        const rel = artCliente.find(x => x.articulo_id === p.lote.articulo_id)
+        const cli = rel ? clientes.find(c => c.id === rel.cliente_id) : null
+        const relP = artProv.find(x => x.articulo_id === p.lote.articulo_id)
+        const prov = relP ? proveedores.find(v => v.id === relP.proveedor_id) : null
+        setEtiquetaNueva(datosEtiqueta({
+          lote: p.lote, articulo: p.art, empresa, cliente: cli || (prov ? { nombre: prov.nombre } : null),
+          codigoCliente: rel?.codigo_cliente || p.art?.codigo_interno, maquina: null, cantidad: cant, bom,
+          contenedor: cajaNueva, qrContenido: cfgEt?.qr_contenido || 'contenedor',
+        }))
+      }
     } catch (err) { setError('Error: ' + err.message) }
     setProcesando(false)
     escaneoRef.current?.focus()
   }
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
+
+  // Etiqueta de la caja nueva generada por un traspaso parcial
+  if (etiquetaNueva) {
+    return (
+      <div style={styles.container} className="aparecer">
+        <style>{`@media print { @page { size: ${cfgEt?.ancho_in || 4}in ${cfgEt?.alto_in || 2}in; margin: 0; } }`}</style>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }} className="no-imprimir">
+          <button style={styles.botonSec} onClick={() => { setEtiquetaNueva(null); escaneoRef.current?.focus() }}>Continuar sin imprimir</button>
+          <button style={styles.boton} onClick={imprimirAislado}>Imprimir etiqueta de la caja nueva</button>
+        </div>
+        <p style={{ ...styles.ayuda }} className="no-imprimir">Se genero una <b>caja nueva</b> ({etiquetaNueva.folio}) para la cantidad transferida. Imprime su etiqueta y pegala a ese material.</p>
+        <EtiquetaProducto datos={etiquetaNueva} config={cfgEt} />
+        <PortalImpresion><EtiquetaProducto datos={etiquetaNueva} config={cfgEt} /></PortalImpresion>
+      </div>
+    )
+  }
 
   return (
     <div style={styles.container} className="aparecer">
