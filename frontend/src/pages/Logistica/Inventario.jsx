@@ -528,7 +528,7 @@ export default function Inventario() {
                             <span style={{ ...styles.badge, ...badgeCal(lote.estatus_calidad) }}>{NOMBRE_CALIDAD[lote.estatus_calidad]}</span>
                           </span>
                           <span style={{ width: '220px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
-                            {puedeTraspaso && <button style={styles.botonAccion} onClick={() => abrirTraspaso(e)}>Traspasar</button>}
+
                             {puedeTraspaso && <button style={styles.botonAccion} onClick={() => { setError(''); setAjuste({ ex: e, signo: '-', cantidad: '', motivo: '' }) }}>Ajustar</button>}
                             {puedeLiberar && lote.estatus_calidad === 'retenido' && (
                               <>
