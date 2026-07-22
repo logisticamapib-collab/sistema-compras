@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { evaluarSemaforo, cargarDatosSemaforo } from '../../lib/semaforo'
 import PortalImpresion from '../../components/PortalImpresion'
+import EtiquetaOT from '../../components/EtiquetaOT'
 import { imprimirAislado } from '../../lib/impresion'
 
 // Ordenes de trabajo.
@@ -41,6 +42,7 @@ export default function OrdenesTrabajo() {
   const [procesando, setProcesando] = useState(false)
   const [detalle, setDetalle] = useState(null)
   const [expandido, setExpandido] = useState(null)
+  const [etqOT, setEtqOT] = useState(null)
   const [fDesde, setFDesde] = useState('')
   const [fHasta, setFHasta] = useState('')
   const [fMaquina, setFMaquina] = useState('')
@@ -172,6 +174,11 @@ export default function OrdenesTrabajo() {
     setProcesando(false)
   }
 
+  const abrirEtiquetasOT = (ot) => {
+    const arts = artsDeOt(ot.id)
+    setEtqOT({ ot, lineas: arts.map(x => ({ articulo: artDe(x.articulo_id), snp: Number(x.piezas_por_caja || 0), cantidad: Number(x.cajas_estimadas || 0) || 1 })) })
+  }
+
   const cambiarEstatus = async (ot, estatus) => {
     setError(''); setExito('')
     const { error: e1 } = await supabase.from('ordenes_trabajo').update({ estatus }).eq('id', ot.id)
@@ -245,6 +252,35 @@ export default function OrdenesTrabajo() {
         </div>
         <PortalImpresion>{hoja}</PortalImpresion>
         <div style={{ backgroundColor: '#fff', borderRadius: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>{hoja}</div>
+      </div>
+    )
+  }
+
+  // Impresion de etiquetas 4x4 de la OT (QR de OT + articulo + SNP) para el operador
+  if (etqOT) {
+    const paraImprimir = []
+    etqOT.lineas.forEach(l => {
+      const n = Math.max(0, Math.round(Number(l.cantidad) || 0))
+      for (let i = 0; i < n; i++) paraImprimir.push({ folioOt: etqOT.ot.folio, codigoArticulo: l.articulo?.codigo_interno || '', snp: l.snp })
+    })
+    return (
+      <div style={styles.container} className="aparecer">
+        <style>{`@media print { @page { size: 4cm 4cm; margin: 0; } }`}</style>
+        <button style={{ ...styles.botonSec, marginBottom: '14px' }} className="no-imprimir" onClick={() => setEtqOT(null)}>&larr; Volver</button>
+        <h3 style={{ ...styles.formTitulo, marginTop: 0 }} className="no-imprimir">Etiquetas QR de {etqOT.ot.folio}</h3>
+        <p style={styles.ayuda} className="no-imprimir">El operador pega una en cada caja al nacer el producto; al escanearla en Reporte de Produccion se selecciona esta OT. Ajusta cuantas imprimir por articulo.</p>
+        <div style={{ ...styles.form, maxWidth: '540px' }} className="no-imprimir">
+          {etqOT.lineas.map((l, i) => (
+            <div key={i} style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '10px' }}>
+              <span style={{ flex: 1, fontSize: '14px' }}><b>{l.articulo?.codigo_interno}</b> <span style={{ color: '#64748b' }}>SNP {fmtNum(l.snp)}</span></span>
+              <label style={{ fontSize: '12px', color: '#444' }}>Etiquetas:</label>
+              <input type="number" min="0" style={{ ...styles.input, width: '90px' }} value={l.cantidad}
+                onChange={e => setEtqOT({ ...etqOT, lineas: etqOT.lineas.map((x, j) => j === i ? { ...x, cantidad: e.target.value } : x) })} />
+            </div>
+          ))}
+          <button style={{ ...styles.boton, marginTop: '8px' }} onClick={() => window.print()}>Imprimir {paraImprimir.length} etiqueta(s)</button>
+        </div>
+        <PortalImpresion><div>{paraImprimir.map((d, i) => <EtiquetaOT key={i} datos={d} />)}</div></PortalImpresion>
       </div>
     )
   }
@@ -486,7 +522,8 @@ export default function OrdenesTrabajo() {
                   <span style={{ flex: 0.9, color: '#64748b', fontSize: '13px' }}>{fmtFecha(o.fecha_programada)} {o.turno}</span>
                   <span style={{ flex: 0.8, textAlign: 'center' }}><span style={{ ...styles.badge, ...badgeEst(o.estatus) }}>{NOMBRE_EST[o.estatus]}</span></span>
                   <span style={{ width: '230px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }} onClick={ev => ev.stopPropagation()}>
-                    <button style={styles.botonAccion} onClick={() => setDetalle(o)}>Imprimir</button>
+                    <button style={styles.botonAccion} onClick={() => setDetalle(o)}>Imprimir OT</button>
+                    <button style={styles.botonAccion} onClick={() => abrirEtiquetasOT(o)}>Etiquetas QR</button>
                     {puedeCrear && o.estatus === 'programada' && <button style={styles.botonAccion} onClick={() => cambiarEstatus(o, 'en_proceso')}>Iniciar</button>}
                     {puedeCrear && o.estatus === 'en_proceso' && <button style={styles.botonAccion} onClick={() => cambiarEstatus(o, 'terminada')}>Terminar</button>}
                     {puedeCrear && ['programada', 'en_proceso'].includes(o.estatus) && <button style={{ ...styles.botonAccion, color: '#dc2626' }} onClick={() => cambiarEstatus(o, 'cancelada')}>Cancelar</button>}

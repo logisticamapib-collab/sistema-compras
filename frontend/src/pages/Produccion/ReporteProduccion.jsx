@@ -38,6 +38,7 @@ export default function ReporteProduccion() {
   const [procesando, setProcesando] = useState(false)
 
   const [otId, setOtId] = useState('')
+  const [escaneoOt, setEscaneoOt] = useState('')
   const [turno, setTurno] = useState('1o')
   const [notas, setNotas] = useState('')
   const [porArt, setPorArt] = useState({}) // { [articuloId]: { ok, codigo_lote, ubicacion_pt_id, scrap: [{causa_id, cantidad}] } }
@@ -81,6 +82,15 @@ export default function ReporteProduccion() {
   }
 
   const ot = ots.find(o => o.id === Number(otId))
+
+  // Escaneo del QR de la OT (folio): selecciona la OT automaticamente
+  const procesarEscaneoOt = (valor) => {
+    const v = (valor || '').trim()
+    if (!v) return
+    const encontrada = ots.find(o => o.folio.toLowerCase() === v.toLowerCase())
+    if (!encontrada) { setError(`No se encontro una OT activa con folio "${v}"`); return }
+    setError(''); setOtId(String(encontrada.id)); setPorArt({}); setEscaneoOt('')
+  }
   const artDe = (id) => articulos.find(a => a.id === id)
   const almDe = (id) => almacenes.find(a => a.id === id)
   const ubiDe = (id) => ubicaciones.find(u => u.id === id)
@@ -388,7 +398,12 @@ export default function ReporteProduccion() {
 
       <div style={styles.form}>
         <div style={styles.fila}>
-          <div style={{ ...styles.campo, flex: 2.5 }}>
+          <div style={{ ...styles.campo, flex: 1.3 }}>
+            <label style={styles.label}>Escanea el QR de la OT</label>
+            <input style={styles.input} value={escaneoOt} onChange={e => setEscaneoOt(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') procesarEscaneoOt(escaneoOt) }} placeholder="Escanea la etiqueta de la caja" autoFocus />
+          </div>
+          <div style={{ ...styles.campo, flex: 2.2 }}>
             <label style={styles.label}>Orden de trabajo *</label>
             <select style={styles.input} value={otId} onChange={e => { setOtId(e.target.value); setPorArt({}); setError('') }}>
               <option value="">Selecciona...</option>
