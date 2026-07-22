@@ -32,6 +32,7 @@ export default function Inventario() {
   const [pasos, setPasos] = useState([])
   const [lotes, setLotes] = useState([])
   const [existencias, setExistencias] = useState([])
+  const [contenedores, setContenedores] = useState([])
   const [movimientos, setMovimientos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -56,13 +57,14 @@ export default function Inventario() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [art, alm, ubi, ps, lot, ex, mov] = await Promise.all([
+    const [art, alm, ubi, ps, lot, ex, mov, ct] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, flujo_id, origen').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
       supabase.from('almacenes').select('*').eq('activo', true).order('clave'),
       supabase.from('ubicaciones').select('*').eq('activo', true).order('clave'),
       supabase.from('flujo_pasos').select('*').order('secuencia'),
       supabase.from('lotes').select('*, liberador:usuarios!lotes_liberado_por_fkey(nombre)'),
       supabase.from('existencias').select('*'),
+      supabase.from('contenedores').select('id, folio, tipo, lote_id, almacen_id, ubicacion_id, cantidad, padre_id').eq('empresa_id', perfil.empresa_id).eq('estatus', 'activo'),
       supabase.from('movimientos').select('*, usuario:usuarios!movimientos_usuario_id_fkey(nombre)').order('fecha', { ascending: false }).limit(200),
     ])
     setArticulos(art.data || [])
@@ -71,6 +73,7 @@ export default function Inventario() {
     setPasos(ps.data || [])
     setLotes(lot.data || [])
     setExistencias(ex.data || [])
+    setContenedores(ct.data || [])
     setMovimientos(mov.data || [])
     setLoading(false)
   }
@@ -524,6 +527,13 @@ export default function Inventario() {
                           <span style={{ flex: 1.3, fontWeight: '600' }}>{lote.codigo_lote}</span>
                           <span style={{ flex: 1.4 }}>{almDe(e.almacen_id)?.clave}{e.ubicacion_id ? ` / ${ubiDe(e.ubicacion_id)?.clave}` : ''}</span>
                           <span style={{ flex: 1, textAlign: 'right', fontWeight: '600' }}>{fmtNum(e.cantidad)}</span>
+                          <span style={{ flex: 1.4, fontSize: '11px', color: '#94a3b8' }}>
+                            {(() => {
+                              const cajas = contenedores.filter(c => c.lote_id === lote.id && c.almacen_id === e.almacen_id && (c.ubicacion_id || null) === (e.ubicacion_id || null) && !c.padre_id)
+                              if (!cajas.length) return null
+                              return cajas.slice(0, 4).map(c => c.folio).join(', ') + (cajas.length > 4 ? ` +${cajas.length - 4}` : '')
+                            })()}
+                          </span>
                           <span style={{ flex: 1, textAlign: 'center' }}>
                             <span style={{ ...styles.badge, ...badgeCal(lote.estatus_calidad) }}>{NOMBRE_CALIDAD[lote.estatus_calidad]}</span>
                           </span>

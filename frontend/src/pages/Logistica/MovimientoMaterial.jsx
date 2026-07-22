@@ -95,6 +95,7 @@ export default function MovimientoMaterial() {
       return { ...e, _lote: lote, _art: art, _pasos: ps, _paso: paso, _siguiente: siguiente, _idx: idx, _esUltimo: idx >= 0 && idx === ps.length - 1 }
     })
     .filter(e => e._lote && e._art)
+    .filter(e => e._art.flujo_id)  // solo fabricados con flujo; comprados/consigna se mueven en Traspaso por Escaneo
     .filter(e => {
       if (!texto) return true
       const t = texto.toLowerCase()
@@ -230,7 +231,7 @@ export default function MovimientoMaterial() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Movimiento de Material</h2>
-      <p style={styles.ayuda}>El sistema indica el <b>siguiente paso del flujo</b> (almacen y ubicacion): el origen envia y el destino confirma la recepcion. Las cajas y tarimas del lote se reubican solas al confirmar. Los pasos marcados exigen la firma del rol configurado para poder avanzar.</p>
+      <p style={styles.ayuda}>Solo material <b>fabricado con flujo</b> (la MP y comprados se mueven en Traspaso por Escaneo). El sistema indica el <b>siguiente paso</b>: el origen envia y el destino confirma la recepcion; las cajas se reubican al confirmar. Los pasos marcados exigen la firma del rol configurado para poder avanzar.</p>
 
       <div style={styles.tabs}>
         {[['enviar', 'Enviar al siguiente paso'], ['recibir', `Por recibir${pendientesRecepcion.length ? ` (${pendientesRecepcion.length})` : ''}`]].map(([id, n]) => (
@@ -275,12 +276,10 @@ export default function MovimientoMaterial() {
                     <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600' }}>
                       {fmtNum(f.cantidad)}
                       {(() => {
-                        const aqui = contenedores.filter(c => c.lote_id === f._lote.id && c.almacen_id === f.almacen_id && (c.ubicacion_id || null) === (f.ubicacion_id || null))
-                        const tar = aqui.filter(c => c.tipo === 'tarima').length
-                        const caj = aqui.filter(c => c.tipo === 'caja' && !c.padre_id).length
-                        if (!tar && !caj) return null
+                        const aqui = contenedores.filter(c => c.lote_id === f._lote.id && c.almacen_id === f.almacen_id && (c.ubicacion_id || null) === (f.ubicacion_id || null) && !c.padre_id)
+                        if (!aqui.length) return null
                         return <span style={{ display: 'block', fontSize: '11px', color: '#94a3b8', fontWeight: '400' }}>
-                          {tar ? `${tar} tarima(s) ` : ''}{caj ? `${caj} caja(s) libres` : ''}
+                          {aqui.slice(0, 4).map(c => c.folio).join(', ')}{aqui.length > 4 ? ` +${aqui.length - 4}` : ''}
                         </span>
                       })()}
                     </span>
