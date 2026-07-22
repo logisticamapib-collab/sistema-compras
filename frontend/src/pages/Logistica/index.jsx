@@ -11,6 +11,7 @@ import Recibos from './Recibos'
 import AutorizacionesConsigna from './AutorizacionesConsigna'
 import Embarques from './Embarques'
 import MovimientoMaterial from './MovimientoMaterial'
+import TraspasoEscaneo from './TraspasoEscaneo'
 import Contenedores from './Contenedores'
 
 const secciones = [
@@ -18,6 +19,7 @@ const secciones = [
   { id: 'flujos', modulo: 'log_flujos', titulo: 'Flujos de Almacen' },
   { id: 'recibos', modulo: 'log_recibos', titulo: 'Recibos' },
   { id: 'movimiento', modulo: 'log_movimiento', titulo: 'Movimiento de Material' },
+  { id: 'traspaso_escaneo', modulo: 'log_movimiento', titulo: 'Traspaso por Escaneo' },
   { id: 'contenedores', modulo: 'log_contenedores', titulo: 'Cajas y Tarimas' },
   { id: 'inventario', modulo: 'log_inventario', titulo: 'Inventario' },
   { id: 'consultas', modulo: 'log_consultas', titulo: 'Consultas de Inventario' },
@@ -54,6 +56,7 @@ export default function GrupoLogistica() {
         {seccion === 'flujos' && <FlujosAlmacen />}
         {seccion === 'recibos' && <Recibos />}
         {seccion === 'movimiento' && <MovimientoMaterial />}
+        {seccion === 'traspaso_escaneo' && <TraspasoEscaneo />}
         {seccion === 'contenedores' && <Contenedores />}
         {seccion === 'inventario' && <Inventario />}
         {seccion === 'consultas' && <ConsultasInventario />}
