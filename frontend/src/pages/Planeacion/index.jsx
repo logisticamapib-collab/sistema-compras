@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import ParametrosMRP from './ParametrosMRP'
+import CorrerMRP from './CorrerMRP'
 
 const secciones = [
+  { id: 'correr', modulo: 'plan_correr', titulo: 'Correr MRP' },
   { id: 'parametros', modulo: 'plan_parametros', titulo: 'Parametros MRP' },
 ]
 
@@ -26,6 +28,7 @@ export default function GrupoPlaneacion() {
       </div>
       <div style={styles.contenido}>
         {seccionesVisibles.length === 0 && <p style={{ color: '#666', padding: '28px' }}>Tu rol no tiene ninguna seccion de Planeacion habilitada.</p>}
+        {seccion === 'correr' && <div style={{ padding: '28px' }}><CorrerMRP /></div>}
         {seccion === 'parametros' && <div style={{ padding: '28px' }}><ParametrosMRP /></div>}
       </div>
     </div>
