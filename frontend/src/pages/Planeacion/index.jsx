@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import ParametrosMRP from './ParametrosMRP'
 import CorrerMRP from './CorrerMRP'
+import BandejaMRP from './BandejaMRP'
 
 const secciones = [
   { id: 'correr', modulo: 'plan_correr', titulo: 'Correr MRP' },
+  { id: 'ordenes', modulo: 'plan_ordenes', titulo: 'Ordenes planeadas' },
   { id: 'parametros', modulo: 'plan_parametros', titulo: 'Parametros MRP' },
 ]
 
@@ -29,6 +31,7 @@ export default function GrupoPlaneacion() {
       <div style={styles.contenido}>
         {seccionesVisibles.length === 0 && <p style={{ color: '#666', padding: '28px' }}>Tu rol no tiene ninguna seccion de Planeacion habilitada.</p>}
         {seccion === 'correr' && <div style={{ padding: '28px' }}><CorrerMRP /></div>}
+        {seccion === 'ordenes' && <div style={{ padding: '28px' }}><BandejaMRP /></div>}
         {seccion === 'parametros' && <div style={{ padding: '28px' }}><ParametrosMRP /></div>}
       </div>
     </div>
