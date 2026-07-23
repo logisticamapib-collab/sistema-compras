@@ -21,6 +21,7 @@ const formVacio = {
   retencion_iva: 0,
   origen: 'comprado', es_consigna: false,
   lead_time_dias: '', moq: '', tiempo_transito_dias: '', stock_minimo: '', snp: '',
+  dias_inventario_seguridad: '', multiplo_lote: '',
   tipo_proceso: 'solo_inyeccion', articulo_wip_origen_id: '',
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
@@ -108,6 +109,8 @@ export default function Articulos() {
       tiempo_transito_dias: articulo.tiempo_transito_dias ?? '',
       stock_minimo: articulo.stock_minimo ?? '',
       snp: articulo.snp ?? '',
+      dias_inventario_seguridad: articulo.dias_inventario_seguridad ?? '',
+      multiplo_lote: articulo.multiplo_lote ?? '',
       tipo_proceso: articulo.tipo_proceso || 'solo_inyeccion',
       articulo_wip_origen_id: articulo.articulo_wip_origen_id?.toString() || '',
       peso_pieza_g: articulo.peso_pieza_g ?? '',
@@ -155,6 +158,8 @@ export default function Articulos() {
       tiempo_transito_dias: !esFabricado && form.tiempo_transito_dias !== '' ? parseInt(form.tiempo_transito_dias) : 0,
       stock_minimo: form.stock_minimo !== '' ? parseFloat(form.stock_minimo) : 0,
       snp: form.snp !== '' ? parseFloat(form.snp) : 0,
+      dias_inventario_seguridad: form.dias_inventario_seguridad !== '' ? parseFloat(form.dias_inventario_seguridad) : 0,
+      multiplo_lote: form.multiplo_lote !== '' ? parseFloat(form.multiplo_lote) : 0,
       tipo_proceso: esFabricado ? form.tipo_proceso : null,
       articulo_wip_origen_id: esFabricado && form.articulo_wip_origen_id ? parseInt(form.articulo_wip_origen_id) : null,
       peso_pieza_g: esFabricado && form.peso_pieza_g !== '' ? parseFloat(form.peso_pieza_g) : null,
@@ -502,6 +507,16 @@ export default function Articulos() {
                   <input style={styles.input} type="number" min="0" step="0.01" value={form.snp}
                     onChange={e => setForm({ ...form, snp: e.target.value })} placeholder="0" />
                 </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Dias de inventario de seguridad</label>
+                  <input style={styles.input} type="number" min="0" step="0.01" value={form.dias_inventario_seguridad}
+                    onChange={e => setForm({ ...form, dias_inventario_seguridad: e.target.value })} placeholder="0 = usa politica del grupo" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Multiplo de lote</label>
+                  <input style={styles.input} type="number" min="0" step="0.01" value={form.multiplo_lote}
+                    onChange={e => setForm({ ...form, multiplo_lote: e.target.value })} placeholder="0 = usa MOQ" />
+                </div>
               </div>
             </>
           )}
@@ -535,6 +550,16 @@ export default function Articulos() {
                   <label style={styles.label}>Stock minimo (alerta)</label>
                   <input style={styles.input} type="number" min="0" step="0.01" value={form.stock_minimo}
                     onChange={e => setForm({ ...form, stock_minimo: e.target.value })} placeholder="0" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Dias de inventario de seguridad</label>
+                  <input style={styles.input} type="number" min="0" step="0.01" value={form.dias_inventario_seguridad}
+                    onChange={e => setForm({ ...form, dias_inventario_seguridad: e.target.value })} placeholder="0 = usa politica del grupo" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Multiplo de lote (OT)</label>
+                  <input style={styles.input} type="number" min="0" step="0.01" value={form.multiplo_lote}
+                    onChange={e => setForm({ ...form, multiplo_lote: e.target.value })} placeholder="0" />
                 </div>
               </div>
 
