@@ -16,6 +16,7 @@ const EXC_LABEL = { nuevo: 'Nuevo pedido', adelantar: 'Adelantar', diferir: 'Dif
 const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })
 const fechaCorta = (s) => { if (!s) return '-'; const p = String(s).split('-'); return `${p[2]}/${p[1]}` }
 const fechaLarga = (s) => { if (!s) return '-'; const p = String(s).split('-'); return `${p[2]}/${p[1]}/${p[0]}` }
+const fechaHora = (ts) => { if (!ts) return '-'; const d = new Date(ts); const z = n => String(n).padStart(2,'0'); return `${z(d.getDate())}/${z(d.getMonth()+1)} ${z(d.getHours())}:${z(d.getMinutes())}` }
 
 export default function CorrerMRP() {
   const { perfil, tienePermiso } = useAuth()
@@ -64,6 +65,23 @@ export default function CorrerMRP() {
     if (cab) setCorridaSel(cab)
     const arts = [...new Set((data || []).map(r => r.articulo_id))]
     setExpandido(arts[0] ?? null)
+  }
+
+  const puedeBorrar = tienePermiso('plan_correr', 'crear')
+
+  const borrarCorrida = async (id) => {
+    if (!window.confirm(`Borrar la corrida #${id}?`)) return
+    await supabase.from('mrp_corridas').delete().eq('id', id)
+    if (corridaSel?.id === id) { setCorridaSel(null); setResultados([]) }
+    await cargarCorridas()
+  }
+
+  const limpiarAntiguas = async () => {
+    const d = new Date(); const day = (d.getDay() + 6) % 7
+    const lunes = new Date(d); lunes.setDate(d.getDate() - day); lunes.setHours(0, 0, 0, 0)
+    if (!window.confirm('Borrar todas las corridas anteriores a esta semana?')) return
+    await supabase.from('mrp_corridas').delete().eq('empresa_id', perfil.empresa_id).lt('fecha_corrida', lunes.toISOString())
+    await cargarCorridas()
   }
 
   const correr = async () => {
@@ -148,15 +166,25 @@ export default function CorrerMRP() {
 
       {/* Corridas recientes */}
       <div style={styles.tarjeta}>
-        <h3 style={styles.tarjetaTitulo}>Corridas recientes</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h3 style={{ ...styles.tarjetaTitulo, margin: 0 }}>Corridas recientes</h3>
+          {puedeBorrar && corridas.length > 0 && (
+            <button style={styles.botonLimpiar} onClick={limpiarAntiguas}>Borrar semanas anteriores</button>
+          )}
+        </div>
         {corridas.length === 0 ? <p style={{ color: '#666', fontSize: '13px' }}>Aun no hay corridas. Ejecuta una arriba.</p> : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          <div>
             {corridas.map(c => (
-              <button key={c.id}
-                onClick={() => seleccionarCorrida(c.id)}
-                style={corridaSel?.id === c.id ? styles.chipActivo : styles.chip}>
-                #{c.id} · {c.alcance_tipo}{c.alcance_ref ? `(${c.alcance_ref})` : ''} · {c.ordenes_sugeridas} ord
-              </button>
+              <div key={c.id} style={corridaSel?.id === c.id ? styles.corridaFilaActiva : styles.corridaFila}>
+                <button onClick={() => seleccionarCorrida(c.id)} style={styles.corridaBtn}>
+                  <span style={{ fontWeight: '700', color: '#7c3aed', minWidth: '36px' }}>#{c.id}</span>
+                  <span style={{ color: '#334155', minWidth: '96px' }}>{fechaHora(c.fecha_corrida)}</span>
+                  <span style={{ color: '#64748b', flex: 1 }}>{c.usuario_nombre || 'sistema'}</span>
+                  <span style={{ color: '#64748b', minWidth: '120px' }}>{c.alcance_tipo}{c.alcance_ref ? `(${c.alcance_ref})` : ''}</span>
+                  <span style={{ color: '#334155', minWidth: '60px', textAlign: 'right' }}>{c.ordenes_sugeridas} ord</span>
+                </button>
+                {puedeBorrar && <button title="Borrar corrida" style={styles.borrarBtn} onClick={() => borrarCorrida(c.id)}>✕</button>}
+              </div>
             ))}
           </div>
         )}
@@ -282,6 +310,11 @@ const styles = {
   boton: { padding: '9px 22px', backgroundColor: '#9333ea', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   chip: { padding: '7px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '7px', fontSize: '12px', cursor: 'pointer' },
   chipActivo: { padding: '7px 12px', backgroundColor: '#faf5ff', color: '#7c3aed', border: '1px solid #d8b4fe', borderRadius: '7px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' },
+  botonLimpiar: { padding: '6px 12px', backgroundColor: '#fff', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: '7px', fontSize: '12px', cursor: 'pointer' },
+  corridaFila: { display: 'flex', alignItems: 'center', borderBottom: '1px solid #f1f5f9' },
+  corridaFilaActiva: { display: 'flex', alignItems: 'center', borderBottom: '1px solid #f1f5f9', backgroundColor: '#faf5ff' },
+  corridaBtn: { display: 'flex', alignItems: 'center', gap: '14px', flex: 1, padding: '10px 8px', background: 'transparent', border: 'none', textAlign: 'left', cursor: 'pointer', fontSize: '12px' },
+  borrarBtn: { padding: '6px 10px', background: 'transparent', border: 'none', color: '#cbd5e1', cursor: 'pointer', fontSize: '14px' },
   resumen: { display: 'flex', gap: '20px', flexWrap: 'wrap', padding: '12px 20px', backgroundColor: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: '8px', marginBottom: '16px', fontSize: '13px', color: '#475569' },
   thOrden: { display: 'flex', padding: '8px 12px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   trOrden: { display: 'flex', padding: '10px 12px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '13px' },
