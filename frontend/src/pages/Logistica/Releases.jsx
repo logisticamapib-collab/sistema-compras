@@ -361,6 +361,25 @@ export default function Releases() {
         }
       }
 
+      // Bitacora de cambios para KPI (origen excel), por fecha con delta != 0
+      const cambios = []
+      for (const d of diff) {
+        for (const det of d.detalle) {
+          if (Number(det.delta) === 0) continue
+          const nl = insertadas.find(n => n.articulo_id === d.articulo_id && n.fecha_requerida === det.fecha)
+          const tipo = det.anterior === 0 && det.nueva > 0 ? 'alta'
+            : det.nueva === 0 ? 'cancelacion'
+            : det.nueva > det.anterior ? 'incremento' : 'decremento'
+          cambios.push({
+            empresa_id: perfil.empresa_id, release_linea_id: nl?.id || null, articulo_id: d.articulo_id,
+            cliente_id: Number(clienteId), fecha_requerida: det.fecha, tipo,
+            cantidad_anterior: det.anterior, cantidad_nueva: det.nueva, delta: det.delta, origen: 'excel',
+            motivo: (confirmaciones[d.articulo_id]?.justificacion || '').trim() || `Carga #${carga.id}`, usuario_id: perfil.id,
+          })
+        }
+      }
+      if (cambios.length > 0) await supabase.from('release_cambios').insert(cambios)
+
       setExito(`Release cargado: ${lineasNuevas.length} lineas (${reemplazadas.length} reemplazadas con entregas heredadas, ${lineasNuevas.length - reemplazadas.length} nuevas${conHallazgos.length > 0 ? `, ${conHallazgos.length} articulo(s) con hallazgos confirmados` : ''})`)
       setLineasNuevas([]); setErroresArchivo([]); setArchivoNombre(''); setNotas(''); setDetalleDiff(null); setConfirmaciones({})
       await cargarDatos()
