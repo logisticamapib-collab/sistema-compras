@@ -3,10 +3,12 @@ import { useAuth } from '../../context/AuthContext'
 import OrdenesTrabajo from './OrdenesTrabajo'
 import ReporteProduccion from './ReporteProduccion'
 import CatalogosProduccion from './Catalogos'
+import ProgramacionProduccion from './ProgramacionProduccion'
 
 const secciones = [
   { id: 'ordenes', modulo: 'prod_ordenes', titulo: 'Ordenes de Trabajo' },
   { id: 'reporte', modulo: 'prod_reportes', titulo: 'Reporte de Produccion' },
+  { id: 'programa', modulo: 'prod_programa', titulo: 'Programacion' },
   { id: 'catalogos', modulo: 'prod_catalogos', titulo: 'Catalogos' },
 ]
 
@@ -32,6 +34,7 @@ export default function GrupoProduccion() {
         {seccionesVisibles.length === 0 && <p style={{ color: '#666', padding: '28px' }}>Tu rol no tiene ninguna seccion de Produccion habilitada.</p>}
         {seccion === 'ordenes' && <OrdenesTrabajo />}
         {seccion === 'reporte' && <ReporteProduccion />}
+        {seccion === 'programa' && <ProgramacionProduccion />}
         {seccion === 'catalogos' && <CatalogosProduccion />}
       </div>
     </div>
