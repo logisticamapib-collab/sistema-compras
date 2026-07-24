@@ -10,7 +10,8 @@ const fFecha = (s) => { if (!s) return '-'; const p = String(s).split('-'); retu
 const ceilDiv = (a, b) => (b > 0 ? Math.ceil(a / b) : null)
 
 export default function ListaEmbarque() {
-  const { perfil } = useAuth()
+  const { perfil, tienePermiso } = useAuth()
+  const puedeGenerar = tienePermiso('log_embarques', 'crear')
   const [clientes, setClientes] = useState([])
   const [desde, setDesde] = useState(hoyISO())
   const [hasta, setHasta] = useState(addD(hoyISO(), 14))
@@ -19,7 +20,10 @@ export default function ListaEmbarque() {
   const [normas, setNormas] = useState({})
   const [fifo, setFifo] = useState({})
   const [expo, setExpo] = useState(null)
+  const [sel, setSel] = useState(new Set())
   const [cargando, setCargando] = useState(false)
+  const [genMsg, setGenMsg] = useState('')
+  const [error, setError] = useState('')
 
   useEffect(() => { base() }, [])
 
@@ -31,20 +35,18 @@ export default function ListaEmbarque() {
   }
 
   const cargar = async () => {
-    setCargando(true)
+    setCargando(true); setSel(new Set()); setGenMsg(''); setError('')
     const [{ data: rl }, { data: ne }, { data: ex }] = await Promise.all([
       supabase.from('release_lineas').select('id, articulo_id, cliente_id, oc_cliente, fecha_requerida, cantidad, tipo, articulos(codigo_interno, descripcion, snp), release_entregas(cantidad)').eq('vigente', true),
       supabase.from('normas_empaque').select('articulo_id, piezas_por_empaque, piezas_por_tarima').eq('tipo', 'oficial').eq('activa', true),
       supabase.from('existencias').select('cantidad, almacen_id, lote:lotes(id, codigo_lote, articulo_id, fecha, estatus_calidad)'),
     ])
-    const nm = {}
-    ;(ne || []).forEach(n => { if (!nm[n.articulo_id]) nm[n.articulo_id] = n })
-    setNormas(nm)
+    const nm = {}; (ne || []).forEach(n => { if (!nm[n.articulo_id]) nm[n.articulo_id] = n }); setNormas(nm)
     const ff = {}
     ;(ex || []).forEach(e => {
       const l = e.lote
       if (!l || l.estatus_calidad !== 'liberado') return
-      ;(ff[l.articulo_id] = ff[l.articulo_id] || []).push({ codigo: l.codigo_lote, fecha: l.fecha, cantidad: Number(e.cantidad), almacen_id: e.almacen_id })
+      ;(ff[l.articulo_id] = ff[l.articulo_id] || []).push({ codigo: l.codigo_lote, fecha: l.fecha, cantidad: Number(e.cantidad) })
     })
     Object.values(ff).forEach(arr => arr.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha))))
     setFifo(ff)
@@ -64,16 +66,49 @@ export default function ListaEmbarque() {
   const enrich = (l) => {
     const n = normas[l.articulo_id] || {}
     const snp = Number(l.articulos?.snp) > 0 ? Number(l.articulos.snp) : (n.piezas_por_empaque || 0)
+    const dispFifo = (fifo[l.articulo_id] || []).reduce((s, x) => s + x.cantidad, 0)
     return {
-      ...l,
-      snp,
+      ...l, snp,
       cajas: ceilDiv(l.pendiente, n.piezas_por_empaque || 0),
       tarimas: ceilDiv(l.pendiente, n.piezas_por_tarima || 0),
-      vencida: l.fecha_requerida < hoy,
-      fuera: l.fecha_requerida < desde,
+      vencida: l.fecha_requerida < hoy, fuera: l.fecha_requerida < desde,
+      dispFifo, suficiente: dispFifo >= l.pendiente,
     }
   }
   const rows = filas.map(enrich)
+
+  const toggle = (id) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s) }
+  const toggleAll = () => setSel(sel.size === rows.length ? new Set() : new Set(rows.map(r => r.id)))
+
+  const generar = async () => {
+    setError(''); setGenMsg('')
+    const elegidas = rows.filter(r => sel.has(r.id))
+    if (elegidas.length === 0) { setError('Selecciona al menos una linea.'); return }
+    // agrupar por cliente -> un embarque por cliente
+    const porCliente = {}
+    elegidas.forEach(r => { (porCliente[r.cliente_id] = porCliente[r.cliente_id] || []).push(r) })
+    const folios = []
+    try {
+      let i = 0
+      for (const cid of Object.keys(porCliente)) {
+        const folio = `EMB-${Date.now().toString().slice(-7)}${i++}`
+        const { data: emb, error: e1 } = await supabase.from('embarques').insert({
+          empresa_id: perfil.empresa_id, folio, cliente_id: Number(cid), site_id: perfil.site_id,
+          fecha: hoy, estatus: 'preparando', creado_por: perfil.id,
+        }).select().single()
+        if (e1) throw e1
+        const obj = porCliente[cid].map(r => ({
+          embarque_id: emb.id, release_linea_id: r.id, articulo_id: r.articulo_id,
+          oc_cliente: r.oc_cliente || null, cantidad_requerida: r.pendiente, fecha_requerida: r.fecha_requerida,
+        }))
+        const { error: e2 } = await supabase.from('embarque_objetivo').insert(obj)
+        if (e2) throw e2
+        folios.push(folio)
+      }
+      setGenMsg(`Orden(es) de embarque generada(s): ${folios.join(', ')}. Ve a "Preparar Embarque" e ingresa el folio para escanear.`)
+      setSel(new Set())
+    } catch (e) { setError('Error al generar: ' + (e.message || e)) }
+  }
 
   const exportarExcel = () => {
     const data = rows.map(r => ({
@@ -94,6 +129,7 @@ export default function ListaEmbarque() {
       <div style={styles.head} className="no-imprimir">
         <h2 style={styles.titulo}>Lista de Embarque</h2>
         <div style={{ display: 'flex', gap: '8px' }}>
+          {puedeGenerar && sel.size > 0 && <button style={styles.btnGen} onClick={generar}>Generar orden de embarque ({sel.size})</button>}
           <button style={styles.btnSec} onClick={() => window.print()}>Imprimir / PDF</button>
           <button style={styles.btn} onClick={exportarExcel}>Exportar Excel</button>
         </div>
@@ -110,15 +146,18 @@ export default function ListaEmbarque() {
         <button style={{ ...styles.btnSec, alignSelf: 'flex-end' }} onClick={cargar}>{cargando ? '...' : 'Actualizar'}</button>
       </div>
 
+      {error && <p style={styles.error}>{error}</p>}
+      {genMsg && <p style={styles.exito}>{genMsg}</p>}
       {vencidasFuera.length > 0 && (
         <p style={styles.avisoVenc}>
           Atencion: hay <strong>{vencidasFuera.filter(filtroCli).length}</strong> orden(es) <strong>vencidas fuera del rango</strong>.
-          Se incluyen igual en el reporte (marcadas). Favor de cerrarlas o embarcarlas.
+          Se incluyen igual (marcadas). Favor de cerrarlas o embarcarlas.
         </p>
       )}
 
       <div style={styles.tabla}>
         <div style={styles.th}>
+          <span style={{ width: '30px' }} className="no-imprimir"><input type="checkbox" checked={sel.size === rows.length && rows.length > 0} onChange={toggleAll} /></span>
           <span style={{ flex: 1.4 }}>Articulo</span>
           <span style={{ flex: 2 }}>Descripcion</span>
           <span style={{ flex: 1 }}>OC cliente</span>
@@ -131,9 +170,9 @@ export default function ListaEmbarque() {
         {rows.length === 0 && <p style={{ padding: '20px', color: '#666' }}>Sin ordenes pendientes en el rango.</p>}
         {rows.map(r => (
           <div key={r.id}>
-            <div style={{ ...styles.tr, backgroundColor: r.vencida ? '#fef2f2' : r.fuera ? '#fffbeb' : '#fff' }}
-              onClick={() => setExpo(expo === r.id ? null : r.id)}>
-              <span style={{ flex: 1.4, fontWeight: '600' }}>{expo === r.id ? '▾' : '▸'} {r.articulos?.codigo_interno}</span>
+            <div style={{ ...styles.tr, backgroundColor: sel.has(r.id) ? '#ecfeff' : r.vencida ? '#fef2f2' : r.fuera ? '#fffbeb' : '#fff' }}>
+              <span style={{ width: '30px' }} className="no-imprimir"><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></span>
+              <span style={{ flex: 1.4, fontWeight: '600', cursor: 'pointer' }} onClick={() => setExpo(expo === r.id ? null : r.id)}>{expo === r.id ? '▾' : '▸'} {r.articulos?.codigo_interno}</span>
               <span style={{ flex: 2, color: '#475569' }}>{r.articulos?.descripcion}</span>
               <span style={{ flex: 1 }}>{r.oc_cliente || '-'}</span>
               <span style={{ flex: 0.7, textAlign: 'right' }}>{fmt(r.snp)}</span>
@@ -146,7 +185,9 @@ export default function ListaEmbarque() {
             </div>
             {expo === r.id && (
               <div style={styles.detalle}>
-                <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Lotes disponibles (FIFO, mas viejo primero):</div>
+                <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>
+                  Lotes disponibles (FIFO) — disponible {fmt(r.dispFifo)} de {fmt(r.pendiente)} {r.suficiente ? '' : '(INSUFICIENTE)'}:
+                </div>
                 {(fifo[r.articulo_id] || []).length === 0 && <div style={{ fontSize: '12px', color: '#dc2626' }}>Sin inventario liberado (aun en produccion).</div>}
                 {(fifo[r.articulo_id] || []).map((lt, i) => (
                   <div key={i} style={styles.lote}>
@@ -172,11 +213,14 @@ const styles = {
   lbl: { fontSize: '12px', fontWeight: '500', color: '#444' },
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none' },
   btn: { padding: '9px 18px', backgroundColor: '#0891b2', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: '500', cursor: 'pointer' },
+  btnGen: { padding: '9px 18px', backgroundColor: '#7c3aed', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' },
   btnSec: { padding: '9px 16px', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' },
   avisoVenc: { backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginBottom: '14px' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
-  th: { display: 'flex', padding: '10px 14px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
-  tr: { display: 'flex', padding: '11px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '13px', cursor: 'pointer' },
+  th: { display: 'flex', padding: '10px 14px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', alignItems: 'center' },
+  tr: { display: 'flex', padding: '11px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '13px' },
   detalle: { padding: '10px 14px 14px 30px', backgroundColor: '#f8fafc', borderBottom: '1px solid #f1f5f9' },
   lote: { display: 'flex', fontSize: '12px', padding: '4px 0', borderBottom: '1px solid #eef2f7' },
+  error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
+  exito: { color: '#16a34a', fontSize: '13px', marginBottom: '12px' },
 }
