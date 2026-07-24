@@ -12,6 +12,7 @@ import AutorizacionesConsigna from './AutorizacionesConsigna'
 import Embarques from './Embarques'
 import ListaEmbarque from './ListaEmbarque'
 import EmbarquePreparar from './EmbarquePreparar'
+import ReportesLogistica from './ReportesLogistica'
 import MovimientoMaterial from './MovimientoMaterial'
 import TraspasoEscaneo from './TraspasoEscaneo'
 import Contenedores from './Contenedores'
@@ -25,6 +26,7 @@ const secciones = [
   { id: 'contenedores', modulo: 'log_contenedores', titulo: 'Cajas y Tarimas' },
   { id: 'inventario', modulo: 'log_inventario', titulo: 'Inventario' },
   { id: 'consultas', modulo: 'log_consultas', titulo: 'Consultas de Inventario' },
+  { id: 'reportes', modulo: 'log_consultas', titulo: 'Reportes / KPIs' },
   { id: 'embarques', modulo: 'log_embarques', titulo: 'Embarques' },
   { id: 'lista_embarque', modulo: 'log_embarques', titulo: 'Lista de Embarque' },
   { id: 'preparar_embarque', modulo: 'log_embarques', titulo: 'Preparar Embarque' },
@@ -64,6 +66,7 @@ export default function GrupoLogistica() {
         {seccion === 'contenedores' && <Contenedores />}
         {seccion === 'inventario' && <Inventario />}
         {seccion === 'consultas' && <ConsultasInventario />}
+        {seccion === 'reportes' && <ReportesLogistica />}
         {seccion === 'embarques' && <Embarques />}
         {seccion === 'lista_embarque' && <ListaEmbarque />}
         {seccion === 'preparar_embarque' && <EmbarquePreparar />}
