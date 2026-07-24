@@ -71,6 +71,7 @@ export default function Releases() {
   const [filtroCliente, setFiltroCliente] = useState('')
   const [filtroEstatus, setFiltroEstatus] = useState('pendientes')
   const [expandido, setExpandido] = useState(null)
+  const [editForm, setEditForm] = useState(null)
 
   // Registro de entrega
   const [entregaForm, setEntregaForm] = useState(null) // { lineaId, cantidad, fecha, referencia }
@@ -381,6 +382,37 @@ export default function Releases() {
     XLSX.writeFile(wb, 'plantilla_release.xlsx')
   }
 
+  const guardarEdicionLinea = async (l) => {
+    const nueva = parseFloat(editForm.cantidad)
+    if (isNaN(nueva) || nueva < 0) { alert('Cantidad invalida'); return }
+    if (nueva < l.entregado) { alert(`No puede ser menor a lo ya entregado (${fmtNum(l.entregado)}).`); return }
+    const anterior = Number(l.cantidad)
+    if (nueva !== anterior) {
+      const { error } = await supabase.from('release_lineas').update({ cantidad: nueva }).eq('id', l.id)
+      if (error) { alert(error.message); return }
+      await supabase.from('release_cambios').insert({
+        empresa_id: perfil.empresa_id, release_linea_id: l.id, articulo_id: l.articulo_id, cliente_id: l.cliente_id,
+        fecha_requerida: l.fecha_requerida, tipo: nueva > anterior ? 'incremento' : 'decremento',
+        cantidad_anterior: anterior, cantidad_nueva: nueva, delta: nueva - anterior, origen: 'manual',
+        motivo: editForm.motivo || null, usuario_id: perfil.id,
+      })
+    }
+    setEditForm(null); await cargarDatos()
+  }
+
+  const eliminarLinea = async (l) => {
+    if (l.entregado > 0) { alert('La linea tiene entregas; ajusta la cantidad para cerrarla en vez de eliminarla.'); return }
+    if (!window.confirm(`Eliminar la linea del ${fmtFecha(l.fecha_requerida)} (${fmtNum(l.cantidad)})?`)) return
+    const { error } = await supabase.from('release_lineas').update({ vigente: false }).eq('id', l.id)
+    if (error) { alert(error.message); return }
+    await supabase.from('release_cambios').insert({
+      empresa_id: perfil.empresa_id, release_linea_id: l.id, articulo_id: l.articulo_id, cliente_id: l.cliente_id,
+      fecha_requerida: l.fecha_requerida, tipo: 'cancelacion', cantidad_anterior: Number(l.cantidad), cantidad_nueva: 0,
+      delta: -Number(l.cantidad), origen: 'manual', motivo: editForm?.motivo || 'Eliminada manualmente', usuario_id: perfil.id,
+    })
+    setEditForm(null); await cargarDatos()
+  }
+
   // ---------- Vista de vigentes: filtros, agrupacion y export ----------
   const lineasFiltradas = vigentes
     .filter(v => !filtroCliente || v.cliente_id === Number(filtroCliente))
@@ -676,7 +708,7 @@ export default function Releases() {
                           <span style={{ flex: 1, textAlign: 'right' }}>Pendiente</span>
                           <span style={{ flex: 0.8, textAlign: 'center' }}>Tipo</span>
                           <span style={{ flex: 1, textAlign: 'center' }}>Estatus</span>
-                          <span style={{ width: '95px' }}></span>
+                          <span style={{ width: '150px' }}></span>
                         </div>
                         {g.lineas.map(l => (
                           <div key={l.id}>
@@ -691,9 +723,12 @@ export default function Releases() {
                               <span style={{ flex: 1, textAlign: 'center' }}>
                                 <span style={{ ...styles.badge, ...badgeEstatus(l.estatus) }}>{NOMBRE_ESTATUS[l.estatus]}</span>
                               </span>
-                              <span style={{ width: '95px', textAlign: 'right' }}>
+                              <span style={{ width: '150px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
                                 {puedeEntregar && l.estatus !== 'cubierta' && (
                                   <button style={styles.botonAccion} onClick={() => setEntregaForm({ lineaId: l.id, cantidad: '', fecha: hoy(), referencia: '' })}>+ Entrega</button>
+                                )}
+                                {puedeEntregar && (
+                                  <button style={styles.botonAccion} onClick={() => setEditForm({ lineaId: l.id, cantidad: String(l.cantidad), motivo: '' })}>Editar</button>
                                 )}
                               </span>
                             </div>
@@ -717,6 +752,25 @@ export default function Releases() {
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', paddingBottom: '1px' }}>
                                   <button style={styles.botonSec} onClick={() => setEntregaForm(null)}>Cancelar</button>
                                   <button style={styles.boton} onClick={guardarEntrega}>Registrar</button>
+                                </div>
+                              </div>
+                            )}
+                            {editForm?.lineaId === l.id && (
+                              <div style={styles.formEntrega}>
+                                <div style={{ ...styles.campo, flex: 0.8 }}>
+                                  <label style={styles.label}>Cantidad *</label>
+                                  <input type="number" min="0" style={styles.input} value={editForm.cantidad} autoFocus
+                                    onChange={e => setEditForm({ ...editForm, cantidad: e.target.value })} />
+                                </div>
+                                <div style={{ ...styles.campo, flex: 1.6 }}>
+                                  <label style={styles.label}>Motivo del cambio (KPI)</label>
+                                  <input style={styles.input} value={editForm.motivo} placeholder="Incremento / decremento / cancelacion"
+                                    onChange={e => setEditForm({ ...editForm, motivo: e.target.value })} />
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', paddingBottom: '1px' }}>
+                                  <button style={styles.botonSec} onClick={() => setEditForm(null)}>Cancelar</button>
+                                  <button style={{ ...styles.boton, backgroundColor: '#dc2626' }} onClick={() => eliminarLinea(l)}>Eliminar</button>
+                                  <button style={styles.boton} onClick={() => guardarEdicionLinea(l)}>Guardar</button>
                                 </div>
                               </div>
                             )}
