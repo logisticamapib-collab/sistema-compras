@@ -10,6 +10,7 @@ import ConsultasInventario from './ConsultasInventario'
 import Recibos from './Recibos'
 import AutorizacionesConsigna from './AutorizacionesConsigna'
 import Embarques from './Embarques'
+import ListaEmbarque from './ListaEmbarque'
 import MovimientoMaterial from './MovimientoMaterial'
 import TraspasoEscaneo from './TraspasoEscaneo'
 import Contenedores from './Contenedores'
@@ -24,6 +25,7 @@ const secciones = [
   { id: 'inventario', modulo: 'log_inventario', titulo: 'Inventario' },
   { id: 'consultas', modulo: 'log_consultas', titulo: 'Consultas de Inventario' },
   { id: 'embarques', modulo: 'log_embarques', titulo: 'Embarques' },
+  { id: 'lista_embarque', modulo: 'log_embarques', titulo: 'Lista de Embarque' },
   { id: 'customer_service', modulo: 'cs_releases', titulo: 'Customer Service' },
   { id: 'consigna', modulo: 'cs_consigna', titulo: 'Autorizaciones de Consigna' },
   { id: 'clientes', modulo: 'ing_clientes', titulo: 'Clientes' },
@@ -61,6 +63,7 @@ export default function GrupoLogistica() {
         {seccion === 'inventario' && <Inventario />}
         {seccion === 'consultas' && <ConsultasInventario />}
         {seccion === 'embarques' && <Embarques />}
+        {seccion === 'lista_embarque' && <ListaEmbarque />}
         {seccion === 'customer_service' && <Releases />}
         {seccion === 'consigna' && <AutorizacionesConsigna />}
         {seccion === 'clientes' && <Clientes />}
