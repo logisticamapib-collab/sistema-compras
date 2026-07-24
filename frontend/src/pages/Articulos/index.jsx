@@ -21,7 +21,7 @@ const formVacio = {
   retencion_iva: 0,
   origen: 'comprado', es_consigna: false,
   lead_time_dias: '', moq: '', tiempo_transito_dias: '', stock_minimo: '', snp: '',
-  dias_inventario_seguridad: '', multiplo_lote: '',
+  dias_inventario_seguridad: '', multiplo_lote: '', costo: '',
   tipo_proceso: 'solo_inyeccion', articulo_wip_origen_id: '',
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
@@ -111,6 +111,7 @@ export default function Articulos() {
       snp: articulo.snp ?? '',
       dias_inventario_seguridad: articulo.dias_inventario_seguridad ?? '',
       multiplo_lote: articulo.multiplo_lote ?? '',
+      costo: articulo.costo ?? '',
       tipo_proceso: articulo.tipo_proceso || 'solo_inyeccion',
       articulo_wip_origen_id: articulo.articulo_wip_origen_id?.toString() || '',
       peso_pieza_g: articulo.peso_pieza_g ?? '',
@@ -160,6 +161,7 @@ export default function Articulos() {
       snp: form.snp !== '' ? parseFloat(form.snp) : 0,
       dias_inventario_seguridad: form.dias_inventario_seguridad !== '' ? parseFloat(form.dias_inventario_seguridad) : 0,
       multiplo_lote: form.multiplo_lote !== '' ? parseFloat(form.multiplo_lote) : 0,
+      costo: form.costo !== '' ? parseFloat(form.costo) : 0,
       tipo_proceso: esFabricado ? form.tipo_proceso : null,
       articulo_wip_origen_id: esFabricado && form.articulo_wip_origen_id ? parseInt(form.articulo_wip_origen_id) : null,
       peso_pieza_g: esFabricado && form.peso_pieza_g !== '' ? parseFloat(form.peso_pieza_g) : null,
@@ -177,7 +179,7 @@ export default function Articulos() {
       error = resultado.error
       articuloId = articuloEditando.id
     } else {
-      const resultado = await supabase.from('articulos').insert({ ...payload, empresa_id: perfil.empresa_id }).select().single()
+      const resultado = await supabase.from('articulos').insert({ ...payload, empresa_id: perfil.empresa_id, costo_inicial: form.costo !== '' ? parseFloat(form.costo) : 0 }).select().single()
       error = resultado.error
       articuloId = resultado.data?.id
     }
@@ -517,6 +519,11 @@ export default function Articulos() {
                   <input style={styles.input} type="number" min="0" step="0.01" value={form.multiplo_lote}
                     onChange={e => setForm({ ...form, multiplo_lote: e.target.value })} placeholder="0 = usa MOQ" />
                 </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Costo unitario inicial</label>
+                  <input style={styles.input} type="number" min="0" step="0.01" value={form.costo}
+                    onChange={e => setForm({ ...form, costo: e.target.value })} placeholder="0.00 (se actualiza con compras)" />
+                </div>
               </div>
             </>
           )}
@@ -560,6 +567,11 @@ export default function Articulos() {
                   <label style={styles.label}>Multiplo de lote (OT)</label>
                   <input style={styles.input} type="number" min="0" step="0.01" value={form.multiplo_lote}
                     onChange={e => setForm({ ...form, multiplo_lote: e.target.value })} placeholder="0" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Costo unitario (declarado)</label>
+                  <input style={styles.input} type="number" min="0" step="0.01" value={form.costo}
+                    onChange={e => setForm({ ...form, costo: e.target.value })} placeholder="0.00" />
                 </div>
               </div>
 
