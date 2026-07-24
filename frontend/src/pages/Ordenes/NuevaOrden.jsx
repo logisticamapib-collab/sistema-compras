@@ -5,7 +5,7 @@ import NuevaOrdenDirecta from './NuevaOrdenDirecta'
 
 const unidades = ['PZA','KG','LT','MT','CJ','RLL','PAR','JGO','SRV','TON','GR','ML','CM','M2','M3']
 
-export default function NuevaOrden({ onVolver, onGuardado }) {
+export default function NuevaOrden({ onVolver, onGuardado, requisicionInicial = null }) {
   const { perfil } = useAuth()
   const [tipo, setTipo] = useState(null)
   const [paso, setPaso] = useState(1)
@@ -38,6 +38,7 @@ export default function NuevaOrden({ onVolver, onGuardado }) {
   })
 
   useEffect(() => { cargarDatos() }, [])
+  useEffect(() => { if (requisicionInicial) { setTipo('con_requisicion'); seleccionarRequisicion(requisicionInicial) } }, [])
 
   const cargarDatos = async () => {
     setLoading(true)
@@ -794,4 +795,4 @@ const styles = {
   tabVinculoActivo: { padding: '6px 12px', backgroundColor: '#2563eb', color: '#fff', border: '1px solid #2563eb', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
   filaVinculo: { display: 'flex', gap: '8px', alignItems: 'center' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
-}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
