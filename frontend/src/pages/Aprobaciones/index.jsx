@@ -37,13 +37,11 @@ export default function Aprobaciones() {
 
     // Ordenes de compra pendientes segun rol
     let queryOC = null
-    if (ROLES_GERENCIALES.includes(perfil?.rol)) {
-      // Estos niveles solo ven la OC si son especificamente la persona asignada como aprobador actual
+    if (perfil?.rol === 'admin') {
       queryOC = supabase.from('ordenes_compra')
         .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
         .eq('empresa_id', perfil.empresa_id)
-        .in('estatus', ['aprobacion_gerente_area', 'aprobacion_gerente_planta'])
-        .eq('aprobador_actual_id', perfil.id)
+        .in('estatus', ['aprobacion_gerente_area', 'aprobacion_gerente_planta', 'aprobacion_gerente_compras', 'aprobacion_direccion'])
         .order('created_at', { ascending: true })
     } else if (perfil?.rol === 'gerente_compras') {
       queryOC = supabase.from('ordenes_compra')
@@ -57,11 +55,13 @@ export default function Aprobaciones() {
         .eq('empresa_id', perfil.empresa_id)
         .eq('estatus', 'aprobacion_direccion')
         .order('created_at', { ascending: true })
-    } else if (perfil?.rol === 'admin') {
+    } else if (ROLES_GERENCIALES.includes(perfil?.rol)) {
+      // Gerentes de area/planta: solo ven la OC si son la persona asignada como aprobador actual
       queryOC = supabase.from('ordenes_compra')
         .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
         .eq('empresa_id', perfil.empresa_id)
-        .in('estatus', ['aprobacion_gerente_area', 'aprobacion_gerente_planta', 'aprobacion_gerente_compras', 'aprobacion_direccion'])
+        .in('estatus', ['aprobacion_gerente_area', 'aprobacion_gerente_planta'])
+        .eq('aprobador_actual_id', perfil.id)
         .order('created_at', { ascending: true })
     }
 
