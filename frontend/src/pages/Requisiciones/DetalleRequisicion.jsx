@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import EditarRequisicion from './EditarRequisicion'
 import ImprimirRequisicion from './ImprimirRequisicion'
+import NuevaOrden from '../Ordenes/NuevaOrden'
 import { enviarCorreo, obtenerInvolucrados } from '../../lib/email'
 
 const estatusLabels = {
@@ -64,6 +65,9 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
   const [procesando, setProcesando] = useState(false)
   const [editando, setEditando] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
+  const [convirtiendo, setConvirtiendo] = useState(false)
+  const puedeGenerarOC = requisicion.estatus === 'en_proceso' &&
+    ['comprador', 'gerente_compras', 'gerente_administrativo', 'admin'].includes(perfil?.rol)
 
   useEffect(() => { cargarDetalle() }, [])
 
@@ -231,6 +235,14 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
     />
   }
 
+  if (convirtiendo) {
+    return <NuevaOrden
+      requisicionInicial={requisicion}
+      onVolver={() => setConvirtiendo(false)}
+      onGuardado={() => { setConvirtiendo(false); onVolver() }}
+    />
+  }
+
   return (
     <div style={styles.container}>
       <div style={styles.encabezado}>
@@ -245,6 +257,11 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
           <button style={styles.botonImprimir} onClick={() => setImprimiendo(true)}>
             Imprimir
           </button>
+          {puedeGenerarOC && (
+            <button style={{ ...styles.botonImprimir, backgroundColor: '#2563eb', color: '#fff', border: 'none' }} onClick={() => setConvirtiendo(true)}>
+              Convertir a OC
+            </button>
+          )}
         </div>
       </div>
 
