@@ -6,6 +6,7 @@ import Ordenes from '../Ordenes/index'
 import Proveedores from '../Proveedores/index'
 import Reportes from '../Reportes/index'
 import GeneradorReportes from './GeneradorReportes'
+import ParametrosCosteo from './ParametrosCosteo'
 
 const secciones = [
   { id: 'requisiciones', modulo: 'requisiciones', titulo: 'Requisiciones' },
@@ -14,6 +15,7 @@ const secciones = [
   { id: 'proveedores', modulo: 'proveedores', titulo: 'Proveedores' },
   { id: 'reportes', modulo: 'reportes', titulo: 'Reportes KPI' },
   { id: 'generador', modulo: 'reportes', titulo: 'Generador de Reportes' },
+  { id: 'costeo', modulo: 'com_costeo', titulo: 'Parametros de Costeo' },
 ]
 
 export default function GrupoCompras() {
@@ -44,6 +46,7 @@ export default function GrupoCompras() {
         {seccion === 'proveedores' && <Proveedores />}
         {seccion === 'reportes' && <Reportes />}
         {seccion === 'generador' && <GeneradorReportes />}
+        {seccion === 'costeo' && <ParametrosCosteo />}
       </div>
     </div>
   )
