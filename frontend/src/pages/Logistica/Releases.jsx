@@ -162,7 +162,7 @@ export default function Releases() {
       if (filas.length < 2) { setError('El archivo no tiene datos'); return }
 
       // Detectar fila de encabezados y columnas
-      let idxHeader = -1, colParte = -1, colFecha = -1, colCant = -1, colTipo = -1
+      let idxHeader = -1, colParte = -1, colFecha = -1, colCant = -1, colTipo = -1, colOC = -1
       for (let i = 0; i < Math.min(filas.length, 10); i++) {
         const celdas = filas[i].map(x => String(x).toLowerCase())
         const p = celdas.findIndex(x => x.includes('parte') || x.includes('codigo') || x.includes('part'))
@@ -171,6 +171,7 @@ export default function Releases() {
         if (p >= 0 && f >= 0 && q >= 0) {
           idxHeader = i; colParte = p; colFecha = f; colCant = q
           colTipo = celdas.findIndex(x => x.includes('tipo') || x.includes('type'))
+          colOC = celdas.findIndex(x => x.includes('oc') || x.includes('orden'))
           break
         }
       }
@@ -195,7 +196,7 @@ export default function Releases() {
         if (!(cantidad >= 0) || isNaN(cantidad)) { errs.push(`Fila ${numFila}: cantidad invalida "${fila[colCant]}"`); continue }
         const tipo = colTipo >= 0 ? parseTipo(fila[colTipo]) : 'firme'
         if (!tipo) { errs.push(`Fila ${numFila}: tipo invalido "${fila[colTipo]}" (usa firme o forecast)`); continue }
-        lineas.push({ articulo_id: rel.articulo_id, codigo_cliente: rel.codigo_cliente, fecha_requerida: fecha, cantidad, tipo })
+        lineas.push({ articulo_id: rel.articulo_id, codigo_cliente: rel.codigo_cliente, oc_cliente: colOC >= 0 ? (String(fila[colOC] || '').trim() || null) : null, fecha_requerida: fecha, cantidad, tipo })
       }
 
       // Candado: solo UNA linea por codigo y fecha
@@ -372,9 +373,9 @@ export default function Releases() {
   const descargarPlantilla = () => {
     const wb = XLSX.utils.book_new()
     const datos = [
-      ['Numero de Parte', 'Fecha Requerida', 'Cantidad', 'Tipo'],
-      ['ABC-12345', '01/08/2026', 5000, 'firme'],
-      ['ABC-12345', '15/08/2026', 3000, 'forecast'],
+      ['Numero de Parte', 'Fecha Requerida', 'Cantidad', 'Tipo', 'OC Cliente'],
+      ['ABC-12345', '01/08/2026', 5000, 'firme', 'PO-99001'],
+      ['ABC-12345', '15/08/2026', 3000, 'forecast', 'PO-99002'],
     ]
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(datos), 'Release')
     XLSX.writeFile(wb, 'plantilla_release.xlsx')
@@ -413,6 +414,7 @@ export default function Releases() {
         'Codigo interno': art?.codigo_interno || '',
         Descripcion: art?.descripcion || '',
         'Parte cliente': v.codigo_cliente || '',
+        'OC cliente': v.oc_cliente || '',
         'Fecha requerida': fmtFecha(v.fecha_requerida),
         Cantidad: Number(v.cantidad),
         Entregado: v.entregado,
@@ -472,7 +474,7 @@ export default function Releases() {
         <div style={styles.form}>
           <h3 style={styles.formTitulo}>Cargar release desde Excel</h3>
           <p style={styles.ayuda}>
-            El Excel debe tener columnas: <b>Numero de Parte</b> (del cliente), <b>Fecha Requerida</b>, <b>Cantidad</b> y <b>Tipo</b> (firme/forecast; si falta, se asume firme).
+            El Excel debe tener columnas: <b>Numero de Parte</b> (del cliente), <b>Fecha Requerida</b>, <b>Cantidad</b> y <b>Tipo</b> (firme/forecast; si falta, se asume firme). Opcional: <b>OC Cliente</b>.
             <br />Solo se reemplazan las lineas de <b>articulo + fecha</b> incluidas en el archivo (con la <b>cantidad original</b>: lo entregado se hereda y se descuenta).
             Las fechas no incluidas siguen vigentes. Para cancelar o cerrar una fecha vencida, incluyela con cantidad 0 o con lo ya entregado (pedira justificacion).
             Una fila por codigo y fecha; fechas vencidas nuevas no se aceptan.
@@ -777,7 +779,7 @@ export default function Releases() {
                       const art = articuloDe(l.articulo_id)
                       return (
                         <div key={l.id} style={{ ...styles.tablaFila, padding: '7px 20px', fontSize: '13px' }}>
-                          <span style={{ flex: 2 }}><b>{art?.codigo_interno}</b> <span style={{ color: '#94a3b8' }}>({l.codigo_cliente})</span></span>
+                          <span style={{ flex: 2 }}><b>{art?.codigo_interno}</b> <span style={{ color: '#94a3b8' }}>({l.codigo_cliente}{l.oc_cliente ? ` · OC ${l.oc_cliente}` : ''})</span></span>
                           <span style={{ flex: 1 }}>{fmtFecha(l.fecha_requerida)}</span>
                           <span style={{ flex: 1, textAlign: 'right' }}>{fmtNum(l.cantidad)}</span>
                           <span style={{ flex: 1, textAlign: 'center' }}>
