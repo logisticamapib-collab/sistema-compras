@@ -16,9 +16,13 @@ export default function BandejaMRP() {
   const [ordenes, setOrdenes] = useState([])
   const [clientes, setClientes] = useState([])
   const [prefCliente, setPrefCliente] = useState({}) // articulo_id -> cliente_id
+  const [cavidades, setCavidades] = useState([])     // molde_cavidades (activa)
+  const [normas, setNormas] = useState([])           // normas_empaque oficiales
+  const [moldes, setMoldes] = useState([])
   const [sel, setSel] = useState(new Set())
   const [cliFila, setCliFila] = useState({}) // rowId -> cliente_id (consigna)
   const [cant, setCant] = useState({})       // rowId -> cantidad editable
+  const [qtyGrupo, setQtyGrupo] = useState({}) // `${moldeId}:${articuloId}` -> cantidad override
   const [proc, setProc] = useState(false)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -27,14 +31,18 @@ export default function BandejaMRP() {
 
   const cargarBase = async () => {
     const emp = perfil.empresa_id
-    const [{ data: cli }, { data: ac }] = await Promise.all([
+    const [{ data: cli }, { data: ac }, { data: mc }, { data: ne }, { data: mo }] = await Promise.all([
       supabase.from('clientes').select('id, nombre').eq('empresa_id', emp).order('nombre'),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id'),
+      supabase.from('molde_cavidades').select('molde_id, articulo_id, activa').eq('activa', true),
+      supabase.from('normas_empaque').select('id, articulo_id, piezas_por_empaque, activa, tipo').eq('activa', true).eq('tipo', 'oficial'),
+      supabase.from('moldes').select('id, clave, nombre').eq('empresa_id', emp),
     ])
     setClientes(cli || [])
     const pref = {}
     ;(ac || []).forEach(r => { if (!pref[r.articulo_id]) pref[r.articulo_id] = r.cliente_id })
     setPrefCliente(pref)
+    setCavidades(mc || []); setNormas(ne || []); setMoldes(mo || [])
     await cargarCorridas()
   }
 
@@ -49,7 +57,7 @@ export default function BandejaMRP() {
 
   const seleccionar = async (id, lista) => {
     setCorridaSel((lista || corridas).find(c => c.id === id) || null)
-    setSel(new Set()); setError(''); setExito('')
+    setSel(new Set()); setError(''); setExito(''); setQtyGrupo({})
     const { data } = await supabase.from('mrp_resultados')
       .select('*, articulo:articulos(codigo_interno, descripcion, unidad_medida, origen, es_consigna)')
       .eq('corrida_id', id).gt('orden_planeada', 0).is('convertida_a', null)
@@ -64,6 +72,67 @@ export default function BandejaMRP() {
   const toggle = (id) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s) }
   const toggleAll = () => { setSel(sel.size === ordenes.length ? new Set() : new Set(ordenes.map(o => o.id))) }
 
+  // ---- Helpers de molde / cavidades / empaque ----
+  const moldeDeArticulo = (artId) => cavidades.find(c => c.articulo_id === artId)?.molde_id || null
+  const cavDe = (artId) => cavidades.filter(c => c.articulo_id === artId).length
+  const familiaDeMolde = (moldeId) => {
+    const porArt = {}
+    cavidades.filter(c => c.molde_id === moldeId).forEach(c => { porArt[c.articulo_id] = (porArt[c.articulo_id] || 0) + 1 })
+    return Object.keys(porArt).map(id => ({ articulo_id: Number(id), cavidades: porArt[id] }))
+  }
+  const normaDe = (artId) => normas.find(n => n.articulo_id === artId)
+  const moldeClave = (mid) => { const m = moldes.find(x => x.id === mid); return m?.clave || m?.nombre || `Molde ${mid}` }
+  const artDe = (id) => ordenes.find(o => o.articulo_id === id)?.articulo
+
+  // Analiza la seleccion de fabricados: agrupa por molde compartido (2+ articulos
+  // seleccionados del mismo molde) y balancea por cavidades. Politica: cubrir todo
+  // (S = max de shots), cantidad por articulo redondeada a empaque (norma oficial).
+  const analizar = () => {
+    const fab = ordenes.filter(o => sel.has(o.id) && o.accion === 'ot')
+    const porMolde = new Map()
+    const sinMolde = []
+    for (const o of fab) {
+      const mid = moldeDeArticulo(o.articulo_id)
+      if (!mid) { sinMolde.push(o); continue }
+      if (!porMolde.has(mid)) porMolde.set(mid, new Map())
+      const m = porMolde.get(mid)
+      const cur = m.get(o.articulo_id) || { articulo_id: o.articulo_id, rows: [], net: 0 }
+      cur.rows.push(o); cur.net += parseFloat(cant[o.id]) || Number(o.orden_planeada) || 0
+      m.set(o.articulo_id, cur)
+    }
+    const gruposCompartidos = []
+    const individuales = [...sinMolde]
+    const advertencias = []
+    for (const [mid, m] of porMolde) {
+      const arts = [...m.values()]
+      if (arts.length >= 2) {
+        const items = arts.map(a => {
+          const cav = cavDe(a.articulo_id) || 1
+          return { ...a, cav, shots: Math.ceil(a.net / cav) }
+        })
+        const S = Math.max(...items.map(i => i.shots))
+        const conQty = items.map(i => {
+          const pxc = Number(normaDe(i.articulo_id)?.piezas_por_empaque || 0)
+          const base = S * i.cav
+          const qtyDefault = pxc > 0 ? Math.ceil(base / pxc) * pxc : base
+          return { ...i, pxc, base, qtyDefault }
+        })
+        const principal = conQty.reduce((p, c) => (c.shots > p.shots ? c : p), conQty[0]).articulo_id
+        gruposCompartidos.push({ moldeId: mid, S, items: conQty, principal, rows: arts.flatMap(a => a.rows) })
+      } else {
+        individuales.push(...arts.flatMap(a => a.rows))
+        if (familiaDeMolde(mid).length >= 2) advertencias.push({ articulo_id: arts[0].articulo_id, moldeId: mid })
+      }
+    }
+    return { gruposCompartidos, individuales, advertencias }
+  }
+
+  const qtyDe = (g, artId) => {
+    const k = `${g.moldeId}:${artId}`
+    if (qtyGrupo[k] !== undefined && qtyGrupo[k] !== '') return Number(qtyGrupo[k])
+    return g.items.find(i => i.articulo_id === artId)?.qtyDefault || 0
+  }
+
   const generar = async () => {
     setError(''); setExito('')
     const filas = ordenes.filter(o => sel.has(o.id))
@@ -75,8 +144,8 @@ export default function BandejaMRP() {
     try {
       const emp = perfil.empresa_id
       const comprados = filas.filter(o => o.accion === 'requisicion')
-      const fabricados = filas.filter(o => o.accion === 'ot')
       const consignas = filas.filter(o => o.accion === 'consigna')
+      const { gruposCompartidos, individuales } = analizar()
       let creados = { req: 0, ot: 0, con: 0 }
 
       // ---- Requisicion (agrupa todos los comprados en una) ----
@@ -133,20 +202,48 @@ export default function BandejaMRP() {
         }
       }
 
-      // ---- OT (una por fabricado) ----
-      for (const o of fabricados) {
-        const folio = `OT-${Date.now().toString().slice(-8)}-${o.articulo_id}`
+      // ---- OT compartida: una OT multi-articulo por molde (balanceo por cavidades) ----
+      for (const g of gruposCompartidos) {
+        const fechaProg = g.rows.reduce((min, o) => { const f = o.fecha_liberacion || o.fecha_requerida; return (!min || (f && f < min)) ? f : min }, null)
+        const folio = `OT-${Date.now().toString().slice(-8)}-M${g.moldeId}`
         const { data: ot, error: e1 } = await supabase.from('ordenes_trabajo').insert({
-          empresa_id: emp, folio, site_id: perfil.site_id, articulo_id: o.articulo_id,
-          cantidad_programada: parseFloat(cant[o.id]) || o.orden_planeada,
-          fecha_programada: o.fecha_liberacion || o.fecha_requerida,
-          estatus: 'programada', notas: `Generada por MRP corrida #${corridaSel.id}`,
+          empresa_id: emp, folio, site_id: perfil.site_id, articulo_id: g.principal, molde_id: g.moldeId,
+          cantidad_programada: qtyDe(g, g.principal), fecha_programada: fechaProg,
+          estatus: 'programada', notas: `Generada por MRP corrida #${corridaSel.id} (molde ${moldeClave(g.moldeId)}, ${g.S} shots)`,
           creado_por: perfil.id,
         }).select().single()
         if (e1) throw e1
+        const filasOt = g.items.map(i => {
+          const qty = qtyDe(g, i.articulo_id)
+          return {
+            ot_id: ot.id, articulo_id: i.articulo_id, principal: i.articulo_id === g.principal, cavidades: i.cav,
+            cantidad_programada: qty, norma_empaque_id: normaDe(i.articulo_id)?.id || null,
+            piezas_por_caja: i.pxc || null, cajas_estimadas: i.pxc > 0 ? Math.ceil(qty / i.pxc) : null,
+          }
+        })
+        const { error: e2 } = await supabase.from('ot_articulos').insert(filasOt)
+        if (e2) throw e2
+        await marcar(g.rows, 'ot', ot.id)
+        creados.ot += 1
+      }
+
+      // ---- OT individual (fabricado sin molde compartido en la seleccion) ----
+      for (const o of individuales) {
+        const mid = moldeDeArticulo(o.articulo_id)
+        const cav = cavDe(o.articulo_id) || null
+        const qty = parseFloat(cant[o.id]) || o.orden_planeada
+        const norma = normaDe(o.articulo_id); const pxc = Number(norma?.piezas_por_empaque || 0)
+        const folio = `OT-${Date.now().toString().slice(-8)}-${o.articulo_id}`
+        const { data: ot, error: e1 } = await supabase.from('ordenes_trabajo').insert({
+          empresa_id: emp, folio, site_id: perfil.site_id, articulo_id: o.articulo_id, molde_id: mid,
+          cantidad_programada: qty, fecha_programada: o.fecha_liberacion || o.fecha_requerida,
+          estatus: 'programada', notas: `Generada por MRP corrida #${corridaSel.id}`, creado_por: perfil.id,
+        }).select().single()
+        if (e1) throw e1
         const { error: e2 } = await supabase.from('ot_articulos').insert({
-          ot_id: ot.id, articulo_id: o.articulo_id,
-          cantidad_programada: parseFloat(cant[o.id]) || o.orden_planeada, principal: true,
+          ot_id: ot.id, articulo_id: o.articulo_id, principal: true, cavidades: cav,
+          cantidad_programada: qty, norma_empaque_id: norma?.id || null,
+          piezas_por_caja: pxc || null, cajas_estimadas: pxc > 0 ? Math.ceil(qty / pxc) : null,
         })
         if (e2) throw e2
         await marcar([o], 'ot', ot.id)
@@ -159,7 +256,7 @@ export default function BandejaMRP() {
       if (creados.ot) partes.push(`${creados.ot} OT`)
       setExito(`Generado: ${partes.join(', ')}.`)
       await seleccionar(corridaSel.id)
-      setTimeout(() => setExito(''), 5000)
+      setTimeout(() => setExito(''), 6000)
     } catch (e) {
       setError('Error al generar: ' + (e.message || e))
     } finally {
@@ -174,11 +271,14 @@ export default function BandejaMRP() {
     }).in('id', ids)
   }
 
+  const analisis = corridaSel ? analizar() : { gruposCompartidos: [], individuales: [], advertencias: [] }
+
   return (
     <div>
       <div style={styles.encabezado}><h2 style={styles.titulo}>Bandeja de ordenes planeadas</h2></div>
       <p style={styles.ayuda}>Selecciona las ordenes sugeridas por el MRP y generalas como documentos reales.
-        Los comprados crean una requisicion (borrador), la consigna una autorizacion por cliente, y los fabricados una OT programada.</p>
+        Los comprados crean una requisicion (borrador), la consigna una autorizacion por cliente, y los fabricados una OT programada.
+        Si seleccionas 2+ articulos que comparten molde, se crea <b>una sola OT</b> balanceada por cavidades.</p>
 
       <div style={styles.tarjeta}>
         <h3 style={styles.tarjetaTitulo}>Corrida</h3>
@@ -238,6 +338,52 @@ export default function BandejaMRP() {
               ))}
             </div>
           )}
+
+          {/* Preview de balanceo por molde compartido */}
+          {analisis.gruposCompartidos.map(g => (
+            <div key={g.moldeId} style={styles.grupo}>
+              <div style={styles.grupoTitulo}>
+                Molde compartido <b>{moldeClave(g.moldeId)}</b> · una OT · <b>{fmt(g.S)}</b> shots (cubrir todo)
+              </div>
+              <div style={styles.grupoTh}>
+                <span style={{ flex: 2 }}>Articulo</span>
+                <span style={{ flex: 0.7, textAlign: 'center' }}>Cav</span>
+                <span style={{ flex: 1, textAlign: 'right' }}>Neto MRP</span>
+                <span style={{ flex: 0.8, textAlign: 'right' }}>Shots</span>
+                <span style={{ flex: 1.2, textAlign: 'right' }}>Cant. programada</span>
+                <span style={{ flex: 0.8, textAlign: 'right' }}>Cajas</span>
+              </div>
+              {g.items.map(i => {
+                const qty = qtyDe(g, i.articulo_id)
+                const cajas = i.pxc > 0 ? Math.ceil(qty / i.pxc) : null
+                return (
+                  <div key={i.articulo_id} style={styles.grupoTr}>
+                    <span style={{ flex: 2 }}>
+                      <strong>{artDe(i.articulo_id)?.codigo_interno || i.articulo_id}</strong>
+                      {i.articulo_id === g.principal && <span style={styles.pill}>principal</span>}
+                    </span>
+                    <span style={{ flex: 0.7, textAlign: 'center' }}>{i.cav}</span>
+                    <span style={{ flex: 1, textAlign: 'right' }}>{fmt(i.net)}</span>
+                    <span style={{ flex: 0.8, textAlign: 'right' }}>{fmt(i.shots)}</span>
+                    <span style={{ flex: 1.2, textAlign: 'right' }}>
+                      <input type="number" min="0" value={qtyGrupo[`${g.moldeId}:${i.articulo_id}`] ?? i.qtyDefault}
+                        onChange={e => setQtyGrupo({ ...qtyGrupo, [`${g.moldeId}:${i.articulo_id}`]: e.target.value })}
+                        style={{ ...styles.inputMini, textAlign: 'right', maxWidth: '110px' }} />
+                    </span>
+                    <span style={{ flex: 0.8, textAlign: 'right' }}>{cajas != null ? fmt(cajas) : '-'}</span>
+                  </div>
+                )
+              })}
+              <div style={styles.grupoNota}>Cantidad = shots × cavidades, redondeada a empaque (norma oficial). Editable si tapan una cavidad o hay desbalance por rechazos.</div>
+            </div>
+          ))}
+
+          {analisis.advertencias.map((a, idx) => (
+            <p key={idx} style={styles.aviso}>
+              <b>{artDe(a.articulo_id)?.codigo_interno || a.articulo_id}</b> usa el molde compartido <b>{moldeClave(a.moldeId)}</b>, pero su(s) articulo(s) hermano(s) no estan en la seleccion.
+              Se creara una OT individual; al correr el molde, las cavidades hermanas tambien produciran salvo que se tapen.
+            </p>
+          ))}
         </div>
       )}
     </div>
@@ -264,6 +410,13 @@ const styles = {
   th: { display: 'flex', padding: '8px 6px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', alignItems: 'center' },
   tr: { display: 'flex', padding: '10px 6px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '13px' },
   inputMini: { padding: '6px 8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '12px', outline: 'none', width: '100%', maxWidth: '150px' },
+  grupo: { marginTop: '16px', border: '1px solid #d8b4fe', borderRadius: '9px', overflow: 'hidden' },
+  grupoTitulo: { padding: '10px 14px', backgroundColor: '#faf5ff', color: '#6b21a8', fontSize: '13px', borderBottom: '1px solid #e9d5ff' },
+  grupoTh: { display: 'flex', padding: '8px 14px', backgroundColor: '#fbfaff', borderBottom: '1px solid #f1f5f9', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
+  grupoTr: { display: 'flex', padding: '9px 14px', borderBottom: '1px solid #f6f4fb', alignItems: 'center', fontSize: '13px' },
+  grupoNota: { padding: '8px 14px', fontSize: '11.5px', color: '#94a3b8' },
+  pill: { marginLeft: '8px', padding: '1px 8px', borderRadius: '20px', fontSize: '10px', fontWeight: '700', backgroundColor: '#ede9fe', color: '#7c3aed' },
+  aviso: { marginTop: '12px', backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '7px', padding: '9px 12px', color: '#92400e', fontSize: '12.5px', lineHeight: 1.5 },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
   exito: { color: '#16a34a', fontSize: '13px', marginBottom: '12px' },
 }
