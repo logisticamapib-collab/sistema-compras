@@ -5,6 +5,7 @@ import ReporteProduccion from './ReporteProduccion'
 import CatalogosProduccion from './Catalogos'
 import ProgramacionProduccion from './ProgramacionProduccion'
 import TableroAndon from './TableroAndon'
+import Maquila from './Maquila'
 
 const secciones = [
   { id: 'ordenes', modulo: 'prod_ordenes', titulo: 'Ordenes de Trabajo' },
@@ -12,6 +13,7 @@ const secciones = [
   { id: 'programa', modulo: 'prod_programa', titulo: 'Programacion' },
   { id: 'andon', modulo: 'prod_andon', titulo: 'Tablero Andon' },
   { id: 'catalogos', modulo: 'prod_catalogos', titulo: 'Catalogos' },
+  { id: 'maquila', modulo: 'prod_maquila', titulo: 'Maquila / Subcontratacion' },
 ]
 
 export default function GrupoProduccion() {
@@ -39,6 +41,7 @@ export default function GrupoProduccion() {
         {seccion === 'programa' && <ProgramacionProduccion />}
         {seccion === 'andon' && <TableroAndon />}
         {seccion === 'catalogos' && <CatalogosProduccion />}
+        {seccion === 'maquila' && <Maquila />}
       </div>
     </div>
   )
