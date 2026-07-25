@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext'
 import Clientes from '../Ingenieria/Clientes'
 import ModuloPendiente from '../ModuloPendiente'
 import Releases from './Releases'
+import VariacionDemanda from './VariacionDemanda'
 import Almacenes from './Almacenes'
 import FlujosAlmacen from './FlujosAlmacen'
 import Inventario from './Inventario'
@@ -31,6 +32,7 @@ const secciones = [
   { id: 'lista_embarque', modulo: 'log_embarques', titulo: 'Lista de Embarque' },
   { id: 'preparar_embarque', modulo: 'log_embarques', titulo: 'Preparar Embarque' },
   { id: 'customer_service', modulo: 'cs_releases', titulo: 'Customer Service' },
+  { id: 'variacion_demanda', modulo: 'cs_variacion', titulo: 'Variacion de Demanda' },
   { id: 'consigna', modulo: 'cs_consigna', titulo: 'Autorizaciones de Consigna' },
   { id: 'clientes', modulo: 'ing_clientes', titulo: 'Clientes' },
 ]
@@ -71,6 +73,7 @@ export default function GrupoLogistica() {
         {seccion === 'lista_embarque' && <ListaEmbarque />}
         {seccion === 'preparar_embarque' && <EmbarquePreparar />}
         {seccion === 'customer_service' && <Releases />}
+        {seccion === 'variacion_demanda' && <VariacionDemanda />}
         {seccion === 'consigna' && <AutorizacionesConsigna />}
         {seccion === 'clientes' && <Clientes />}
       </div>
