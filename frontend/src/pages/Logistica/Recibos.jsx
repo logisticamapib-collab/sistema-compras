@@ -56,7 +56,7 @@ export default function Recibos() {
   const cargarDatos = async () => {
     setLoading(true)
     const [o, l, cc, cl, p, cli, a, alm, ubi, rp, d, r, emp, bm, cfg] = await Promise.all([
-      supabase.from('ordenes_compra').select('*').eq('empresa_id', perfil.empresa_id).in('estatus', RECIBIBLES).order('fecha_emision', { ascending: false }),
+      supabase.from('ordenes_compra').select('*').eq('empresa_id', perfil.empresa_id).in('estatus', RECIBIBLES).or('tipo.is.null,tipo.neq.subcontrato').order('fecha_emision', { ascending: false }),
       supabase.from('oc_lineas').select('*'),
       supabase.from('consigna_autorizaciones').select('*').eq('empresa_id', perfil.empresa_id).in('estatus', ['aprobada', 'recibida_parcial']).order('fecha_creacion', { ascending: false }),
       supabase.from('consigna_autorizacion_lineas').select('*'),

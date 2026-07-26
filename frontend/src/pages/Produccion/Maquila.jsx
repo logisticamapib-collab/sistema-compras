@@ -31,27 +31,32 @@ export default function Maquila() {
   const [almacenes, setAlmacenes] = useState([])
   const [saldo, setSaldo] = useState([])
   const [envCant, setEnvCant] = useState({})
+  const [ocLineas, setOcLineas] = useState([])
+  const [cavidades, setCavidades] = useState([])
+  const [rec, setRec] = useState({ cantidad: '', almacen_id: '' })
 
   useEffect(() => { cargar() }, [])
 
   const cargar = async () => {
     setLoading(true)
     const emp = perfil.empresa_id
-    const [pr, ar, ex, lo, al] = await Promise.all([
+    const [pr, ar, ex, lo, al, cv] = await Promise.all([
       supabase.from('ordenes_maquila').select('*, maq:proveedores(nombre), art:articulos(codigo_interno, descripcion), molde:moldes(clave)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, costo, precio_maquila').eq('empresa_id', emp),
       supabase.from('existencias').select('*'),
       supabase.from('lotes').select('id, articulo_id, estatus_calidad, fecha, empresa_id').eq('empresa_id', emp),
       supabase.from('almacenes').select('*').eq('empresa_id', emp).eq('activo', true),
+      supabase.from('molde_cavidades').select('molde_id, articulo_id, activa').eq('activa', true),
     ])
     setProgramas(pr.data || []); setArticulos(ar.data || [])
-    setExistencias(ex.data || []); setLotes(lo.data || []); setAlmacenes(al.data || [])
+    setExistencias(ex.data || []); setLotes(lo.data || []); setAlmacenes(al.data || []); setCavidades(cv.data || [])
     setLoading(false)
   }
 
   const artDe = (id) => articulos.find(a => a.id === id)
   const loteDe = (id) => lotes.find(l => l.id === id)
   const almInternos = almacenes.filter(a => !a.es_virtual)
+  const cavDe = (id) => cavidades.filter(c => c.articulo_id === id).length
   const asegurarVirtual = async () => {
     if (omSel?.almacen_maquila_id) return omSel.almacen_maquila_id
     const clave = `MAQ-${omSel.maquilador_id}`
@@ -76,6 +81,68 @@ export default function Maquila() {
     else await supabase.from('existencias').insert({ lote_id: loteId, almacen_id: almV, ubicacion_id: null, cantidad: Number(cantidad) })
   }
 
+  const RECIBIBLES_OC = ['aprobada', 'enviada_proveedor', 'confirmada', 'en_transito', 'recibida_parcial']
+  const recibirProducto = async () => {
+    setError(''); setExito('')
+    const cant = Number(rec.cantidad)
+    if (!(cant > 0)) { setError('Captura la cantidad recibida.'); return }
+    if (!rec.almacen_id) { setError('Selecciona el almacen destino.'); return }
+    const recibibles = ocs.filter(o => RECIBIBLES_OC.includes(o.estatus))
+    if (recibibles.length === 0) { setError('No hay OC aprobada para recibir.'); return }
+    setProc(true)
+    try {
+      const { data: codigo, error: ec } = await supabase.rpc('generar_lote_recibo', { p_empresa_id: perfil.empresa_id })
+      if (ec) throw ec
+      const { data: lote, error: el } = await supabase.from('lotes').insert({ empresa_id: perfil.empresa_id, articulo_id: omSel.articulo_id, codigo_lote: codigo, origen: 'maquila', estatus_calidad: 'retenido', creado_por: perfil.id }).select().single()
+      if (el) throw el
+      await supabase.from('existencias').insert({ lote_id: lote.id, almacen_id: Number(rec.almacen_id), ubicacion_id: null, cantidad: cant })
+      await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: omSel.articulo_id, lote_id: lote.id, tipo: 'entrada_maquila', almacen_destino_id: Number(rec.almacen_id), cantidad: cant, motivo: `Recibo maquila ${omSel.folio}`, usuario_id: perfil.id })
+      const cav = cavDe(omSel.articulo_id) || 0
+      const shots = cav > 0 ? Math.ceil(cant / cav) : 0
+      await supabase.from('om_recibos').insert({ om_id: omSel.id, articulo_id: omSel.articulo_id, cantidad: cant, lote_id: lote.id, shots, recibido_por: perfil.id })
+      if (omSel.almacen_maquila_id) {
+        for (const m of materiales) {
+          const consumo = cant * Number(m.cantidad_por_unidad)
+          if (consumo <= 0) continue
+          const { tomados } = deducir(m.articulo_id, consumo, [omSel.almacen_maquila_id])
+          for (const t of tomados) {
+            const nueva = Number(t.ex.cantidad) - t.toma
+            if (nueva <= 0.000001) await supabase.from('existencias').delete().eq('id', t.ex.id)
+            else await supabase.from('existencias').update({ cantidad: nueva }).eq('id', t.ex.id)
+            await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: m.articulo_id, lote_id: t.ex.lote_id, tipo: 'consumo_maquila', almacen_origen_id: omSel.almacen_maquila_id, cantidad: t.toma, motivo: `Backflush maquila ${omSel.folio}`, usuario_id: perfil.id })
+          }
+        }
+      }
+      let resto = cant
+      const ols = ocLineas.filter(ol => recibibles.some(o => o.id === ol.oc_id)).sort((a, b) => a.oc_id - b.oc_id)
+      for (const ol of ols) {
+        if (resto <= 0.000001) break
+        const pend = Number(ol.cantidad) - Number(ol.cantidad_recibida || 0)
+        if (pend <= 0) continue
+        const ap = Math.min(pend, resto)
+        await supabase.from('oc_lineas').update({ cantidad_recibida: Number(ol.cantidad_recibida || 0) + ap }).eq('id', ol.id)
+        resto -= ap
+      }
+      let resto2 = cant
+      const firmeOrd = lineas.filter(l => l.tipo === 'firme' && Number(l.cantidad_oc) > Number(l.cantidad_recibida)).sort((a, b) => (a.fecha_requerida || '').localeCompare(b.fecha_requerida || ''))
+      for (const l of firmeOrd) {
+        if (resto2 <= 0.000001) break
+        const pend = Number(l.cantidad_oc) - Number(l.cantidad_recibida)
+        const ap = Math.min(pend, resto2)
+        await supabase.from('om_lineas').update({ cantidad_recibida: Number(l.cantidad_recibida) + ap }).eq('id', l.id)
+        resto2 -= ap
+      }
+      for (const o of recibibles) {
+        const { data: lref } = await supabase.from('oc_lineas').select('cantidad, cantidad_recibida').eq('oc_id', o.id)
+        const completa = (lref || []).every(x => Number(x.cantidad_recibida || 0) >= Number(x.cantidad))
+        await supabase.from('ordenes_compra').update({ estatus: completa ? 'recibida' : 'recibida_parcial' }).eq('id', o.id)
+      }
+      setExito(`Recibidas ${fmt(cant)} pzas de ${omSel.art?.codigo_interno} (lote ${codigo}, RETENIDO, lo libera Calidad). ${shots > 0 ? `+${fmt(shots)} shots al molde.` : ''}`)
+      await cargar(); await abrirDetalle(omSel)
+    } catch (err) { setError('Error al recibir: ' + err.message) }
+    setProc(false)
+  }
+
   const totalesDe = async (omId) => {
     const { data } = await supabase.from('om_lineas').select('tipo, cantidad, cantidad_oc, cantidad_recibida, vigente').eq('om_id', omId).eq('vigente', true)
     const t = { firme: 0, forecast: 0, enOC: 0, recibido: 0, backorder: 0 }
@@ -95,6 +162,10 @@ export default function Maquila() {
       supabase.from('ordenes_compra').select('*').eq('om_id', om.id).order('id', { ascending: false }),
     ])
     setLineas(l.data || []); setMateriales(m.data || []); setOcs(o.data || [])
+    const ocIds = (o.data || []).map(x => x.id)
+    const { data: ols } = ocIds.length ? await supabase.from('oc_lineas').select('*').in('oc_id', ocIds) : { data: [] }
+    setOcLineas(ols || [])
+    setRec({ cantidad: '', almacen_id: '' })
     const { data: sal } = await supabase.rpc('maquila_saldo', { p_om: om.id })
     setSaldo(sal || [])
     const firmeTot = (l.data || []).filter(x => x.tipo === 'firme').reduce((a, x) => a + Number(x.cantidad), 0)
@@ -256,8 +327,21 @@ export default function Maquila() {
               <div key={o.id} style={styles.tr}><span style={{ flex: 1, fontWeight: 600 }}>{o.folio}</span><span style={{ flex: 1 }}>{(o.estatus || '').replace(/_/g, ' ')}</span><span style={{ flex: 1, textAlign: 'right' }}>${fmt(o.total)}</span><span style={{ flex: 1.4 }}>{fFecha(o.fecha_entrega_estimada)}</span></div>
             ))}
           </div>
-          <p style={styles.hint}>El recibo del PT contra estas OC (entra como PT), el envio de free-issue y los shots al molde llegan en las siguientes fases.</p>
+          <p style={styles.hint}>El PT se recibe contra estas OC en la seccion de abajo (entra como PT).</p>
         </div>
+
+        {puedeEditar && ocs.some(o => RECIBIBLES_OC.includes(o.estatus)) && (
+        <div style={styles.tarjeta}>
+          <h3 style={styles.h3}>Recibir producto terminado (contra OC)</h3>
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}><label style={styles.lbl}>Cantidad recibida *</label><input type="number" min="0" style={styles.input} value={rec.cantidad} onChange={e => setRec({ ...rec, cantidad: e.target.value })} /></div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}><label style={styles.lbl}>Almacen destino *</label><select style={styles.input} value={rec.almacen_id} onChange={e => setRec({ ...rec, almacen_id: e.target.value })}><option value="">Selecciona...</option>{almInternos.map(a => <option key={a.id} value={a.id}>{a.clave} - {a.nombre}</option>)}</select></div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}><label style={styles.lbl}>Shots estimados</label><div style={styles.loteAuto}>{(() => { const c = cavDe(omSel.articulo_id); return c > 0 && rec.cantidad ? `${fmt(Math.ceil(Number(rec.cantidad) / c))} (cav ${c})` : c > 0 ? `cav ${c}` : 'sin molde' })()}</div></div>
+            <button style={styles.boton} onClick={recibirProducto} disabled={proc}>{proc ? 'Procesando...' : 'Recibir (RETENIDO)'}</button>
+          </div>
+          <p style={styles.hint}>Entra como PT (lote retenido, lo libera Calidad). Hace backflush del free-issue desde el maquilador, suma shots al molde y descuenta las lineas del programa (cierra backorders).</p>
+        </div>
+        )}
 
         <div style={styles.tarjeta}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -343,6 +427,9 @@ const styles = {
   boton: { padding: '9px 16px', backgroundColor: '#9333ea', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: '500', cursor: 'pointer' },
   botonAccion: { padding: '5px 12px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
   inputMini: { padding: '5px 8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '12px', outline: 'none', width: '110px' },
+  input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', fontFamily: 'inherit', backgroundColor: '#fff' },
+  lbl: { fontSize: '12px', fontWeight: '500', color: '#444' },
+  loteAuto: { padding: '9px 12px', borderRadius: '7px', border: '1px dashed #cbd5e1', fontSize: '13px', color: '#64748b', backgroundColor: '#f8fafc' },
   tabla: { border: '1px solid #eef2f7', borderRadius: '8px', overflow: 'hidden' },
   th: { display: 'flex', padding: '9px 14px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tr: { display: 'flex', padding: '10px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '13px' },
