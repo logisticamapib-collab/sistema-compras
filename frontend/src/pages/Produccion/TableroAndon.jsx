@@ -29,6 +29,7 @@ export default function TableroAndon() {
   const [adeudos, setAdeudos] = useState([])
   const [tick, setTick] = useState(0)
   const [control, setControl] = useState(false)
+  const [full, setFull] = useState(false)
   const [nuevaP, setNuevaP] = useState({ articulo_id: '', nota: '' })
   const [, forceTime] = useState(0)
   const timer = useRef(null)
@@ -112,10 +113,13 @@ export default function TableroAndon() {
   const adeudoAct = adeudos.length ? adeudos[tick % adeudos.length] : null
 
   return (
-    <div style={styles.wrap}>
+    <div style={full ? { ...styles.wrap, ...styles.wrapFull } : styles.wrap}>
       <div style={styles.head}>
         <h2 style={styles.titulo}>Tablero Andon</h2>
-        {puedeControl && <button style={styles.ctrlBtn} onClick={() => setControl(c => !c)}>{control ? 'Ocultar controles' : 'Controles'}</button>}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {puedeControl && <button style={styles.ctrlBtn} onClick={() => setControl(c => !c)}>{control ? 'Ocultar controles' : 'Controles'}</button>}
+          <button style={styles.ctrlBtn} onClick={() => setFull(f => !f)}>{full ? 'Mostrar menu' : 'Pantalla completa'}</button>
+        </div>
       </div>
 
       {/* Cinta de adeudos */}
@@ -128,14 +132,14 @@ export default function TableroAndon() {
 
       <div style={styles.cuerpo}>
         {/* Mosaico de maquinas */}
-        <div style={styles.mosaico}>
+        <div style={full ? { ...styles.mosaico, ...styles.mosaicoFull } : styles.mosaico}>
           {maquinas.map(m => {
             const ef = efectivo(m)
             const c = COLOR[ef.estado]
             const art = ef.familia || (ef.art ? artMap[ef.art]?.codigo_interno : null)
             const desc = ef.art ? artMap[ef.art]?.descripcion : (ef.ot ? '' : '')
             return (
-              <div key={m.id} style={{ ...styles.tile, backgroundColor: c.bg }}>
+              <div key={m.id} style={{ ...styles.tile, ...(full ? styles.tileFull : {}), backgroundColor: c.bg }}>
                 <div style={styles.tileMaq}>{m.clave}</div>
                 <div style={styles.tileEstado}>{c.lbl}</div>
                 <div style={styles.tileArt}>{art || '—'}</div>
@@ -192,6 +196,7 @@ export default function TableroAndon() {
 
 const styles = {
   wrap: { backgroundColor: '#0f172a', borderRadius: '12px', padding: '20px', minHeight: 'calc(100vh - 130px)' },
+  wrapFull: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, borderRadius: 0, minHeight: '100vh', overflow: 'auto', padding: '14px 18px' },
   head: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
   titulo: { fontSize: '20px', fontWeight: '700', color: '#fff', margin: 0 },
   ctrlBtn: { padding: '7px 14px', backgroundColor: '#1e293b', color: '#cbd5e1', border: '1px solid #334155', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' },
@@ -200,6 +205,8 @@ const styles = {
   cintaTxt: { color: '#e2e8f0', fontSize: '16px', whiteSpace: 'nowrap' },
   cuerpo: { display: 'flex', gap: '16px', flexWrap: 'wrap' },
   mosaico: { flex: 1, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px', minWidth: '280px' },
+  mosaicoFull: { gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px' },
+  tileFull: { padding: '10px 12px', minHeight: '108px' },
   tile: { borderRadius: '12px', padding: '16px', color: '#fff', minHeight: '150px', display: 'flex', flexDirection: 'column' },
   tileMaq: { fontSize: '22px', fontWeight: '800' },
   tileEstado: { fontSize: '12px', fontWeight: '700', opacity: 0.9, letterSpacing: '0.5px', marginBottom: '8px' },
