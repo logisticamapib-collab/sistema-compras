@@ -26,21 +26,55 @@ export default function Maquila() {
   const [proc, setProc] = useState(false)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
+  const [existencias, setExistencias] = useState([])
+  const [lotes, setLotes] = useState([])
+  const [almacenes, setAlmacenes] = useState([])
+  const [saldo, setSaldo] = useState([])
+  const [envCant, setEnvCant] = useState({})
 
   useEffect(() => { cargar() }, [])
 
   const cargar = async () => {
     setLoading(true)
     const emp = perfil.empresa_id
-    const [pr, ar] = await Promise.all([
+    const [pr, ar, ex, lo, al] = await Promise.all([
       supabase.from('ordenes_maquila').select('*, maq:proveedores(nombre), art:articulos(codigo_interno, descripcion), molde:moldes(clave)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, costo, precio_maquila').eq('empresa_id', emp),
+      supabase.from('existencias').select('*'),
+      supabase.from('lotes').select('id, articulo_id, estatus_calidad, fecha, empresa_id').eq('empresa_id', emp),
+      supabase.from('almacenes').select('*').eq('empresa_id', emp).eq('activo', true),
     ])
     setProgramas(pr.data || []); setArticulos(ar.data || [])
+    setExistencias(ex.data || []); setLotes(lo.data || []); setAlmacenes(al.data || [])
     setLoading(false)
   }
 
   const artDe = (id) => articulos.find(a => a.id === id)
+  const loteDe = (id) => lotes.find(l => l.id === id)
+  const almInternos = almacenes.filter(a => !a.es_virtual)
+  const asegurarVirtual = async () => {
+    if (omSel?.almacen_maquila_id) return omSel.almacen_maquila_id
+    const clave = `MAQ-${omSel.maquilador_id}`
+    const exv = almacenes.find(a => a.es_virtual && a.clave === clave)
+    if (exv) return exv.id
+    const { data, error: e } = await supabase.from('almacenes').insert({ empresa_id: perfil.empresa_id, site_id: perfil.site_id, clave, nombre: `Maquila ${omSel.maq?.nombre || omSel.maquilador_id}`, activo: true, es_virtual: true }).select().single()
+    if (e) throw e
+    return data.id
+  }
+  const deducir = (articuloId, cantidad, almacenIds) => {
+    let restante = Number(cantidad)
+    const exs = existencias.filter(e => almacenIds.includes(e.almacen_id) && Number(e.cantidad) > 0)
+      .filter(e => loteDe(e.lote_id)?.articulo_id === articuloId && loteDe(e.lote_id)?.estatus_calidad === 'liberado')
+      .sort((a, b) => (loteDe(a.lote_id)?.fecha || '').localeCompare(loteDe(b.lote_id)?.fecha || ''))
+    const tomados = []
+    for (const e of exs) { if (restante <= 0.000001) break; const toma = Math.min(Number(e.cantidad), restante); tomados.push({ ex: e, toma }); restante -= toma }
+    return { tomados, faltante: Math.max(0, restante) }
+  }
+  const sumarVirtual = async (loteId, almV, cantidad) => {
+    const existe = existencias.find(e => e.lote_id === loteId && e.almacen_id === almV)
+    if (existe) await supabase.from('existencias').update({ cantidad: Number(existe.cantidad) + Number(cantidad) }).eq('id', existe.id)
+    else await supabase.from('existencias').insert({ lote_id: loteId, almacen_id: almV, ubicacion_id: null, cantidad: Number(cantidad) })
+  }
 
   const totalesDe = async (omId) => {
     const { data } = await supabase.from('om_lineas').select('tipo, cantidad, cantidad_oc, cantidad_recibida, vigente').eq('om_id', omId).eq('vigente', true)
@@ -61,6 +95,12 @@ export default function Maquila() {
       supabase.from('ordenes_compra').select('*').eq('om_id', om.id).order('id', { ascending: false }),
     ])
     setLineas(l.data || []); setMateriales(m.data || []); setOcs(o.data || [])
+    const { data: sal } = await supabase.rpc('maquila_saldo', { p_om: om.id })
+    setSaldo(sal || [])
+    const firmeTot = (l.data || []).filter(x => x.tipo === 'firme').reduce((a, x) => a + Number(x.cantidad), 0)
+    const ec = {}
+    for (const mat of (m.data || [])) ec[mat.id] = Math.max(0, firmeTot * Number(mat.cantidad_por_unidad) - Number(mat.cantidad_enviada || 0))
+    setEnvCant(ec)
     setOmSel(om); setVista('detalle')
   }
 
@@ -105,6 +145,35 @@ export default function Maquila() {
   const toggleEnviar = async (m) => {
     await supabase.from('om_materiales').update({ enviar: !m.enviar }).eq('id', m.id)
     setMateriales(ms => ms.map(x => x.id === m.id ? { ...x, enviar: !x.enviar } : x))
+  }
+
+  const enviarMaterial = async () => {
+    setError(''); setExito('')
+    const mats = materiales.filter(m => m.enviar && Number(envCant[m.id]) > 0)
+    if (mats.length === 0) { setError('No hay material marcado con cantidad a enviar.'); return }
+    setProc(true)
+    try {
+      const almV = await asegurarVirtual()
+      const internos = almInternos.map(a => a.id)
+      for (const m of mats) {
+        const qty = Number(envCant[m.id])
+        const { tomados, faltante } = deducir(m.articulo_id, qty, internos)
+        if (faltante > 0.001) throw new Error(`${artDe(m.articulo_id)?.codigo_interno}: faltan ${fmt(faltante)} en almacenes internos (liberado).`)
+        for (const t of tomados) {
+          const nueva = Number(t.ex.cantidad) - t.toma
+          if (nueva <= 0.000001) await supabase.from('existencias').delete().eq('id', t.ex.id)
+          else await supabase.from('existencias').update({ cantidad: nueva }).eq('id', t.ex.id)
+          await sumarVirtual(t.ex.lote_id, almV, t.toma)
+          await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: m.articulo_id, lote_id: t.ex.lote_id, tipo: 'salida_maquila', almacen_origen_id: t.ex.almacen_id, ubicacion_origen_id: t.ex.ubicacion_id || null, almacen_destino_id: almV, cantidad: t.toma, motivo: `Free-issue maquila ${omSel.folio}`, usuario_id: perfil.id })
+        }
+        await supabase.from('om_materiales').update({ cantidad_enviada: Number(m.cantidad_enviada || 0) + qty }).eq('id', m.id)
+      }
+      if (!omSel.almacen_maquila_id) await supabase.from('ordenes_maquila').update({ almacen_maquila_id: almV }).eq('id', omSel.id)
+      setExito('Material enviado al almacen del maquilador (free-issue).')
+      await cargar()
+      await abrirDetalle({ ...omSel, almacen_maquila_id: omSel.almacen_maquila_id || almV })
+    } catch (err) { setError('Error al enviar: ' + err.message) }
+    setProc(false)
   }
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
@@ -191,19 +260,41 @@ export default function Maquila() {
         </div>
 
         <div style={styles.tarjeta}>
-          <h3 style={styles.h3}>Material a suministrar (free-issue por BOM)</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={styles.h3}>Material a suministrar (free-issue por BOM)</h3>
+            {puedeEditar && materiales.some(m => m.enviar) && (<button style={styles.boton} onClick={enviarMaterial} disabled={proc}>{proc ? 'Enviando...' : 'Enviar material'}</button>)}
+          </div>
           <div style={styles.tabla}>
-            <div style={styles.th}><span style={{ flex: 2 }}>Componente</span><span style={{ flex: 1, textAlign: 'right' }}>Por unidad</span><span style={{ flex: 1, textAlign: 'center' }}>Enviar</span></div>
+            <div style={styles.th}><span style={{ flex: 2 }}>Componente</span><span style={{ flex: 1, textAlign: 'right' }}>Por unidad</span><span style={{ flex: 1, textAlign: 'right' }}>Enviado</span><span style={{ flex: 1.1, textAlign: 'right' }}>A enviar</span><span style={{ flex: 0.7, textAlign: 'center' }}>Free-issue</span></div>
             {materiales.map(m => (
               <div key={m.id} style={styles.tr}>
                 <span style={{ flex: 2 }}>{artDe(m.articulo_id)?.codigo_interno} <span style={{ color: '#94a3b8' }}>- {artDe(m.articulo_id)?.descripcion}</span></span>
                 <span style={{ flex: 1, textAlign: 'right' }}>{fmt(m.cantidad_por_unidad)} {m.unidad_medida}</span>
-                <span style={{ flex: 1, textAlign: 'center' }}><input type="checkbox" checked={!!m.enviar} disabled={!puedeEditar} onChange={() => toggleEnviar(m)} /></span>
+                <span style={{ flex: 1, textAlign: 'right', color: '#16a34a' }}>{fmt(m.cantidad_enviada)}</span>
+                <span style={{ flex: 1.1, textAlign: 'right' }}>{m.enviar ? <input type="number" min="0" value={envCant[m.id] ?? ''} disabled={!puedeEditar} onChange={e => setEnvCant({ ...envCant, [m.id]: e.target.value })} style={{ ...styles.inputMini, textAlign: 'right' }} /> : <span style={{ color: '#cbd5e1' }}>-</span>}</span>
+                <span style={{ flex: 0.7, textAlign: 'center' }}><input type="checkbox" checked={!!m.enviar} disabled={!puedeEditar} onChange={() => toggleEnviar(m)} /></span>
               </div>
             ))}
             {materiales.length === 0 && <div style={styles.vacio}>Sin BOM (el PT no consume componentes suministrados).</div>}
           </div>
-          <p style={styles.hint}>Marca que componentes envias tu (free-issue). Los no marcados los pone el maquilador. El envio y consumo se opera en la fase 3.</p>
+          <p style={styles.hint}>Desmarca "free-issue" en los componentes que ponga el maquilador. Sugerido = firme x BOM (menos lo ya enviado). Se descuenta de tu almacen (liberado, FIFO) y pasa al almacen del maquilador.</p>
+        </div>
+
+        <div style={styles.tarjeta}>
+          <h3 style={styles.h3}>Conciliacion de material (saldo en maquila)</h3>
+          <div style={styles.tabla}>
+            <div style={styles.th}><span style={{ flex: 2 }}>Componente</span><span style={{ flex: 1, textAlign: 'right' }}>Enviado</span><span style={{ flex: 1, textAlign: 'right' }}>Consumo teorico</span><span style={{ flex: 1, textAlign: 'right' }}>Saldo</span><span style={{ flex: 1, textAlign: 'right' }}>En maquila</span></div>
+            {saldo.length === 0 && <div style={styles.vacio}>Sin envios aun.</div>}
+            {saldo.map((sv, i) => { const merma = Math.abs(Number(sv.saldo) - Number(sv.existencia_virtual)) > 0.01; return (
+              <div key={i} style={styles.tr}>
+                <span style={{ flex: 2 }}>{artDe(sv.articulo_id)?.codigo_interno}</span>
+                <span style={{ flex: 1, textAlign: 'right' }}>{fmt(sv.enviado)}</span>
+                <span style={{ flex: 1, textAlign: 'right' }}>{fmt(sv.consumo_teorico)}</span>
+                <span style={{ flex: 1, textAlign: 'right', fontWeight: 600 }}>{fmt(sv.saldo)}</span>
+                <span style={{ flex: 1, textAlign: 'right', color: merma ? '#dc2626' : '#16a34a' }}>{fmt(sv.existencia_virtual)}</span>
+              </div>) })}
+          </div>
+          <p style={styles.hint}>Saldo = enviado - (recibido x BOM). "En maquila" es la existencia real en el almacen del maquilador; si difiere hay merma a justificar. El consumo se aplica al recibir el PT (fase 4).</p>
         </div>
       </div>
     )
@@ -251,6 +342,7 @@ const styles = {
   hint: { fontSize: '12px', color: '#94a3b8', marginTop: '8px', lineHeight: 1.5 },
   boton: { padding: '9px 16px', backgroundColor: '#9333ea', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: '500', cursor: 'pointer' },
   botonAccion: { padding: '5px 12px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
+  inputMini: { padding: '5px 8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '12px', outline: 'none', width: '110px' },
   tabla: { border: '1px solid #eef2f7', borderRadius: '8px', overflow: 'hidden' },
   th: { display: 'flex', padding: '9px 14px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tr: { display: 'flex', padding: '10px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '13px' },
