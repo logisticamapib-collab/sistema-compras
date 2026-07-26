@@ -10,6 +10,7 @@ import GrupoProduccion from './Produccion/index'
 import GrupoPlaneacion from './Planeacion/index'
 import ModuloPendiente from './ModuloPendiente'
 import GrupoMoldes from './Moldes/index'
+import GrupoMantenimiento from './Mantenimiento/index'
 
 // Modulos "contenedor" -- agrupan varias pantallas y dependen de permisos granulares internos
 const modulosGrupo = [
@@ -20,6 +21,7 @@ const modulosGrupo = [
   { id: 'calidad', titulo: 'Calidad', desc: 'Liberacion de lotes, cuarentena y no conformidades', color: '#b91c1c' },
   { id: 'planeacion', titulo: 'Planeacion', desc: 'Motor MRP: parametros, corridas y ordenes planeadas', color: '#9333ea' },
   { id: 'moldes', titulo: 'Mantenimiento de Moldes', desc: 'Estado, ordenes, avisos, shots y KPIs de moldes', color: '#a16207' },
+  { id: 'mantenimiento', titulo: 'Mantenimiento', desc: 'Ordenes de mantenimiento general y de maquinas', color: '#57534e' },
 ]
 
 // Configuracion es su propio modulo principal (no vive dentro de ningun grupo)
@@ -27,7 +29,6 @@ const moduloConfiguracion = { id: 'configuracion', titulo: 'Configuracion', desc
 
 // Modulos del roadmap de MRP, todavia sin funcionalidad interna -- visibles para todos como referencia del plan
 const modulosPendientes = [
-  { id: 'mantenimiento', titulo: 'Mantenimiento', desc: 'Ordenes de mantenimiento general', color: '#57534e' },
 ]
 
 export default function Dashboard() {
@@ -63,6 +64,7 @@ export default function Dashboard() {
           {moduloActivo === 'produccion' && <GrupoProduccion />}
           {moduloActivo === 'planeacion' && <GrupoPlaneacion />}
           {moduloActivo === 'moldes' && <GrupoMoldes />}
+          {moduloActivo === 'mantenimiento' && <GrupoMantenimiento />}
           {moduloActivo === 'configuracion' && <Configuracion />}
           {pendienteActivo && <ModuloPendiente titulo={pendienteActivo.titulo} />}
         </div>
