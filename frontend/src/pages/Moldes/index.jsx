@@ -4,11 +4,15 @@ import MoldesEstado from './MoldesEstado'
 import OrdenesMtto from './OrdenesMtto'
 import TiposMtto from './TiposMtto'
 import AvisosMtto from './AvisosMtto'
+import CalendarioMtto from './CalendarioMtto'
+import KpisMtto from './KpisMtto'
 
 const secciones = [
   { id: 'estado', modulo: 'mol_estado', titulo: 'Moldes y estado' },
   { id: 'ordenes', modulo: 'mol_ordenes', titulo: 'Ordenes de Mantenimiento' },
   { id: 'avisos', modulo: 'mol_avisos', titulo: 'Avisos de Mantenimiento' },
+  { id: 'calendario', modulo: 'mol_calendario', titulo: 'Calendario / Programa' },
+  { id: 'kpis', modulo: 'mol_kpis', titulo: 'KPIs' },
   { id: 'tipos', modulo: 'mol_tipos', titulo: 'Tipos y parametros' },
 ]
 
@@ -30,6 +34,8 @@ export default function GrupoMoldes() {
         {seccion === 'estado' && <MoldesEstado />}
         {seccion === 'ordenes' && <OrdenesMtto />}
         {seccion === 'avisos' && <AvisosMtto />}
+        {seccion === 'calendario' && <CalendarioMtto />}
+        {seccion === 'kpis' && <KpisMtto />}
         {seccion === 'tipos' && <TiposMtto />}
       </div>
     </div>

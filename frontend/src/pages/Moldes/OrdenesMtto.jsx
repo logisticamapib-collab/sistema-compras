@@ -214,6 +214,22 @@ export default function OrdenesMtto() {
     setProc(false)
   }
 
+  const iniciar = async () => {
+    setProc(true); setError('')
+    try {
+      await supabase.from('molde_mtto').update({ estatus: 'en_proceso', fecha_inicio: new Date().toISOString() }).eq('id', sel.id)
+      const est = sel.tipo?.clase === 'correctivo' ? 'en_reparacion' : 'en_mantenimiento'
+      await supabase.from('moldes').update({ estado: est }).eq('id', sel.molde_id)
+      setExito('Mantenimiento iniciado. Molde -> ' + est.replace(/_/g, ' ') + '.')
+      await cargar(); await abrirDetalle(sel)
+    } catch (err) { setError('Error: ' + err.message) }
+    setProc(false)
+  }
+  const marcarFacturado = async () => {
+    await supabase.from('molde_mtto').update({ facturado: true }).eq('id', sel.id)
+    setExito('Marcada como facturada.'); await cargar(); await abrirDetalle(sel)
+  }
+
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
 
   // ---------- NUEVA ----------
@@ -296,6 +312,9 @@ export default function OrdenesMtto() {
           )}
         </div>
 
+        {sel.estatus === 'programada' && puedeEditar && (
+          <div style={styles.botones}><button style={styles.boton} onClick={iniciar} disabled={proc}>Iniciar mantenimiento</button></div>
+        )}
         {sel.estatus === 'en_proceso' && puedeEditar && (
           <div style={styles.botones}>
             {areasReq().length > 0
@@ -322,6 +341,7 @@ export default function OrdenesMtto() {
           </div>
         )}
         <p style={styles.hint}>Shots al abrir: {fmt(sel.shots_al_abrir)} · {sel.reinicia_contador ? 'Al cerrar (try-out aprobado) se reinicia el contador de shots.' : 'Este tipo NO reinicia el contador.'}</p>
+        {sel.es_cobrable && !sel.facturado && puedeEditar && (<div style={styles.botones}><button style={styles.botonSec} onClick={marcarFacturado} disabled={proc}>Marcar como facturado</button></div>)}
       </div>
     )
   }
