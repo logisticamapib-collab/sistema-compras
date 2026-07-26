@@ -23,7 +23,7 @@ const formVacio = {
   lead_time_dias: '', moq: '', tiempo_transito_dias: '', stock_minimo: '', snp: '',
   dias_inventario_seguridad: '', multiplo_lote: '', costo: '',
   tipo_proceso: 'solo_inyeccion', articulo_wip_origen_id: '',
-  se_maquila: false, maquilador_id: '',
+  se_maquila: false, maquilador_id: '', precio_maquila: '',
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
@@ -114,7 +114,7 @@ export default function Articulos() {
       multiplo_lote: articulo.multiplo_lote ?? '',
       costo: articulo.costo ?? '',
       tipo_proceso: articulo.tipo_proceso || 'solo_inyeccion',
-      se_maquila: articulo.se_maquila || false, maquilador_id: articulo.maquilador_id?.toString() || '',
+      se_maquila: articulo.se_maquila || false, maquilador_id: articulo.maquilador_id?.toString() || '', precio_maquila: articulo.precio_maquila ?? '',
       articulo_wip_origen_id: articulo.articulo_wip_origen_id?.toString() || '',
       peso_pieza_g: articulo.peso_pieza_g ?? '',
       peso_colada_g: articulo.peso_colada_g ?? '',
@@ -167,6 +167,7 @@ export default function Articulos() {
       tipo_proceso: esFabricado ? form.tipo_proceso : null,
       se_maquila: esFabricado ? !!form.se_maquila : false,
       maquilador_id: esFabricado && form.se_maquila && form.maquilador_id ? parseInt(form.maquilador_id) : null,
+      precio_maquila: esFabricado && form.se_maquila && form.precio_maquila !== '' ? parseFloat(form.precio_maquila) : null,
       articulo_wip_origen_id: esFabricado && form.articulo_wip_origen_id ? parseInt(form.articulo_wip_origen_id) : null,
       peso_pieza_g: esFabricado && form.peso_pieza_g !== '' ? parseFloat(form.peso_pieza_g) : null,
       peso_colada_g: esFabricado && form.peso_colada_g !== '' ? parseFloat(form.peso_colada_g) : null,
@@ -498,6 +499,12 @@ export default function Articulos() {
                       <option value="">Selecciona...</option>
                       {proveedores.filter(p => p.es_maquilador).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                     </select>
+                  </div>
+                )}
+                {form.se_maquila && (
+                  <div style={styles.campo}>
+                    <label style={styles.label}>Precio de compra (maquila)</label>
+                    <input style={styles.input} type="number" step="0.0001" value={form.precio_maquila} onChange={e => setForm({ ...form, precio_maquila: e.target.value })} placeholder="Precio unitario al maquilador" />
                   </div>
                 )}
               </div>

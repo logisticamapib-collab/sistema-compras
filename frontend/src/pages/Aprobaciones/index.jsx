@@ -41,7 +41,7 @@ export default function Aprobaciones() {
       queryOC = supabase.from('ordenes_compra')
         .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
         .eq('empresa_id', perfil.empresa_id)
-        .in('estatus', ['aprobacion_gerente_area', 'aprobacion_gerente_planta', 'aprobacion_gerente_compras', 'aprobacion_direccion'])
+        .in('estatus', ['aprobacion_gerente_area', 'aprobacion_gerente_planta', 'aprobacion_gerente_logistica', 'revision_compras', 'aprobacion_gerente_compras', 'aprobacion_direccion'])
         .order('created_at', { ascending: true })
     } else if (perfil?.rol === 'gerente_compras') {
       queryOC = supabase.from('ordenes_compra')
@@ -54,6 +54,18 @@ export default function Aprobaciones() {
         .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
         .eq('empresa_id', perfil.empresa_id)
         .eq('estatus', 'aprobacion_direccion')
+        .order('created_at', { ascending: true })
+    } else if (perfil?.rol === 'gerente_logistica') {
+      queryOC = supabase.from('ordenes_compra')
+        .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
+        .eq('empresa_id', perfil.empresa_id)
+        .or(`estatus.eq.aprobacion_gerente_logistica,and(estatus.in.(aprobacion_gerente_area,aprobacion_gerente_planta),aprobador_actual_id.eq.${perfil.id})`)
+        .order('created_at', { ascending: true })
+    } else if (perfil?.rol === 'compras') {
+      queryOC = supabase.from('ordenes_compra')
+        .select('*, proveedores(nombre), comprador:comprador_id(nombre), sites(codigo), requisiciones(folio, criticidad)')
+        .eq('empresa_id', perfil.empresa_id)
+        .eq('estatus', 'revision_compras')
         .order('created_at', { ascending: true })
     } else if (ROLES_GERENCIALES.includes(perfil?.rol)) {
       // Gerentes de area/planta: solo ven la OC si son la persona asignada como aprobador actual

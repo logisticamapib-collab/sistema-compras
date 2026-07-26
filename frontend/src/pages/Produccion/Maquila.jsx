@@ -34,7 +34,7 @@ export default function Maquila() {
     const emp = perfil.empresa_id
     const [pr, ar] = await Promise.all([
       supabase.from('ordenes_maquila').select('*, maq:proveedores(nombre), art:articulos(codigo_interno, descripcion), molde:moldes(clave)').eq('empresa_id', emp).order('id', { ascending: false }),
-      supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, costo').eq('empresa_id', emp),
+      supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, costo, precio_maquila').eq('empresa_id', emp),
     ])
     setProgramas(pr.data || []); setArticulos(ar.data || [])
     setLoading(false)
@@ -75,7 +75,7 @@ export default function Maquila() {
     setProc(true)
     try {
       const art = artDe(omSel.articulo_id)
-      const precio = Number(art?.costo || 0)
+      const precio = Number(art?.precio_maquila ?? art?.costo ?? 0)
       const totalQty = firmePend.reduce((s, l) => s + pendConv(l), 0)
       const fechaEntrega = firmePend.reduce((min, l) => (!min || (l.fecha_requerida && l.fecha_requerida < min) ? l.fecha_requerida : min), null)
       const subtotal = totalQty * precio, iva = subtotal * 0.16, total = subtotal + iva
@@ -83,7 +83,7 @@ export default function Maquila() {
       const { data: oc, error: e1 } = await supabase.from('ordenes_compra').insert({
         folio, empresa_id: perfil.empresa_id, site_id: perfil.site_id, proveedor_id: omSel.maquilador_id,
         comprador_id: perfil.id, fecha_emision: new Date().toISOString(), fecha_entrega_estimada: fechaEntrega,
-        moneda: 'MXN', subtotal, iva, total, estatus: 'aprobada', tipo: 'subcontrato', om_id: omSel.id,
+        moneda: 'MXN', subtotal, iva, total, estatus: 'aprobacion_gerente_logistica', tipo: 'subcontrato', om_id: omSel.id,
         notas: `Subcontrato maquila - programa ${omSel.folio}`,
       }).select().single()
       if (e1) throw e1
@@ -96,7 +96,7 @@ export default function Maquila() {
       for (const l of firmePend) {
         await supabase.from('om_lineas').update({ cantidad_oc: Number(l.cantidad) }).eq('id', l.id)
       }
-      setExito(`OC ${folio} creada (${fmt(totalQty)} pzas de ${art?.codigo_interno}). Queda como pendiente por entregar (backorder).`)
+      setExito(`OC ${folio} creada (${fmt(totalQty)} pzas de ${art?.codigo_interno}). Entra a aprobacion: Gerente de Logistica -> Compras (precios) -> Gerente de Compras -> compradora la envia.`)
       await abrirDetalle(omSel)
     } catch (err) { setError('Error al generar OC: ' + err.message) }
     setProc(false)

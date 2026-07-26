@@ -8,6 +8,8 @@ import { enviarCorreo, obtenerInvolucrados } from '../../lib/email'
 const estatusLabels = {
   borrador: 'Borrador',
   aprobacion_gerente_area: 'Pendiente - Gerente de Area',
+  aprobacion_gerente_logistica: 'Pendiente - Gerente de Logistica',
+  revision_compras: 'Revision de precios - Compras',
   aprobacion_gerente_planta: 'Pendiente - Gerente de Planta/Adm',
   aprobacion_gerente_compras: 'Pendiente - Gerente de Compras',
   aprobacion_direccion: 'Pendiente - Direccion',
@@ -31,6 +33,14 @@ const eventoLabels = {
 // Determina el siguiente estatus del flujo de APROBACION unicamente.
 // El seguimiento logistico (enviada, confirmada, transito, recepcion) se maneja aparte.
 function determinarSiguienteEstatus(orden) {
+  if (orden.tipo === 'subcontrato') {
+    switch (orden.estatus) {
+      case 'aprobacion_gerente_logistica': return 'revision_compras'
+      case 'revision_compras': return 'aprobacion_gerente_compras'
+      case 'aprobacion_gerente_compras': return 'aprobada'
+      default: return null
+    }
+  }
   const criticidadAlta = orden.requisiciones?.criticidad === 'alta'
   switch (orden.estatus) {
     case 'aprobacion_gerente_area':
@@ -47,6 +57,8 @@ function determinarSiguienteEstatus(orden) {
 }
 
 const etiquetasBoton = {
+  aprobacion_gerente_logistica: 'Aprobar (Logistica)',
+  revision_compras: 'Precios OK - enviar a Gerente Compras',
   aprobacion_gerente_planta: 'Aprobar orden',
   aprobacion_gerente_compras: 'Aprobar orden',
   aprobacion_direccion: 'Aprobar orden',
@@ -107,6 +119,8 @@ export default function DetalleOrden({ orden, onVolver }) {
     if (['aprobacion_gerente_area', 'aprobacion_gerente_planta'].includes(estatus)) {
       return perfil?.id === orden.aprobador_actual_id
     }
+    if (estatus === 'aprobacion_gerente_logistica') return perfil?.rol === 'gerente_logistica'
+    if (estatus === 'revision_compras') return ['compras', 'gerente_compras'].includes(perfil?.rol)
     if (estatus === 'aprobacion_gerente_compras') return perfil?.rol === 'gerente_compras'
     if (estatus === 'aprobacion_direccion') return perfil?.rol === 'direccion'
     return false
@@ -121,6 +135,7 @@ export default function DetalleOrden({ orden, onVolver }) {
   // y solo el comprador que la genero (o admin) puede hacerlo.
   const puedeEditar = () => {
     if (orden.estatus === 'cancelada') return false
+    if (orden.tipo === 'subcontrato' && orden.estatus === 'revision_compras') return ['compras', 'gerente_compras', 'admin'].includes(perfil?.rol)
     if (aprobaciones.length > 0) return false
     return perfil?.id === orden.comprador_id || perfil?.rol === 'admin'
   }
