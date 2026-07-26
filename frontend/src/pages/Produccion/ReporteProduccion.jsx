@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import EscanerCamara from '../../components/EscanerCamara'
 import EtiquetaProducto from '../../components/EtiquetaProducto'
 import { datosEtiqueta } from '../../lib/etiquetas'
 import { crearCajas, asegurarCajas } from '../../lib/contenedores'
@@ -400,8 +401,11 @@ export default function ReporteProduccion() {
         <div style={styles.fila}>
           <div style={{ ...styles.campo, flex: 1.3 }}>
             <label style={styles.label}>Escanea el QR de la OT</label>
-            <input style={styles.input} value={escaneoOt} onChange={e => setEscaneoOt(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') procesarEscaneoOt(escaneoOt) }} placeholder="Escanea la etiqueta de la caja" autoFocus />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input style={{ ...styles.input, flex: 1 }} value={escaneoOt} onChange={e => setEscaneoOt(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') procesarEscaneoOt(escaneoOt) }} placeholder="Escanea la etiqueta de la caja" autoFocus />
+              <EscanerCamara onScan={t => procesarEscaneoOt(t)} />
+            </div>
           </div>
           <div style={{ ...styles.campo, flex: 2.2 }}>
             <label style={styles.label}>Orden de trabajo *</label>
