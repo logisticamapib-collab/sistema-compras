@@ -485,29 +485,6 @@ export default function Articulos() {
 
           {form.origen === 'comprado' && (
             <>
-              <div style={styles.fila}>
-                <div style={styles.campo}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#334155' }}>
-                    <input type="checkbox" checked={!!form.se_maquila} onChange={e => setForm({ ...form, se_maquila: e.target.checked })} />
-                    Se maquila (subcontratado): el MRP generara Orden de Maquila en vez de OT interna
-                  </label>
-                </div>
-                {form.se_maquila && (
-                  <div style={styles.campo}>
-                    <label style={styles.label}>Maquilador</label>
-                    <select style={styles.input} value={form.maquilador_id} onChange={e => setForm({ ...form, maquilador_id: e.target.value })}>
-                      <option value="">Selecciona...</option>
-                      {proveedores.filter(p => p.es_maquilador).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                    </select>
-                  </div>
-                )}
-                {form.se_maquila && (
-                  <div style={styles.campo}>
-                    <label style={styles.label}>Precio de compra (maquila)</label>
-                    <input style={styles.input} type="number" step="0.0001" value={form.precio_maquila} onChange={e => setForm({ ...form, precio_maquila: e.target.value })} placeholder="Precio unitario al maquilador" />
-                  </div>
-                )}
-              </div>
               <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
                 Datos de abastecimiento (planeacion MRP)
               </h3>
@@ -558,6 +535,29 @@ export default function Articulos() {
 
           {form.origen === 'fabricado' && (
             <>
+              <div style={styles.fila}>
+                <div style={styles.campo}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#334155' }}>
+                    <input type="checkbox" checked={!!form.se_maquila} onChange={e => setForm({ ...form, se_maquila: e.target.checked })} />
+                    Se maquila (subcontratado): el MRP lo programa como maquila (OC al maquilador) en vez de OT interna
+                  </label>
+                </div>
+                {form.se_maquila && (
+                  <div style={styles.campo}>
+                    <label style={styles.label}>Maquilador</label>
+                    <select style={styles.input} value={form.maquilador_id} onChange={e => setForm({ ...form, maquilador_id: e.target.value })}>
+                      <option value="">Selecciona...</option>
+                      {proveedores.filter(p => p.es_maquilador).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                  </div>
+                )}
+                {form.se_maquila && (
+                  <div style={styles.campo}>
+                    <label style={styles.label}>Precio de compra (maquila)</label>
+                    <input style={styles.input} type="number" step="0.0001" value={form.precio_maquila} onChange={e => setForm({ ...form, precio_maquila: e.target.value })} placeholder="Precio unitario al maquilador" />
+                  </div>
+                )}
+              </div>
               <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
                 Datos de Ingenieria
               </h3>
