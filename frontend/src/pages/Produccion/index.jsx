@@ -6,12 +6,14 @@ import CatalogosProduccion from './Catalogos'
 import ProgramacionProduccion from './ProgramacionProduccion'
 import TableroAndon from './TableroAndon'
 import Maquila from './Maquila'
+import TerminalOperador from './TerminalOperador'
 
 const secciones = [
   { id: 'ordenes', modulo: 'prod_ordenes', titulo: 'Ordenes de Trabajo' },
   { id: 'reporte', modulo: 'prod_reportes', titulo: 'Reporte de Produccion' },
   { id: 'programa', modulo: 'prod_programa', titulo: 'Programacion' },
   { id: 'andon', modulo: 'prod_andon', titulo: 'Tablero Andon' },
+  { id: 'terminal', modulo: 'prod_terminal', titulo: 'Terminal de Operador' },
   { id: 'catalogos', modulo: 'prod_catalogos', titulo: 'Catalogos' },
   { id: 'maquila', modulo: 'prod_maquila', titulo: 'Maquila / Subcontratacion' },
 ]
@@ -40,6 +42,7 @@ export default function GrupoProduccion() {
         {seccion === 'reporte' && <ReporteProduccion />}
         {seccion === 'programa' && <ProgramacionProduccion />}
         {seccion === 'andon' && <TableroAndon />}
+        {seccion === 'terminal' && <TerminalOperador />}
         {seccion === 'catalogos' && <CatalogosProduccion />}
         {seccion === 'maquila' && <Maquila />}
       </div>
