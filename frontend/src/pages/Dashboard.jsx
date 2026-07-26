@@ -9,6 +9,7 @@ import GrupoCalidad from './Calidad/index'
 import GrupoProduccion from './Produccion/index'
 import GrupoPlaneacion from './Planeacion/index'
 import ModuloPendiente from './ModuloPendiente'
+import GrupoMoldes from './Moldes/index'
 
 // Modulos "contenedor" -- agrupan varias pantallas y dependen de permisos granulares internos
 const modulosGrupo = [
@@ -18,6 +19,7 @@ const modulosGrupo = [
   { id: 'produccion', titulo: 'Produccion', desc: 'Ordenes de trabajo, reporte de produccion y scrap', color: '#c2410c' },
   { id: 'calidad', titulo: 'Calidad', desc: 'Liberacion de lotes, cuarentena y no conformidades', color: '#b91c1c' },
   { id: 'planeacion', titulo: 'Planeacion', desc: 'Motor MRP: parametros, corridas y ordenes planeadas', color: '#9333ea' },
+  { id: 'moldes', titulo: 'Mantenimiento de Moldes', desc: 'Estado, ordenes, avisos, shots y KPIs de moldes', color: '#a16207' },
 ]
 
 // Configuracion es su propio modulo principal (no vive dentro de ningun grupo)
@@ -25,7 +27,6 @@ const moduloConfiguracion = { id: 'configuracion', titulo: 'Configuracion', desc
 
 // Modulos del roadmap de MRP, todavia sin funcionalidad interna -- visibles para todos como referencia del plan
 const modulosPendientes = [
-  { id: 'moldes', titulo: 'Mantenimiento de Moldes', desc: 'Conteo de shots y mantenimiento preventivo', color: '#a16207' },
   { id: 'mantenimiento', titulo: 'Mantenimiento', desc: 'Ordenes de mantenimiento general', color: '#57534e' },
 ]
 
@@ -61,6 +62,7 @@ export default function Dashboard() {
           {moduloActivo === 'calidad' && <GrupoCalidad />}
           {moduloActivo === 'produccion' && <GrupoProduccion />}
           {moduloActivo === 'planeacion' && <GrupoPlaneacion />}
+          {moduloActivo === 'moldes' && <GrupoMoldes />}
           {moduloActivo === 'configuracion' && <Configuracion />}
           {pendienteActivo && <ModuloPendiente titulo={pendienteActivo.titulo} />}
         </div>

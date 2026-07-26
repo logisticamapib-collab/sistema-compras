@@ -144,6 +144,7 @@ export default function OrdenesTrabajo() {
       return
     }
     if (REQUIERE_MOLDE.includes(artSel.tipo_proceso) && !form.molde_id) { setError('El proceso requiere molde y el articulo no tiene molde/cavidad asignado'); return }
+    if (form.molde_id) { const _mol = moldes.find(m => m.id === Number(form.molde_id)); if (_mol && !['disponible', 'en_produccion'].includes(_mol.estado || 'disponible')) { setError(`El molde ${_mol.clave} esta ${(_mol.estado || '').replace(/_/g, ' ')} y no puede programarse.`); return } }
     if (!ubiMp) { setError('La maquina no tiene ubicacion de materia prima ligada. Creala en Almacenes (ej. MP-MAQ1) y ligala a la maquina.'); return }
     setProcesando(true)
     try {
