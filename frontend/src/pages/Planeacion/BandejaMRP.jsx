@@ -263,32 +263,44 @@ export default function BandejaMRP() {
         creados.ot += 1
       }
 
-      // ---- Maquila: una OM (borrador) por articulo/maquilador ----
+      // ---- Maquila: programa firme/forecast por (maquilador, articulo) ----
       for (const g of gruposMaquila) {
-        const folio = `OM-${Date.now().toString().slice(-8)}-${g.articulo_id}`
-        const molde = moldeDeArticulo(g.articulo_id)
-        const { data: om, error: e1 } = await supabase.from('ordenes_maquila').insert({
-          empresa_id: emp, folio, maquilador_id: g.maquilador_id, site_id: perfil.site_id,
-          articulo_id: g.articulo_id, cantidad_esperada: g.net, molde_id: molde,
-          estatus: 'borrador', notas: `Generada por MRP corrida #${corridaSel.id}`, creado_por: perfil.id,
-        }).select().single()
-        if (e1) throw e1
-        const mats = bomDe(g.articulo_id).map(b => ({
-          om_id: om.id, articulo_id: b.componente_articulo_id,
-          cantidad_por_unidad: Number(b.cantidad_por_unidad),
-          cantidad_plan: Number(b.cantidad_por_unidad) * g.net,
-          cantidad_enviada: Number(b.cantidad_por_unidad) * g.net,
-          unidad_medida: b.unidad_medida || null,
+        let omId
+        const { data: existente } = await supabase.from('ordenes_maquila').select('id')
+          .eq('empresa_id', emp).eq('maquilador_id', g.maquilador_id).eq('articulo_id', g.articulo_id)
+          .eq('estatus', 'abierta').limit(1).maybeSingle()
+        if (existente) {
+          omId = existente.id
+        } else {
+          const folio = `OM-${Date.now().toString().slice(-8)}-${g.articulo_id}`
+          const molde = moldeDeArticulo(g.articulo_id)
+          const { data: om, error: e1 } = await supabase.from('ordenes_maquila').insert({
+            empresa_id: emp, folio, maquilador_id: g.maquilador_id, site_id: perfil.site_id,
+            articulo_id: g.articulo_id, cantidad_esperada: 0, molde_id: molde,
+            estatus: 'abierta', notas: `Programa de maquila (MRP #${corridaSel.id})`, creado_por: perfil.id,
+          }).select().single()
+          if (e1) throw e1
+          omId = om.id
+          const mats = bomDe(g.articulo_id).map(b => ({
+            om_id: omId, articulo_id: b.componente_articulo_id,
+            cantidad_por_unidad: Number(b.cantidad_por_unidad), cantidad_plan: 0, cantidad_enviada: 0,
+            unidad_medida: b.unidad_medida || null, enviar: true,
+          }))
+          if (mats.length > 0) { const { error: e2 } = await supabase.from('om_materiales').insert(mats); if (e2) throw e2 }
+        }
+        const lineas = g.rows.map(o => ({
+          om_id: omId, fecha_requerida: o.fecha_requerida, tipo: o.firme ? 'firme' : 'forecast',
+          cantidad: parseFloat(cant[o.id]) || Number(o.orden_planeada) || 0, corrida_id: corridaSel.id,
         }))
-        if (mats.length > 0) { const { error: e2 } = await supabase.from('om_materiales').insert(mats); if (e2) throw e2 }
-        await marcar(g.rows, 'maquila', om.id)
+        if (lineas.length > 0) { const { error: e3 } = await supabase.from('om_lineas').insert(lineas); if (e3) throw e3 }
+        await marcar(g.rows, 'maquila', omId)
         creados.om += 1
       }
       const partes = []
       if (creados.req) partes.push(`${creados.req} linea(s) de requisicion`)
       if (creados.con) partes.push(`${creados.con} de consigna`)
       if (creados.ot) partes.push(`${creados.ot} OT`)
-      if (creados.om) partes.push(`${creados.om} OM (maquila)`)
+      if (creados.om) partes.push(`${creados.om} programa(s) de maquila`)
       setExito(`Generado: ${partes.join(', ')}.${advMaquila && advMaquila.length ? ` Aviso: ${advMaquila.length} articulo(s) 'se maquila' sin maquilador, sin OM.` : ''}`)
       await seleccionar(corridaSel.id)
       setTimeout(() => setExito(''), 6000)
@@ -416,7 +428,7 @@ export default function BandejaMRP() {
           {analisis.gruposMaquila.map(g => (
             <div key={`m${g.maquilador_id}-${g.articulo_id}`} style={styles.grupo}>
               <div style={{ ...styles.grupoTitulo, backgroundColor: '#f5f3ff', color: '#6d28d9', borderColor: '#ddd6fe' }}>
-                Maquila · <b>{artDe(g.articulo_id)?.codigo_interno || g.articulo_id}</b> · {fmt(g.net)} pzas · se creara una Orden de Maquila (borrador) con el BOM.
+                Maquila · <b>{artDe(g.articulo_id)?.codigo_interno || g.articulo_id}</b> · {fmt(g.net)} pzas · se agregara al programa de maquila (firme/forecast); el firme se convierte en OC.
               </div>
             </div>
           ))}
