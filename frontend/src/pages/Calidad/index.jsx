@@ -5,6 +5,7 @@ import RequisitosProveedor from './RequisitosProveedor'
 import LiberacionesCalidad from './LiberacionesCalidad'
 import NoConformidades from './NoConformidades'
 import AlertasCalidad from './AlertasCalidad'
+import Cuarentena from './Cuarentena'
 import ModuloPendiente from '../ModuloPendiente'
 
 const secciones = [
@@ -13,6 +14,7 @@ const secciones = [
   { id: 'requisitos', modulo: 'cal_requisitos_prov', titulo: 'Requisitos de Proveedor' },
   { id: 'no_conformidades', modulo: 'cal_nc', titulo: 'No Conformidades' },
   { id: 'alertas', modulo: 'cal_alertas', titulo: 'Alertas de Calidad' },
+  { id: 'cuarentena', modulo: 'cal_cuarentena', titulo: 'Cuarentena' },
 ]
 
 export default function GrupoCalidad() {
@@ -43,6 +45,7 @@ export default function GrupoCalidad() {
         {seccion === 'requisitos' && <RequisitosProveedor />}
         {seccion === 'no_conformidades' && <NoConformidades />}
         {seccion === 'alertas' && <AlertasCalidad />}
+        {seccion === 'cuarentena' && <Cuarentena />}
       </div>
     </div>
   )
