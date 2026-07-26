@@ -3,10 +3,12 @@ import { useAuth } from '../../context/AuthContext'
 import MoldesEstado from './MoldesEstado'
 import OrdenesMtto from './OrdenesMtto'
 import TiposMtto from './TiposMtto'
+import AvisosMtto from './AvisosMtto'
 
 const secciones = [
   { id: 'estado', modulo: 'mol_estado', titulo: 'Moldes y estado' },
   { id: 'ordenes', modulo: 'mol_ordenes', titulo: 'Ordenes de Mantenimiento' },
+  { id: 'avisos', modulo: 'mol_avisos', titulo: 'Avisos de Mantenimiento' },
   { id: 'tipos', modulo: 'mol_tipos', titulo: 'Tipos y parametros' },
 ]
 
@@ -27,6 +29,7 @@ export default function GrupoMoldes() {
         {visibles.length === 0 && <p style={{ color: '#666', padding: '28px' }}>Tu rol no tiene secciones de Mantenimiento de Moldes.</p>}
         {seccion === 'estado' && <MoldesEstado />}
         {seccion === 'ordenes' && <OrdenesMtto />}
+        {seccion === 'avisos' && <AvisosMtto />}
         {seccion === 'tipos' && <TiposMtto />}
       </div>
     </div>

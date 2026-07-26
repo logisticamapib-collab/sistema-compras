@@ -144,7 +144,13 @@ export default function OrdenesTrabajo() {
       return
     }
     if (REQUIERE_MOLDE.includes(artSel.tipo_proceso) && !form.molde_id) { setError('El proceso requiere molde y el articulo no tiene molde/cavidad asignado'); return }
-    if (form.molde_id) { const _mol = moldes.find(m => m.id === Number(form.molde_id)); if (_mol && !['disponible', 'en_produccion'].includes(_mol.estado || 'disponible')) { setError(`El molde ${_mol.clave} esta ${(_mol.estado || '').replace(/_/g, ' ')} y no puede programarse.`); return } }
+    const _mol = form.molde_id ? moldes.find(m => m.id === Number(form.molde_id)) : null
+    const molNoDisp = _mol && !['disponible', 'en_produccion'].includes(_mol.estado || 'disponible')
+    if (molNoDisp) {
+      const esGtePlanta = ['gerente_planta', 'admin'].includes(perfil?.rol)
+      if (!esGtePlanta) { setError(`El molde ${_mol.clave} esta ${(_mol.estado || '').replace(/_/g, ' ')}. Correrlo requiere liberacion fuera de procedimiento autorizada por el Gerente de Planta.`); return }
+      if (!form.liberar_fuera) { setError(`AVISO: el molde ${_mol.clave} esta ${(_mol.estado || '').replace(/_/g, ' ')}. Marca "Autorizar liberacion fuera de procedimiento" para continuar.`); return }
+    }
     if (!ubiMp) { setError('La maquina no tiene ubicacion de materia prima ligada. Creala en Almacenes (ej. MP-MAQ1) y ligala a la maquina.'); return }
     setProcesando(true)
     try {
@@ -156,6 +162,9 @@ export default function OrdenesTrabajo() {
         maquina_id: Number(form.maquina_id), molde_id: form.molde_id ? Number(form.molde_id) : null,
         ubicacion_mp_id: ubiMp.id, fecha_programada: form.fecha_programada || null,
         turno: form.turno, notas: form.notas || null, creado_por: perfil.id,
+        liberacion_fuera_proc: !!(molNoDisp && form.liberar_fuera),
+        liberado_fuera_por: (molNoDisp && form.liberar_fuera) ? perfil.id : null,
+        liberado_fuera_motivo: (molNoDisp && form.liberar_fuera) ? (form.liberar_motivo || null) : null,
       }).select().single()
       if (e1) throw e1
       const filas = lineas.map(l => {
@@ -403,6 +412,27 @@ export default function OrdenesTrabajo() {
               </select>
             </div>
           </div>
+
+          {(() => {
+            const _m = moldes.find(x => x.id === Number(form.molde_id))
+            const noDisp = _m && !['disponible', 'en_produccion'].includes(_m.estado || 'disponible')
+            if (!noDisp) return null
+            const gte = ['gerente_planta', 'admin'].includes(perfil?.rol)
+            return (
+              <div style={{ backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 14px', margin: '0 0 14px', fontSize: '13px', color: '#92400e' }}>
+                <b>Aviso:</b> el molde {_m.clave} esta {(_m.estado || '').replace(/_/g, ' ')} y no esta disponible.
+                {gte ? (
+                  <div style={{ marginTop: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={!!form.liberar_fuera} onChange={e => setForm({ ...form, liberar_fuera: e.target.checked })} />
+                      Autorizar liberacion fuera de procedimiento (Gerente de Planta): correr con la condicion actual.
+                    </label>
+                    {form.liberar_fuera && <input style={{ ...styles.input, marginTop: '6px', width: '100%' }} placeholder="Motivo de la liberacion fuera de procedimiento" value={form.liberar_motivo || ''} onChange={e => setForm({ ...form, liberar_motivo: e.target.value })} />}
+                  </div>
+                ) : (<div style={{ marginTop: '6px' }}>Solo el <b>Gerente de Planta</b> puede autorizar la liberacion fuera de procedimiento.</div>)}
+              </div>
+            )
+          })()}
 
           {form.lineas?.length > 0 && (
             <div style={esFamilia ? styles.familiaBox : styles.resumen}>
