@@ -3,13 +3,16 @@ import { useAuth } from '../../context/AuthContext'
 import BandejaLiberacion from './BandejaLiberacion'
 import RequisitosProveedor from './RequisitosProveedor'
 import LiberacionesCalidad from './LiberacionesCalidad'
+import NoConformidades from './NoConformidades'
+import AlertasCalidad from './AlertasCalidad'
 import ModuloPendiente from '../ModuloPendiente'
 
 const secciones = [
   { id: 'bandeja', modulo: 'cal_bandeja', titulo: 'Liberacion de Lotes' },
   { id: 'liberaciones', modulo: 'cal_liberaciones', titulo: 'Liberacion de Calidad (PSW/PPAP)' },
   { id: 'requisitos', modulo: 'cal_requisitos_prov', titulo: 'Requisitos de Proveedor' },
-  { id: 'no_conformidades', modulo: null, titulo: 'No Conformidades', pendiente: true },
+  { id: 'no_conformidades', modulo: 'cal_nc', titulo: 'No Conformidades' },
+  { id: 'alertas', modulo: 'cal_alertas', titulo: 'Alertas de Calidad' },
 ]
 
 export default function GrupoCalidad() {
@@ -38,7 +41,8 @@ export default function GrupoCalidad() {
         {seccion === 'bandeja' && <BandejaLiberacion />}
         {seccion === 'liberaciones' && <LiberacionesCalidad />}
         {seccion === 'requisitos' && <RequisitosProveedor />}
-        {seccion === 'no_conformidades' && <ModuloPendiente titulo="No Conformidades" />}
+        {seccion === 'no_conformidades' && <NoConformidades />}
+        {seccion === 'alertas' && <AlertasCalidad />}
       </div>
     </div>
   )
