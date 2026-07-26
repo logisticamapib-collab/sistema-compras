@@ -15,7 +15,7 @@ export default function Proveedores() {
     nombre: '', razon_social: '', rfc: '', contacto: '',
     email: '', telefono: '', direccion: '', ciudad: '',
     estado: '', cp: '', condiciones_pago: '', dias_credito: 0,
-    forma_pago: '', numero_cuenta: ''
+    forma_pago: '', numero_cuenta: '', es_maquilador: false
   }
   const [form, setForm] = useState(formVacio)
 
@@ -46,7 +46,7 @@ export default function Proveedores() {
       contacto: p.contacto || '', email: p.email || '', telefono: p.telefono || '',
       direccion: p.direccion || '', ciudad: p.ciudad || '', estado: p.estado || '', cp: p.cp || '',
       condiciones_pago: p.condiciones_pago || '', dias_credito: p.dias_credito || 0,
-      forma_pago: p.forma_pago || '', numero_cuenta: p.numero_cuenta || ''
+      forma_pago: p.forma_pago || '', numero_cuenta: p.numero_cuenta || '', es_maquilador: !!p.es_maquilador
     })
     setMostrarForm(true)
     setError('')
@@ -210,6 +210,12 @@ export default function Proveedores() {
                 onChange={e => setForm({ ...form, numero_cuenta: e.target.value })}
                 placeholder="Cuenta o CLABE del proveedor" />
             </div>
+          </div>
+          <div style={styles.fila}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', color: '#334155', cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!form.es_maquilador} onChange={e => setForm({ ...form, es_maquilador: e.target.checked })} />
+              Es maquilador (subcontratacion): habilita este proveedor para ordenes de maquila
+            </label>
           </div>
           <div style={styles.botones}>
             <button style={styles.botonSecundario} onClick={() => setMostrarForm(false)}>Cancelar</button>
