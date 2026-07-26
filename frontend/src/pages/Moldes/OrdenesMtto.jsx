@@ -28,6 +28,7 @@ export default function OrdenesMtto() {
   const [moldes, setMoldes] = useState([])
   const [tipos, setTipos] = useState([])
   const [clientes, setClientes] = useState([])
+  const [proveedores, setProveedores] = useState([])
   const [maquinas, setMaquinas] = useState([])
   const [turnos, setTurnos] = useState([])
   const [usuarios, setUsuarios] = useState([])
@@ -67,6 +68,8 @@ export default function OrdenesMtto() {
     setAlmacenes(al.data || []); setExistencias(ex.data || []); setLotes(lo.data || [])
     const { data: pa } = await supabase.from('mtto_parametros').select('*').eq('empresa_id', emp).maybeSingle()
     setParam(pa || { tryout_requiere_calidad: true, tryout_requiere_produccion: true, tryout_requiere_ingenieria: true })
+    const { data: pv } = await supabase.from('proveedores').select('id, nombre').eq('empresa_id', emp).eq('activo', true)
+    setProveedores(pv || [])
     setLoading(false)
   }
 
@@ -74,8 +77,9 @@ export default function OrdenesMtto() {
   const loteDe = (id) => lotes.find(l => l.id === id)
   const moldeDe = (id) => moldes.find(m => m.id === id)
   const tipoDe = (id) => tipos.find(t => t.id === id)
+  const provDe = (id) => proveedores.find(p => p.id === id)?.nombre || '-'
 
-  const abrirNueva = () => { setError(''); setExito(''); setForm({ molde_id: '', tipo_id: '', motivo_origen: 'interno', cliente_id: '', es_cobrable: false, monto_cobrado: '', causa: '', maquina_id: '', operador_id: '', turno_id: '', supervisor_id: '', descripcion: '' }); setVista('nueva') }
+  const abrirNueva = () => { setError(''); setExito(''); setForm({ molde_id: '', tipo_id: '', motivo_origen: 'interno', cliente_id: '', es_cobrable: false, monto_cobrado: '', causa: '', maquina_id: '', operador_id: '', turno_id: '', supervisor_id: '', descripcion: '', es_externo: false, proveedor_id: '', costo_externo: '' }); setVista('nueva') }
 
   const crear = async () => {
     setError('')
@@ -94,6 +98,8 @@ export default function OrdenesMtto() {
         causa: f.causa || null, maquina_id: f.maquina_id ? Number(f.maquina_id) : null,
         operador_id: f.operador_id || null, turno_id: f.turno_id ? Number(f.turno_id) : null, supervisor_id: f.supervisor_id || null,
         descripcion: f.descripcion || null, reinicia_contador: !!tipo?.reinicia_contador,
+        es_externo: !!f.es_externo, proveedor_id: f.es_externo && f.proveedor_id ? Number(f.proveedor_id) : null,
+        costo_externo: f.es_externo && f.costo_externo !== '' ? Number(f.costo_externo) : null, fecha_envio_ext: f.es_externo ? new Date().toISOString().split('T')[0] : null,
         shots_al_abrir: Number(molde?.shots_acumulados || 0), estatus: 'en_proceso', fecha_inicio: new Date().toISOString(), creado_por: perfil.id,
       }).select().single()
       if (e1) throw e1
@@ -229,6 +235,10 @@ export default function OrdenesMtto() {
     await supabase.from('molde_mtto').update({ facturado: true }).eq('id', sel.id)
     setExito('Marcada como facturada.'); await cargar(); await abrirDetalle(sel)
   }
+  const registrarRetorno = async () => {
+    await supabase.from('molde_mtto').update({ fecha_retorno_ext: new Date().toISOString().split('T')[0] }).eq('id', sel.id)
+    setExito('Retorno del molde registrado.'); await cargar(); await abrirDetalle(sel)
+  }
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
 
@@ -263,6 +273,11 @@ export default function OrdenesMtto() {
             <Campo label="Supervisor"><select style={styles.input} value={form.supervisor_id} onChange={e => setForm({ ...form, supervisor_id: e.target.value })}><option value="">-</option>{supervisores.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}</select></Campo>
           </div>
           <Campo label="Descripcion / trabajo a realizar"><input style={styles.input} value={form.descripcion} onChange={e => setForm({ ...form, descripcion: e.target.value })} /></Campo>
+          <div style={styles.fila}>
+            <Campo label="Trabajo externo"><label style={styles.check}><input type="checkbox" checked={!!form.es_externo} onChange={e => setForm({ ...form, es_externo: e.target.checked })} /> Se realiza fuera de la planta</label></Campo>
+            {form.es_externo && <Campo label="Proveedor / taller"><select style={styles.input} value={form.proveedor_id} onChange={e => setForm({ ...form, proveedor_id: e.target.value })}><option value="">Selecciona...</option>{proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></Campo>}
+            {form.es_externo && <Campo label="Costo externo"><input type="number" min="0" style={styles.input} value={form.costo_externo} onChange={e => setForm({ ...form, costo_externo: e.target.value })} /></Campo>}
+          </div>
           <div style={styles.botones}><button style={styles.botonSec} onClick={() => setVista('lista')} disabled={proc}>Cancelar</button><button style={styles.boton} onClick={crear} disabled={proc}>{proc ? 'Guardando...' : 'Abrir orden'}</button></div>
         </div>
       </div>
@@ -271,7 +286,7 @@ export default function OrdenesMtto() {
 
   // ---------- DETALLE ----------
   if (vista === 'detalle' && sel) {
-    const costoTotal = insumos.reduce((s, i) => s + Number(i.costo_total), 0)
+    const costoTotal = insumos.reduce((s, i) => s + Number(i.costo_total), 0) + Number(sel.costo_externo || 0)
     const abierta = ['programada', 'en_proceso', 'tryout'].includes(sel.estatus)
     return (
       <div style={styles.container} className="aparecer">
@@ -282,6 +297,7 @@ export default function OrdenesMtto() {
         </div>
         <p style={styles.sub}>{sel.tipo?.nombre} · motivo {sel.motivo_origen}{sel.cliente?.nombre ? ` (${sel.cliente.nombre})` : ''} · causa {sel.causa ? sel.causa.replace(/_/g, ' ') : '-'} {sel.maquina?.clave ? `· maquina ${sel.maquina.clave}` : ''}</p>
         {sel.es_cobrable && <p style={styles.cobro}>Cobrable al cliente: <b>${fmt(sel.monto_cobrado)}</b> {sel.facturado ? '(facturado)' : '(pendiente de facturar)'}</p>}
+        {sel.es_externo && (<div style={styles.extBox}>Trabajo <b>externo</b> en <b>{provDe(sel.proveedor_id)}</b> · costo ${fmt(sel.costo_externo)} · enviado {sel.fecha_envio_ext || '-'} · retorno {sel.fecha_retorno_ext || 'pendiente'}{['programada', 'en_proceso', 'tryout'].includes(sel.estatus) && !sel.fecha_retorno_ext && puedeEditar && <button style={styles.botonMiniExt} onClick={registrarRetorno} disabled={proc}>Registrar retorno</button>}</div>)}
         {error && <p style={styles.error}>{error}</p>}
         {exito && <p style={styles.exito}>{exito}</p>}
 
@@ -409,6 +425,8 @@ const styles = {
   tr: { display: 'flex', padding: '10px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '13px' },
   vacio: { padding: '12px 14px', color: '#94a3b8', fontSize: '13px' },
   hint: { fontSize: '12px', color: '#94a3b8', marginTop: '10px', lineHeight: 1.5 },
+  extBox: { backgroundColor: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '8px', padding: '9px 12px', margin: '0 0 12px', fontSize: '13px', color: '#5b21b6', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
+  botonMiniExt: { padding: '4px 10px', backgroundColor: '#7c3aed', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
   pillOk: { padding: '2px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, backgroundColor: '#dcfce7', color: '#15803d' },
   pillNo: { padding: '2px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, backgroundColor: '#fee2e2', color: '#b91c1c' },
   botonMiniOk: { padding: '5px 10px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
