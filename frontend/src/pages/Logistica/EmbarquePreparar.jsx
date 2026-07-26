@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import EscanerCamara from '../../components/EscanerCamara'
 
 const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { maximumFractionDigits: 0 })
 const fFecha = (s) => { if (!s) return '-'; const p = String(s).split('-'); return `${p[2]}/${p[1]}/${p[0]}` }
@@ -71,9 +72,9 @@ export default function EmbarquePreparar() {
   const arts = [...new Set([...Object.keys(req), ...Object.keys(esc)])]
   const completoGlobal = objetivo.length > 0 && Object.keys(req).every(a => (esc[a] || 0) >= req[a] - 0.001)
 
-  const escanear = async () => {
+  const escanear = async (valor) => {
     setError(''); setMsg('')
-    const folio = scan.trim()
+    const folio = (typeof valor === 'string' ? valor : scan).trim()
     if (!folio || !emb) return
     const { data: c } = await supabase.from('contenedores')
       .select('*, lote:lotes(id, codigo_lote, articulo_id, fecha, estatus_calidad)')
@@ -277,7 +278,8 @@ export default function EmbarquePreparar() {
           <h3 style={styles.subt}>Escanear caja / tarima</h3>
           <div style={{ display: 'flex', gap: '10px' }}>
             <input style={{ ...styles.input, flex: 1 }} autoFocus value={scan} placeholder="Folio del contenedor (CJ-... / TA-...)" onChange={e => setScan(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') escanear() }} />
-            <button style={styles.btn} onClick={escanear}>Escanear</button>
+            <button style={styles.btn} onClick={() => escanear()}>Escanear</button>
+            <EscanerCamara onScan={t => { setScan(t); escanear(t) }} />
           </div>
           <div style={{ marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div style={styles.campo}><label style={styles.lbl}>Alta manual (fuera FIFO)</label>

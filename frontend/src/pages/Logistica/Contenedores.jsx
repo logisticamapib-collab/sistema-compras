@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import EscanerCamara from '../../components/EscanerCamara'
 import EtiquetaMaster from '../../components/EtiquetaMaster'
 import PortalImpresion from '../../components/PortalImpresion'
 import { imprimirAislado } from '../../lib/impresion'
@@ -223,10 +224,13 @@ export default function Contenedores() {
         <div style={styles.columnas}>
           <div style={styles.panel}>
             <h3 style={styles.subtitulo}>Escanea o elige las cajas</h3>
-            <input ref={inputRef} style={{ ...styles.input, width: '100%', marginBottom: '12px' }} autoFocus
-              placeholder="Escanea el QR de la caja (o del lote) y presiona Enter"
-              value={escaneo} onChange={e => setEscaneo(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { procesarEscaneo(escaneo); setEscaneo('') } }} />
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+              <input ref={inputRef} style={{ ...styles.input, flex: 1 }} autoFocus
+                placeholder="Escanea el QR de la caja (o del lote) y presiona Enter"
+                value={escaneo} onChange={e => setEscaneo(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { procesarEscaneo(escaneo); setEscaneo('') } }} />
+              <EscanerCamara onScan={t => { setEscaneo(''); procesarEscaneo(t) }} />
+            </div>
             <input style={{ ...styles.input, width: '100%', marginBottom: '10px' }} placeholder="Filtrar cajas por folio, articulo o lote..."
               value={filtro} onChange={e => setFiltro(e.target.value)} />
             <div style={styles.listaCajas}>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import EscanerCamara from '../../components/EscanerCamara'
 import { etiquetaRol } from '../../lib/roles'
 import { folioContenedor } from '../../lib/contenedores'
 import { datosEtiqueta } from '../../lib/etiquetas'
@@ -292,9 +293,12 @@ export default function TraspasoEscaneo() {
         </div>
         <div style={{ ...styles.campo, marginTop: '6px' }}>
           <label style={styles.label}>3. Escanea la caja / tarima / lote</label>
-          <input ref={escaneoRef} style={{ ...styles.input, fontSize: '16px' }} value={escaneo} disabled={!destAlmacen || !puedeMover || procesando || !!pendiente}
-            placeholder={destAlmacen ? 'Escanea el QR' : 'Primero elige el destino'}
-            onChange={e => setEscaneo(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') escanear(escaneo) }} autoFocus />
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <input ref={escaneoRef} style={{ ...styles.input, fontSize: '16px', flex: 1 }} value={escaneo} disabled={!destAlmacen || !puedeMover || procesando || !!pendiente}
+              placeholder={destAlmacen ? 'Escanea el QR' : 'Primero elige el destino'}
+              onChange={e => setEscaneo(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') escanear(escaneo) }} autoFocus />
+            <EscanerCamara onScan={t => { setEscaneo(t); escanear(t) }} />
+          </div>
         </div>
       </div>
 

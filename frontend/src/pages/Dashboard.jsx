@@ -105,14 +105,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div style={styles.seccionPendientes}>
-          <p style={styles.pendientesTitulo}>Roadmap MRP (en desarrollo)</p>
-          <div style={styles.grid}>
-            {modulosPendientes.map(modulo => (
-              <Tarjeta key={modulo.id} modulo={modulo} atenuada onClick={() => setModuloActivo(modulo.id)} />
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   )
