@@ -23,6 +23,7 @@ const formVacio = {
   lead_time_dias: '', moq: '', tiempo_transito_dias: '', stock_minimo: '', snp: '',
   dias_inventario_seguridad: '', multiplo_lote: '', costo: '',
   tipo_proceso: 'solo_inyeccion', articulo_wip_origen_id: '',
+  se_maquila: false, maquilador_id: '',
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
@@ -113,6 +114,7 @@ export default function Articulos() {
       multiplo_lote: articulo.multiplo_lote ?? '',
       costo: articulo.costo ?? '',
       tipo_proceso: articulo.tipo_proceso || 'solo_inyeccion',
+      se_maquila: articulo.se_maquila || false, maquilador_id: articulo.maquilador_id?.toString() || '',
       articulo_wip_origen_id: articulo.articulo_wip_origen_id?.toString() || '',
       peso_pieza_g: articulo.peso_pieza_g ?? '',
       peso_colada_g: articulo.peso_colada_g ?? '',
@@ -163,6 +165,8 @@ export default function Articulos() {
       multiplo_lote: form.multiplo_lote !== '' ? parseFloat(form.multiplo_lote) : 0,
       costo: form.costo !== '' ? parseFloat(form.costo) : 0,
       tipo_proceso: esFabricado ? form.tipo_proceso : null,
+      se_maquila: esFabricado ? !!form.se_maquila : false,
+      maquilador_id: esFabricado && form.se_maquila && form.maquilador_id ? parseInt(form.maquilador_id) : null,
       articulo_wip_origen_id: esFabricado && form.articulo_wip_origen_id ? parseInt(form.articulo_wip_origen_id) : null,
       peso_pieza_g: esFabricado && form.peso_pieza_g !== '' ? parseFloat(form.peso_pieza_g) : null,
       peso_colada_g: esFabricado && form.peso_colada_g !== '' ? parseFloat(form.peso_colada_g) : null,
@@ -480,6 +484,23 @@ export default function Articulos() {
 
           {form.origen === 'comprado' && (
             <>
+              <div style={styles.fila}>
+                <div style={styles.campo}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#334155' }}>
+                    <input type="checkbox" checked={!!form.se_maquila} onChange={e => setForm({ ...form, se_maquila: e.target.checked })} />
+                    Se maquila (subcontratado): el MRP generara Orden de Maquila en vez de OT interna
+                  </label>
+                </div>
+                {form.se_maquila && (
+                  <div style={styles.campo}>
+                    <label style={styles.label}>Maquilador</label>
+                    <select style={styles.input} value={form.maquilador_id} onChange={e => setForm({ ...form, maquilador_id: e.target.value })}>
+                      <option value="">Selecciona...</option>
+                      {proveedores.filter(p => p.es_maquilador).map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
               <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
                 Datos de abastecimiento (planeacion MRP)
               </h3>

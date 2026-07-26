@@ -19,6 +19,7 @@ export default function BandejaMRP() {
   const [cavidades, setCavidades] = useState([])     // molde_cavidades (activa)
   const [normas, setNormas] = useState([])           // normas_empaque oficiales
   const [moldes, setMoldes] = useState([])
+  const [bom, setBom] = useState([])
   const [sel, setSel] = useState(new Set())
   const [cliFila, setCliFila] = useState({}) // rowId -> cliente_id (consigna)
   const [cant, setCant] = useState({})       // rowId -> cantidad editable
@@ -31,18 +32,19 @@ export default function BandejaMRP() {
 
   const cargarBase = async () => {
     const emp = perfil.empresa_id
-    const [{ data: cli }, { data: ac }, { data: mc }, { data: ne }, { data: mo }] = await Promise.all([
+    const [{ data: cli }, { data: ac }, { data: mc }, { data: ne }, { data: mo }, { data: bm }] = await Promise.all([
       supabase.from('clientes').select('id, nombre').eq('empresa_id', emp).order('nombre'),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id'),
       supabase.from('molde_cavidades').select('molde_id, articulo_id, activa').eq('activa', true),
       supabase.from('normas_empaque').select('id, articulo_id, piezas_por_empaque, activa, tipo').eq('activa', true).eq('tipo', 'oficial'),
       supabase.from('moldes').select('id, clave, nombre').eq('empresa_id', emp),
+      supabase.from('bom').select('*'),
     ])
     setClientes(cli || [])
     const pref = {}
     ;(ac || []).forEach(r => { if (!pref[r.articulo_id]) pref[r.articulo_id] = r.cliente_id })
     setPrefCliente(pref)
-    setCavidades(mc || []); setNormas(ne || []); setMoldes(mo || [])
+    setCavidades(mc || []); setNormas(ne || []); setMoldes(mo || []); setBom(bm || [])
     await cargarCorridas()
   }
 
@@ -59,7 +61,7 @@ export default function BandejaMRP() {
     setCorridaSel((lista || corridas).find(c => c.id === id) || null)
     setSel(new Set()); setError(''); setExito(''); setQtyGrupo({})
     const { data } = await supabase.from('mrp_resultados')
-      .select('*, articulo:articulos(codigo_interno, descripcion, unidad_medida, origen, es_consigna)')
+      .select('*, articulo:articulos(codigo_interno, descripcion, unidad_medida, origen, es_consigna, se_maquila, maquilador_id)')
       .eq('corrida_id', id).gt('orden_planeada', 0).is('convertida_a', null)
       .order('nivel_bom').order('fecha_requerida')
     const rows = data || []
@@ -82,13 +84,24 @@ export default function BandejaMRP() {
   }
   const normaDe = (artId) => normas.find(n => n.articulo_id === artId)
   const moldeClave = (mid) => { const m = moldes.find(x => x.id === mid); return m?.clave || m?.nombre || `Molde ${mid}` }
+  const bomDe = (artId) => bom.filter(b => b.articulo_padre_id === artId)
   const artDe = (id) => ordenes.find(o => o.articulo_id === id)?.articulo
 
   // Analiza la seleccion de fabricados: agrupa por molde compartido (2+ articulos
   // seleccionados del mismo molde) y balancea por cavidades. Politica: cubrir todo
   // (S = max de shots), cantidad por articulo redondeada a empaque (norma oficial).
   const analizar = () => {
-    const fab = ordenes.filter(o => sel.has(o.id) && o.accion === 'ot')
+    const fabAll = ordenes.filter(o => sel.has(o.id) && o.accion === 'ot')
+    const fab = fabAll.filter(o => !o.articulo?.se_maquila)
+    const maqMap = new Map(); const advMaquila = []
+    for (const o of fabAll.filter(x => x.articulo?.se_maquila)) {
+      if (!o.articulo?.maquilador_id) { advMaquila.push(o.articulo_id); continue }
+      const k = `${o.articulo.maquilador_id}:${o.articulo_id}`
+      const cur = maqMap.get(k) || { maquilador_id: o.articulo.maquilador_id, articulo_id: o.articulo_id, net: 0, rows: [] }
+      cur.net += parseFloat(cant[o.id]) || Number(o.orden_planeada) || 0; cur.rows.push(o)
+      maqMap.set(k, cur)
+    }
+    const gruposMaquila = [...maqMap.values()]
     const porMolde = new Map()
     const sinMolde = []
     for (const o of fab) {
@@ -124,7 +137,7 @@ export default function BandejaMRP() {
         if (familiaDeMolde(mid).length >= 2) advertencias.push({ articulo_id: arts[0].articulo_id, moldeId: mid })
       }
     }
-    return { gruposCompartidos, individuales, advertencias }
+    return { gruposCompartidos, individuales, advertencias, gruposMaquila, advMaquila }
   }
 
   const qtyDe = (g, artId) => {
@@ -145,8 +158,8 @@ export default function BandejaMRP() {
       const emp = perfil.empresa_id
       const comprados = filas.filter(o => o.accion === 'requisicion')
       const consignas = filas.filter(o => o.accion === 'consigna')
-      const { gruposCompartidos, individuales } = analizar()
-      let creados = { req: 0, ot: 0, con: 0 }
+      const { gruposCompartidos, individuales, gruposMaquila, advMaquila } = analizar()
+      let creados = { req: 0, ot: 0, con: 0, om: 0 }
 
       // ---- Requisicion (agrupa todos los comprados en una) ----
       if (comprados.length > 0) {
@@ -250,11 +263,33 @@ export default function BandejaMRP() {
         creados.ot += 1
       }
 
+      // ---- Maquila: una OM (borrador) por articulo/maquilador ----
+      for (const g of gruposMaquila) {
+        const folio = `OM-${Date.now().toString().slice(-8)}-${g.articulo_id}`
+        const molde = moldeDeArticulo(g.articulo_id)
+        const { data: om, error: e1 } = await supabase.from('ordenes_maquila').insert({
+          empresa_id: emp, folio, maquilador_id: g.maquilador_id, site_id: perfil.site_id,
+          articulo_id: g.articulo_id, cantidad_esperada: g.net, molde_id: molde,
+          estatus: 'borrador', notas: `Generada por MRP corrida #${corridaSel.id}`, creado_por: perfil.id,
+        }).select().single()
+        if (e1) throw e1
+        const mats = bomDe(g.articulo_id).map(b => ({
+          om_id: om.id, articulo_id: b.componente_articulo_id,
+          cantidad_por_unidad: Number(b.cantidad_por_unidad),
+          cantidad_plan: Number(b.cantidad_por_unidad) * g.net,
+          cantidad_enviada: Number(b.cantidad_por_unidad) * g.net,
+          unidad_medida: b.unidad_medida || null,
+        }))
+        if (mats.length > 0) { const { error: e2 } = await supabase.from('om_materiales').insert(mats); if (e2) throw e2 }
+        await marcar(g.rows, 'maquila', om.id)
+        creados.om += 1
+      }
       const partes = []
       if (creados.req) partes.push(`${creados.req} linea(s) de requisicion`)
       if (creados.con) partes.push(`${creados.con} de consigna`)
       if (creados.ot) partes.push(`${creados.ot} OT`)
-      setExito(`Generado: ${partes.join(', ')}.`)
+      if (creados.om) partes.push(`${creados.om} OM (maquila)`)
+      setExito(`Generado: ${partes.join(', ')}.${advMaquila && advMaquila.length ? ` Aviso: ${advMaquila.length} articulo(s) 'se maquila' sin maquilador, sin OM.` : ''}`)
       await seleccionar(corridaSel.id)
       setTimeout(() => setExito(''), 6000)
     } catch (e) {
@@ -271,7 +306,7 @@ export default function BandejaMRP() {
     }).in('id', ids)
   }
 
-  const analisis = corridaSel ? analizar() : { gruposCompartidos: [], individuales: [], advertencias: [] }
+  const analisis = corridaSel ? analizar() : { gruposCompartidos: [], individuales: [], advertencias: [], gruposMaquila: [], advMaquila: [] }
 
   return (
     <div>
@@ -319,7 +354,7 @@ export default function BandejaMRP() {
                 <div key={o.id} style={styles.tr}>
                   <span style={{ width: '32px' }}><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggle(o.id)} /></span>
                   <span style={{ flex: 2 }}><strong>{o.articulo?.codigo_interno}</strong><br /><span style={{ fontSize: '11px', color: '#94a3b8' }}>{o.articulo?.descripcion}</span></span>
-                  <span style={{ flex: 1 }}><span style={badge(o.accion)}>{ACCION_LABEL[o.accion] || o.accion}</span></span>
+                  <span style={{ flex: 1 }}><span style={badge(o.articulo?.se_maquila && o.accion === 'ot' ? 'maquila' : o.accion)}>{o.articulo?.se_maquila && o.accion === 'ot' ? 'Maquila' : (ACCION_LABEL[o.accion] || o.accion)}</span></span>
                   <span style={{ flex: 1, textAlign: 'right' }}>
                     <input type="number" min="0" step="0.01" value={cant[o.id] ?? ''} onChange={e => setCant({ ...cant, [o.id]: e.target.value })}
                       style={{ ...styles.inputMini, textAlign: 'right' }} />
@@ -378,6 +413,18 @@ export default function BandejaMRP() {
             </div>
           ))}
 
+          {analisis.gruposMaquila.map(g => (
+            <div key={`m${g.maquilador_id}-${g.articulo_id}`} style={styles.grupo}>
+              <div style={{ ...styles.grupoTitulo, backgroundColor: '#f5f3ff', color: '#6d28d9', borderColor: '#ddd6fe' }}>
+                Maquila · <b>{artDe(g.articulo_id)?.codigo_interno || g.articulo_id}</b> · {fmt(g.net)} pzas · se creara una Orden de Maquila (borrador) con el BOM.
+              </div>
+            </div>
+          ))}
+          {(analisis.advMaquila || []).map((aid, i) => (
+            <p key={`am${i}`} style={styles.aviso}>
+              <b>{artDe(aid)?.codigo_interno || aid}</b> esta marcado "se maquila" pero no tiene maquilador asignado. Asignalo en Articulos para generar la OM.
+            </p>
+          ))}
           {analisis.advertencias.map((a, idx) => (
             <p key={idx} style={styles.aviso}>
               <b>{artDe(a.articulo_id)?.codigo_interno || a.articulo_id}</b> usa el molde compartido <b>{moldeClave(a.moldeId)}</b>, pero su(s) articulo(s) hermano(s) no estan en la seleccion.
@@ -395,6 +442,7 @@ function badge(a) {
   if (a === 'requisicion') return { ...base, backgroundColor: '#eff6ff', color: '#2563eb' }
   if (a === 'consigna') return { ...base, backgroundColor: '#f0fdf4', color: '#16a34a' }
   if (a === 'ot') return { ...base, backgroundColor: '#fff7ed', color: '#c2410c' }
+  if (a === 'maquila') return { ...base, backgroundColor: '#f5f3ff', color: '#7c3aed' }
   return { ...base, backgroundColor: '#f1f5f9', color: '#64748b' }
 }
 
