@@ -42,6 +42,8 @@ export default function OrdenesMtto() {
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [filtro, setFiltro] = useState('abiertas')
+  const [param, setParam] = useState(null)
+  const [firmas, setFirmas] = useState([])
 
   useEffect(() => { cargar() }, [])
   const cargar = async () => {
@@ -63,6 +65,8 @@ export default function OrdenesMtto() {
     setOrdenes(o.data || []); setMoldes(mo.data || []); setTipos(ti.data || []); setClientes(cl.data || [])
     setMaquinas(mq.data || []); setTurnos(tu.data || []); setUsuarios(us.data || []); setArticulos(ar.data || [])
     setAlmacenes(al.data || []); setExistencias(ex.data || []); setLotes(lo.data || [])
+    const { data: pa } = await supabase.from('mtto_parametros').select('*').eq('empresa_id', emp).maybeSingle()
+    setParam(pa || { tryout_requiere_calidad: true, tryout_requiere_produccion: true, tryout_requiere_ingenieria: true })
     setLoading(false)
   }
 
@@ -106,6 +110,8 @@ export default function OrdenesMtto() {
     setError(''); setExito('')
     const { data: mm } = await supabase.from('molde_mtto').select('*, molde:moldes(clave, shots_acumulados), tipo:mtto_tipos(nombre, clase, reinicia_contador), cliente:clientes(nombre), maquina:maquinas(clave)').eq('id', o.id).single()
     const { data: insu } = await supabase.from('molde_mtto_insumos').select('*').eq('mtto_id', o.id).order('id')
+    const { data: fr } = await supabase.from('molde_mtto_firmas').select('*').eq('mtto_id', o.id)
+    setFirmas(fr || [])
     setSel(mm); setInsumos(insu || []); setIns({ modo: 'articulo', articulo_id: '', almacen_id: '', descripcion: '', cantidad: '', costo_unitario: '' })
     setVista('detalle')
   }
@@ -151,18 +157,60 @@ export default function OrdenesMtto() {
     setProc(false)
   }
 
+  const areasReq = () => { const r = []; if (param?.tryout_requiere_calidad) r.push('calidad'); if (param?.tryout_requiere_produccion) r.push('produccion'); if (param?.tryout_requiere_ingenieria) r.push('ingenieria'); return r }
+  const rolArea = (rol) => ['calidad', 'gerente_calidad'].includes(rol) ? 'calidad' : ['produccion', 'gerente_produccion'].includes(rol) ? 'produccion' : ['gerente_ingenieria', 'ingeniero_nuevos_proyectos'].includes(rol) ? 'ingenieria' : null
+  const puedeFirmar = (area) => perfil?.rol === 'admin' || rolArea(perfil?.rol) === area
+
+  const liberar = async (efectiva) => {
+    await supabase.from('molde_mtto').update({ estatus: 'cerrada', tryout_efectiva: efectiva, fecha_fin: new Date().toISOString() }).eq('id', sel.id)
+    const patchMolde = { estado: 'disponible' }
+    if (sel.reinicia_contador) { patchMolde.shots_acumulados = 0; patchMolde.fecha_ultimo_mtto = new Date().toISOString().split('T')[0] }
+    await supabase.from('moldes').update(patchMolde).eq('id', sel.molde_id)
+  }
+
   const cerrar = async () => {
     setError('')
     if (!window.confirm('Cerrar la orden y liberar el molde?')) return
     setProc(true)
     try {
-      await supabase.from('molde_mtto').update({ estatus: 'cerrada', fecha_fin: new Date().toISOString() }).eq('id', sel.id)
-      const patchMolde = { estado: 'disponible' }
-      if (sel.reinicia_contador) { patchMolde.shots_acumulados = 0; patchMolde.fecha_ultimo_mtto = new Date().toISOString().split('T')[0] }
-      await supabase.from('moldes').update(patchMolde).eq('id', sel.molde_id)
+      await liberar(true)
       setExito(`Orden ${sel.folio} cerrada. Molde disponible.${sel.reinicia_contador ? ' Contador de shots reiniciado.' : ''}`)
       await cargar(); await abrirDetalle(sel)
     } catch (err) { setError('Error al cerrar: ' + err.message) }
+    setProc(false)
+  }
+
+  const enviarTryout = async () => {
+    setError(''); setProc(true)
+    try {
+      await supabase.from('molde_mtto').update({ estatus: 'tryout' }).eq('id', sel.id)
+      setExito('Enviada a try-out. Debe validar: ' + areasReq().join(', ') + '.')
+      await cargar(); await abrirDetalle(sel)
+    } catch (err) { setError('Error: ' + err.message) }
+    setProc(false)
+  }
+
+  const firmar = async (area, decision) => {
+    setError(''); setProc(true)
+    try {
+      await supabase.from('molde_mtto_firmas').upsert({ mtto_id: sel.id, area, decision, firmado_por: perfil.id }, { onConflict: 'mtto_id,area' })
+      const req = areasReq()
+      const { data: fr } = await supabase.from('molde_mtto_firmas').select('*').eq('mtto_id', sel.id)
+      const map = {}; (fr || []).forEach(f => { map[f.area] = f.decision })
+      if (req.every(a => map[a])) {
+        if (req.some(a => map[a] === 'rechazada')) {
+          await supabase.from('molde_mtto').update({ estatus: 'en_proceso', tryout_efectiva: false, reintentos: Number(sel.reintentos || 0) + 1 }).eq('id', sel.id)
+          await supabase.from('molde_mtto_firmas').delete().eq('mtto_id', sel.id)
+          setExito('Try-out NO efectivo: la orden regresa a proceso (reincidencia). Repara y reenvia a try-out.')
+        } else {
+          await liberar(true)
+          setExito(`Try-out aprobado. Orden ${sel.folio} cerrada y molde liberado.${sel.reinicia_contador ? ' Shots reiniciados.' : ''}`)
+        }
+      } else {
+        setExito(`Firma registrada (${area}: ${decision}).`)
+      }
+      await cargar(); await abrirDetalle(sel)
+    } catch (err) { setError('Error al firmar: ' + err.message) }
     setProc(false)
   }
 
@@ -248,10 +296,32 @@ export default function OrdenesMtto() {
           )}
         </div>
 
-        {abierta && puedeEditar && (
-          <div style={styles.botones}><button style={styles.botonCerrar} onClick={cerrar} disabled={proc}>{proc ? 'Procesando...' : 'Cerrar orden y liberar molde'}</button></div>
+        {sel.estatus === 'en_proceso' && puedeEditar && (
+          <div style={styles.botones}>
+            {areasReq().length > 0
+              ? <button style={styles.boton} onClick={enviarTryout} disabled={proc}>Enviar a try-out</button>
+              : <button style={styles.botonCerrar} onClick={cerrar} disabled={proc}>Cerrar orden y liberar molde</button>}
+          </div>
         )}
-        <p style={styles.hint}>Shots al abrir: {fmt(sel.shots_al_abrir)} · {sel.reinicia_contador ? 'Al cerrar se reinicia el contador de shots.' : 'Este tipo NO reinicia el contador.'} El try-out con firmas (Calidad/Produccion/Ingenieria) llega en la siguiente fase.</p>
+        {sel.estatus === 'tryout' && (
+          <div style={styles.tarjeta}>
+            <h3 style={styles.h3}>Try-out de liberacion</h3>
+            <p style={styles.sub}>Validan que la reparacion fue efectiva. Con un rechazo la orden regresa a proceso (reincidencia). Reintentos: {fmt(sel.reintentos)}.</p>
+            <div style={styles.tabla}>
+              <div style={styles.th}><span style={{ flex: 1 }}>Area</span><span style={{ flex: 1 }}>Decision</span><span style={{ flex: 1.4 }}>Firmo</span><span style={{ width: '190px' }}></span></div>
+              {areasReq().map(a => { const f = firmas.find(x => x.area === a); return (
+                <div key={a} style={styles.tr}>
+                  <span style={{ flex: 1, textTransform: 'capitalize' }}>{a}</span>
+                  <span style={{ flex: 1 }}>{f ? <span style={f.decision === 'aprobada' ? styles.pillOk : styles.pillNo}>{f.decision}</span> : <span style={{ color: '#94a3b8' }}>pendiente</span>}</span>
+                  <span style={{ flex: 1.4, color: '#64748b', fontSize: '12px' }}>{f ? (usuarios.find(u => u.id === f.firmado_por)?.nombre || '') : ''}</span>
+                  <span style={{ width: '190px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                    {!f && puedeFirmar(a) && <><button style={styles.botonMiniOk} onClick={() => firmar(a, 'aprobada')} disabled={proc}>Aprobar</button><button style={styles.botonMiniNo} onClick={() => firmar(a, 'rechazada')} disabled={proc}>Rechazar</button></>}
+                  </span>
+                </div>) })}
+            </div>
+          </div>
+        )}
+        <p style={styles.hint}>Shots al abrir: {fmt(sel.shots_al_abrir)} · {sel.reinicia_contador ? 'Al cerrar (try-out aprobado) se reinicia el contador de shots.' : 'Este tipo NO reinicia el contador.'}</p>
       </div>
     )
   }
@@ -319,6 +389,10 @@ const styles = {
   tr: { display: 'flex', padding: '10px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '13px' },
   vacio: { padding: '12px 14px', color: '#94a3b8', fontSize: '13px' },
   hint: { fontSize: '12px', color: '#94a3b8', marginTop: '10px', lineHeight: 1.5 },
+  pillOk: { padding: '2px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, backgroundColor: '#dcfce7', color: '#15803d' },
+  pillNo: { padding: '2px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, backgroundColor: '#fee2e2', color: '#b91c1c' },
+  botonMiniOk: { padding: '5px 10px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
+  botonMiniNo: { padding: '5px 10px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
   exito: { color: '#16a34a', fontSize: '13px', marginBottom: '12px' },
 }
