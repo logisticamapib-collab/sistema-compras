@@ -155,5 +155,5 @@ const styles = {
   tarjetaTitulo: { fontSize: '15px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 6px 0' },
   tarjetaDesc: { fontSize: '12px', color: '#666', margin: '0' },
   marca: { position: 'fixed', top: '72px', left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 0, pointerEvents: 'none' },
-  marcaImg: { width: '60%', maxWidth: '760px', objectFit: 'contain', opacity: 0.06 },
+  marcaImg: { width: '60%', maxWidth: '760px', objectFit: 'contain', opacity: 0.16 },
 }
