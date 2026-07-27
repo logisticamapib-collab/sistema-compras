@@ -8,6 +8,7 @@ import Clientes from './Clientes'
 import NormasEmpaque from './NormasEmpaque'
 import BOM from './BOM'
 import NivelesIngenieria from './NivelesIngenieria'
+import CargaMasiva from './CargaMasiva'
 
 const secciones = [
   { id: 'articulos', modulo: 'articulos', titulo: 'Articulos' },
@@ -18,6 +19,7 @@ const secciones = [
   { id: 'niveles', modulo: 'ing_niveles', titulo: 'Niveles de Ingenieria' },
   { id: 'normas_empaque', modulo: 'ing_normas_empaque', titulo: 'Normas de Empaque' },
   { id: 'clientes', modulo: 'ing_clientes', titulo: 'Clientes' },
+  { id: 'carga_masiva', modulo: 'articulos', titulo: 'Carga Masiva' },
   // Aqui se iran agregando: Niveles de ingenieria, etc.
 ]
 
@@ -52,6 +54,7 @@ export default function GrupoIngenieria() {
         {seccion === 'niveles' && <NivelesIngenieria />}
         {seccion === 'normas_empaque' && <NormasEmpaque />}
         {seccion === 'clientes' && <Clientes />}
+        {seccion === 'carga_masiva' && <CargaMasiva />}
       </div>
     </div>
   )
