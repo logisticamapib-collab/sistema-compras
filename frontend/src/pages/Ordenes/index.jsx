@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
+const COLS_OC = [{ label: 'Folio', get: o => o.folio }, { label: 'Proveedor', get: o => o.proveedores?.nombre || '' }, { label: 'Fecha', get: o => o.fecha_emision ? new Date(o.fecha_emision).toLocaleDateString('es-MX') : '' }, { label: 'Total', get: o => o.total }, { label: 'Moneda', get: o => o.moneda }, { label: 'Estatus', get: o => o.estatus }]
 import NuevaOrden from './NuevaOrden'
 import DetalleOrden from './DetalleOrden'
 
@@ -112,6 +114,10 @@ export default function Ordenes() {
         </button>
       </div>
 
+      <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', justifyContent: 'flex-end' }}>
+        <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('ordenes_compra', COLS_OC, ordenesFiltradas)}>Excel</button>
+        <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => imprimirTablaPDF('Ordenes de Compra', COLS_OC, ordenesFiltradas)}>PDF</button>
+      </div>
       <div style={styles.tabla}>
         <div style={styles.tablaHeader}>
           <span style={{ flex: 1.5 }}>Folio OC</span>

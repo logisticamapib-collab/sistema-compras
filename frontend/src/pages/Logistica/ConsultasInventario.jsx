@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { imprimirTablaPDF } from '../../lib/exportar'
 
 // Capa 3 - Consultas de Inventario: reportes combinables y bajos de inventario.
 // Filtros: texto, categoria (tipo de mercancia), origen, cliente, almacen, estatus de calidad.
@@ -87,6 +88,7 @@ export default function ConsultasInventario() {
       return e._art.codigo_interno.toLowerCase().includes(t) || e._art.descripcion.toLowerCase().includes(t) || e._lote.codigo_lote.toLowerCase().includes(t)
     })
 
+  const colsInv = [{ label: 'Codigo', get: e => e._art.codigo_interno }, { label: 'Descripcion', get: e => e._art.descripcion }, { label: 'Lote', get: e => e._lote.codigo_lote }, { label: 'Calidad', get: e => e._lote.estatus_calidad }, { label: 'Almacen', get: e => almacenes.find(a => a.id === e.almacen_id)?.clave || '' }, { label: 'Cantidad', get: e => e.cantidad }, { label: 'Unidad', get: e => e._art.unidad_medida }]
   const totalGeneral = filas.reduce((s, e) => s + Number(e.cantidad), 0)
 
   // Agrupacion por articulo (solo para la vista; el export sigue usando 'filas')
@@ -142,6 +144,7 @@ export default function ConsultasInventario() {
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Consultas de Inventario</h2>
         {vista === 'existencias' && filas.length > 0 && <button style={styles.botonSec} onClick={exportar}>Exportar Excel</button>}
+        {vista === 'existencias' && filas.length > 0 && <button style={styles.botonSec} onClick={() => imprimirTablaPDF('Inventario', colsInv, filas)}>PDF</button>}
       </div>
 
       <div style={styles.tabs}>

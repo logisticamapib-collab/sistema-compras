@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
+const COLS_CLI = [{ label: 'Nombre', get: c => c.nombre }, { label: 'RFC', get: c => c.rfc }, { label: 'Contacto', get: c => c.contacto }, { label: 'Telefono', get: c => c.telefono }, { label: 'Email', get: c => c.email }, { label: 'Estatus', get: c => c.activo ? 'Activo' : 'Inactivo' }]
 
 const formVacio = { clave: '', nombre: '', direccion: '', contacto: '', telefono: '' }
 
@@ -124,6 +126,10 @@ export default function Clientes() {
         <input style={styles.inputBusqueda} value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar por clave o nombre..." />
       </div>
 
+      <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', justifyContent: 'flex-end' }}>
+        <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('clientes', COLS_CLI, clientesFiltrados)}>Excel</button>
+        <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => imprimirTablaPDF('Clientes', COLS_CLI, clientesFiltrados)}>PDF</button>
+      </div>
       <div style={styles.tabla}>
         <div style={styles.tablaHeader}>
           <span style={{ flex: 1 }}>Clave</span>

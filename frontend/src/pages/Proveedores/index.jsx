@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
+const COLS_PROV = [{ label: 'Nombre', get: p => p.nombre }, { label: 'Razon social', get: p => p.razon_social }, { label: 'RFC', get: p => p.rfc }, { label: 'Contacto', get: p => p.contacto }, { label: 'Telefono', get: p => p.telefono }, { label: 'Email', get: p => p.email }, { label: 'Condiciones', get: p => p.condiciones_pago }, { label: 'Dias credito', get: p => p.dias_credito }, { label: 'Estatus', get: p => p.activo ? 'Activo' : 'Inactivo' }]
 
 export default function Proveedores() {
   const { perfil } = useAuth()
@@ -232,6 +234,10 @@ export default function Proveedores() {
           placeholder="Buscar por nombre o RFC..." />
       </div>
 
+      <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', justifyContent: 'flex-end' }}>
+        <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('proveedores', COLS_PROV, proveedoresFiltrados)}>Excel</button>
+        <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => imprimirTablaPDF('Proveedores', COLS_PROV, proveedoresFiltrados)}>PDF</button>
+      </div>
       <div style={styles.tabla}>
         <div style={styles.tablaHeader}>
           <span style={{ flex: 2 }}>Nombre</span>
