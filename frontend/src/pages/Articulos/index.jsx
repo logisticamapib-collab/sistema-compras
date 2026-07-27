@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
@@ -38,6 +39,11 @@ export default function Articulos() {
   const [sites, setSites] = useState([])
   const [sitesDestinoPorArticulo, setSitesDestinoPorArticulo] = useState({})
   const [siteFiltro, setSiteFiltro] = useState('propio')
+  const [filtroOrigen, setFiltroOrigen] = useState('todos')
+  const [filtroProveedor, setFiltroProveedor] = useState('')
+  const [filtroCliente, setFiltroCliente] = useState('')
+  const [artProv, setArtProv] = useState({})
+  const [artCli, setArtCli] = useState({})
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [articuloEditando, setArticuloEditando] = useState(null)
@@ -82,6 +88,13 @@ export default function Articulos() {
       mapaDestinos[d.articulo_id].push(d.site_id)
     }
     setSitesDestinoPorArticulo(mapaDestinos)
+    const [{ data: ap }, { data: ac }] = await Promise.all([
+      supabase.from('articulo_proveedor').select('articulo_id, proveedor_id'),
+      supabase.from('articulo_cliente').select('articulo_id, cliente_id'),
+    ])
+    const mp = {}; (ap || []).forEach(x => { (mp[x.articulo_id] = mp[x.articulo_id] || new Set()).add(x.proveedor_id) })
+    const mc = {}; (ac || []).forEach(x => { (mc[x.articulo_id] = mc[x.articulo_id] || new Set()).add(x.cliente_id) })
+    setArtProv(mp); setArtCli(mc)
     setLoading(false)
   }
 
@@ -314,6 +327,9 @@ export default function Articulos() {
     const matchBusqueda = a.codigo_interno.toLowerCase().includes(busqueda.toLowerCase()) ||
       a.descripcion.toLowerCase().includes(busqueda.toLowerCase())
     if (!matchBusqueda) return false
+    if (filtroOrigen !== 'todos' && a.origen !== filtroOrigen) return false
+    if (filtroProveedor && !(artProv[a.id] && artProv[a.id].has(Number(filtroProveedor)))) return false
+    if (filtroCliente && !(artCli[a.id] && artCli[a.id].has(Number(filtroCliente)))) return false
 
     if (puedeVerTodosLosSites) {
       return siteFiltro === 'todos' || (siteFiltro === 'propio' ? true : a.site_id?.toString() === siteFiltro)
@@ -321,6 +337,8 @@ export default function Articulos() {
     // Usuario normal: solo su site, articulos compartidos (sin site), o donde su site sea destino de transferencia
     return !a.site_id || a.site_id === perfil.site_id || (sitesDestinoPorArticulo[a.id] || []).includes(perfil.site_id)
   })
+
+  const colsArt = [{ label: 'Codigo', get: a => a.codigo_interno }, { label: 'Descripcion', get: a => a.descripcion }, { label: 'Categoria', get: a => a.categorias?.nombre || '' }, { label: 'Tipo', get: a => a.origen }, { label: 'Unidad', get: a => a.unidad_medida }, { label: 'Moneda', get: a => a.tipo_moneda }, { label: 'Costo', get: a => a.costo }, { label: 'Site', get: a => a.sites?.nombre || 'Compartido' }, { label: 'Estatus', get: a => a.activo ? 'Activo' : 'Inactivo' }]
 
   if (mostrarProveedores && articuloSeleccionado) {
     return <VistaProveedoresArticulo
@@ -652,12 +670,29 @@ export default function Articulos() {
         <input style={styles.inputBusqueda} value={busqueda}
           onChange={e => setBusqueda(e.target.value)}
           placeholder="Buscar por codigo o descripcion..." />
+        <select style={styles.selectSite} value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)}>
+          <option value="todos">Todos los tipos</option>
+          <option value="comprado">Comprado</option>
+          <option value="fabricado">Fabricado</option>
+        </select>
+        <select style={styles.selectSite} value={filtroProveedor} onChange={e => setFiltroProveedor(e.target.value)}>
+          <option value="">Todos los proveedores</option>
+          {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+        </select>
+        <select style={styles.selectSite} value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}>
+          <option value="">Todos los clientes</option>
+          {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+        </select>
         {puedeVerTodosLosSites && (
           <select style={styles.selectSite} value={siteFiltro} onChange={e => setSiteFiltro(e.target.value)}>
             <option value="todos">Todos los sites</option>
             {sites.map(s => <option key={s.id} value={s.id.toString()}>{s.nombre}</option>)}
           </select>
         )}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }} className="no-imprimir">
+          <button style={styles.btnExcel} onClick={() => exportarExcel('articulos', colsArt, articulosFiltrados)}>Excel</button>
+          <button style={styles.btnPdf} onClick={() => imprimirTablaPDF('Articulos', colsArt, articulosFiltrados)}>PDF</button>
+        </div>
       </div>
 
       <div style={styles.tabla}>
@@ -956,7 +991,10 @@ function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente
   )
 }
 
+const btnBase = { padding: '9px 14px', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }
 const styles = {
+  btnExcel: { padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
+  btnPdf: { padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
   filaCheckbox: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' },
   labelCheckbox: { fontSize: '13px', color: '#444' },
   origenBox: { marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #f1f5f9' },

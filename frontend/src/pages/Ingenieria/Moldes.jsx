@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 
 const formVacio = {
   clave: '', nombre: '', num_cavidades: 1,
@@ -10,6 +11,7 @@ const formVacio = {
 export default function Moldes() {
   const { perfil, tienePermiso } = useAuth()
   const [moldes, setMoldes] = useState([])
+  const [filtroMol, setFiltroMol] = useState('')
   const [articulos, setArticulos] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -35,6 +37,8 @@ export default function Moldes() {
     setLoading(false)
   }
 
+  const moldesFiltrados = moldes.filter(m => !filtroMol || (`${m.clave} ${m.nombre}`).toLowerCase().includes(filtroMol.toLowerCase()))
+  const colsMol = [{ label: 'Clave', get: m => m.clave }, { label: 'Nombre', get: m => m.nombre }, { label: 'Cavidades', get: m => m.num_cavidades }, { label: 'Shots acum.', get: m => m.shots_acumulados }, { label: 'Estado', get: m => m.estado }, { label: 'Ubicacion', get: m => m.ubicacion_fisica || '' }, { label: 'Estatus', get: m => m.activo ? 'Activo' : 'Inactivo' }]
   const abrirNuevo = () => { setEditando(null); setForm(formVacio); setMostrarForm(true); setError('') }
   const abrirEditar = (m) => {
     setEditando(m)
@@ -202,6 +206,13 @@ export default function Moldes() {
         </div>
       )}
 
+      <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' }}>
+        <input style={{ padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', width: '260px' }} value={filtroMol} onChange={e => setFiltroMol(e.target.value)} placeholder="Filtrar por clave o nombre..." />
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+          <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('moldes', colsMol, moldesFiltrados)}>Excel</button>
+          <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => imprimirTablaPDF('Moldes', colsMol, moldesFiltrados)}>PDF</button>
+        </div>
+      </div>
       <div style={styles.tabla}>
         <div style={styles.tablaHeader}>
           <span style={{ flex: 1 }}>Clave</span>
@@ -213,7 +224,7 @@ export default function Moldes() {
         </div>
         {loading ? <p style={{ padding: 20, color: '#666' }}>Cargando...</p> : moldes.length === 0 ? (
           <p style={{ padding: 20, color: '#666' }}>No hay moldes registrados</p>
-        ) : moldes.map(m => {
+        ) : moldesFiltrados.map(m => {
           const cercaDeAlerta = m.shots_alerta_max && m.shots_acumulados >= m.shots_alerta_max
           const enRangoAlerta = m.shots_alerta_min && m.shots_acumulados >= m.shots_alerta_min && !cercaDeAlerta
           return (

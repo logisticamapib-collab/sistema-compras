@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 
 const tipos = [
   { value: 'inyeccion', label: 'Inyeccion' },
@@ -12,6 +13,7 @@ const formVacio = { clave: '', nombre: '', tipo: 'inyeccion', tonelaje: '', site
 export default function Maquinas() {
   const { perfil, tienePermiso } = useAuth()
   const [maquinas, setMaquinas] = useState([])
+  const [filtroMaq, setFiltroMaq] = useState('')
   const [sites, setSites] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -36,6 +38,8 @@ export default function Maquinas() {
     setLoading(false)
   }
 
+  const maquinasFiltradas = maquinas.filter(m => !filtroMaq || (`${m.clave} ${m.nombre}`).toLowerCase().includes(filtroMaq.toLowerCase()))
+  const colsMaq = [{ label: 'Clave', get: m => m.clave }, { label: 'Nombre', get: m => m.nombre }, { label: 'Tipo', get: m => m.tipo }, { label: 'Tonelaje', get: m => m.tonelaje }, { label: 'Site', get: m => m.sites?.nombre || '' }, { label: 'Estatus', get: m => m.activo ? 'Activo' : 'Inactivo' }]
   const abrirNuevo = () => { setEditando(null); setForm(formVacio); setMostrarForm(true); setError('') }
   const abrirEditar = (m) => {
     setEditando(m)
@@ -153,6 +157,13 @@ export default function Maquinas() {
         </div>
       )}
 
+      <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' }}>
+        <input style={{ padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', width: '260px' }} value={filtroMaq} onChange={e => setFiltroMaq(e.target.value)} placeholder="Filtrar por clave o nombre..." />
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+          <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('maquinas', colsMaq, maquinasFiltradas)}>Excel</button>
+          <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => imprimirTablaPDF('Maquinas', colsMaq, maquinasFiltradas)}>PDF</button>
+        </div>
+      </div>
       <div style={styles.tabla}>
         <div style={styles.tablaHeader}>
           <span style={{ flex: 1 }}>Clave</span>
@@ -165,7 +176,7 @@ export default function Maquinas() {
         </div>
         {loading ? <p style={{ padding: 20, color: '#666' }}>Cargando...</p> : maquinas.length === 0 ? (
           <p style={{ padding: 20, color: '#666' }}>No hay maquinas registradas</p>
-        ) : maquinas.map(m => (
+        ) : maquinasFiltradas.map(m => (
           <div key={m.id} style={styles.tablaFila} className="fila-hover">
             <span style={{ flex: 1, fontWeight: '600', color: '#2563eb', fontSize: '13px' }}>{m.clave}</span>
             <span style={{ flex: 2, fontSize: '14px' }}>{m.nombre}</span>

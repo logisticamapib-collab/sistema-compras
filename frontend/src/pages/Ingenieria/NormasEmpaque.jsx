@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 
 const formVacio = {
   articulo_id: '', nombre: '', piezas_por_empaque: '', piezas_por_tarima: '',
@@ -233,6 +234,11 @@ export default function NormasEmpaque() {
         </select>
       </div>
 
+      {(() => { const cols = [{ label: 'Articulo', get: n => (articulos.find(a => a.id === n.articulo_id)?.codigo_interno || n.articulo_id) }, { label: 'Norma', get: n => n.nombre }, { label: 'Pzas/empaque', get: n => n.piezas_por_empaque }, { label: 'Pzas/tarima', get: n => n.piezas_por_tarima }, { label: 'Tipo', get: n => n.tipo }, { label: 'Aprob. cliente', get: n => n.aprobada_cliente ? 'Si' : 'No' }, { label: 'Activa', get: n => n.activa ? 'Si' : 'No' }]; return (
+      <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', justifyContent: 'flex-end' }}>
+        <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('normas_empaque', cols, normasFiltradas)}>Excel</button>
+        <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => imprimirTablaPDF('Normas de Empaque', cols, normasFiltradas)}>PDF</button>
+      </div>) })()}
       <div style={styles.tabla}>
         <div style={styles.tablaHeader}>
           <span style={{ flex: 2 }}>Articulo</span>
