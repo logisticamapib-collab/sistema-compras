@@ -34,11 +34,14 @@ export default function ReportesKPI() {
   const [prog, setProg] = useState([])
   const [param, setParam] = useState({ pct_scrap_default: 3 })
   const [semanas, setSemanas] = useState([])
+  const [om, setOm] = useState([])
+  const [omLin, setOmLin] = useState([])
+  const [omRec, setOmRec] = useState([])
 
   useEffect(() => { cargarCat().then(consultar) }, [])
   const cargarCat = async () => {
     const emp = perfil.empresa_id
-    const [mq, ar, ru, cv, ca, pa, se] = await Promise.all([
+    const [mq, ar, ru, cv, ca, pa, se, omd, old, ord] = await Promise.all([
       supabase.from('maquinas').select('id, clave, nombre').eq('empresa_id', emp),
       supabase.from('articulos').select('id, codigo_interno, descripcion, pct_scrap_aprobado').eq('empresa_id', emp),
       supabase.from('rutas_fabricacion').select('articulo_id, tipo_operacion, tiempo_estandar_seg'),
@@ -46,9 +49,13 @@ export default function ReportesKPI() {
       supabase.from('mrp_calendario').select('dia_semana, trabaja, horas_efectivas').eq('empresa_id', emp),
       supabase.from('produccion_parametros').select('*').eq('empresa_id', emp).maybeSingle(),
       supabase.from('semanas_produccion').select('*').eq('empresa_id', emp).order('semana_inicio', { ascending: false }),
+      supabase.from('ordenes_maquila').select('*, maq:proveedores(nombre), art:articulos(codigo_interno)').eq('empresa_id', emp).order('id', { ascending: false }),
+      supabase.from('om_lineas').select('om_id, tipo, cantidad, cantidad_oc, cantidad_recibida, vigente'),
+      supabase.from('om_recibos').select('om_id, cantidad, shots'),
     ])
     setMaquinas(mq.data || []); setArticulos(ar.data || []); setRutas(ru.data || []); setCav(cv.data || [])
     setCal(ca.data || []); setParam(pa.data || { pct_scrap_default: 3 }); setSemanas(se.data || [])
+    setOm(omd.data || []); setOmLin(old.data || []); setOmRec(ord.data || [])
     if (se.data && se.data[0]) setSemanaId(String(se.data[0].id))
   }
   const consultar = async () => {
@@ -141,6 +148,15 @@ export default function ReportesKPI() {
     return Object.values(map).sort((a, b) => b.cant - a.cant)
   }
 
+  const maquilaResumen = () => om.map(o => {
+    const lins = omLin.filter(l => l.om_id === o.id && l.vigente !== false)
+    const firme = lins.filter(l => l.tipo === 'firme').reduce((s, l) => s + Number(l.cantidad), 0)
+    const forecast = lins.filter(l => l.tipo === 'forecast').reduce((s, l) => s + Number(l.cantidad), 0)
+    const enOC = lins.reduce((s, l) => s + Number(l.cantidad_oc || 0), 0)
+    const recibido = lins.reduce((s, l) => s + Number(l.cantidad_recibida || 0), 0)
+    const shots = omRec.filter(r => r.om_id === o.id).reduce((s, r) => s + Number(r.shots || 0), 0)
+    return { o, firme, forecast, enOC, recibido, backorder: Math.max(0, enOC - recibido), shots }
+  })
   const otsRango = ots.filter(o => (o.fecha_programada || '') >= desde && (o.fecha_programada || '') <= hasta)
   const otsSemana = ots.filter(o => String(o.semana_id) === String(semanaId))
     .sort((a, b) => (a.maquina_id - b.maquina_id) || (Number(a.secuencia || 0) - Number(b.secuencia || 0)))
@@ -171,7 +187,7 @@ export default function ReportesKPI() {
         <button style={styles.boton} onClick={consultar} disabled={loading}>{loading ? 'Consultando...' : 'Consultar'}</button>
       </div>
       <div style={styles.tabs} className="no-imprimir">
-        <T id="oee">OEE</T><T id="maquinas">Estatus maquina</T><T id="cambios">Cambios</T><T id="scrap">Scrap</T><T id="ot">OT</T><T id="programa">Programa piso</T>
+        <T id="oee">OEE</T><T id="maquinas">Estatus maquina</T><T id="cambios">Cambios</T><T id="scrap">Scrap</T><T id="maquila">Maquila</T><T id="ot">OT</T><T id="programa">Programa piso</T>
       </div>
 
       {tab === 'oee' && (() => { const rows = oeePorMaquina(); return (
@@ -232,6 +248,15 @@ export default function ReportesKPI() {
           </div>
         </div>
       )}
+
+      {tab === 'maquila' && (() => { const rows = maquilaResumen(); const cols = [{ label: 'Folio', get: r => r.o.folio }, { label: 'Maquilador', get: r => r.o.maq?.nombre || '' }, { label: 'Articulo', get: r => r.o.art?.codigo_interno || '' }, { label: 'Firme', get: r => r.firme }, { label: 'Forecast', get: r => r.forecast }, { label: 'En OC', get: r => r.enOC }, { label: 'Recibido', get: r => r.recibido }, { label: 'Backorder', get: r => r.backorder }, { label: 'Shots', get: r => r.shots }, { label: 'Estatus', get: r => r.o.estatus }]; return (
+        <div>
+          <div style={styles.expBar} className="no-imprimir"><button style={styles.bExcel} onClick={() => exportarExcel('maquila', cols, rows)}>Excel</button><button style={styles.bPdf} onClick={() => imprimirTablaPDF('Programas de maquila', cols, rows)}>PDF</button></div>
+          <div style={styles.tabla}><div style={styles.th}><span style={{ flex: 1 }}>Folio</span><span style={{ flex: 1.3 }}>Maquilador</span><span style={{ flex: 1 }}>Articulo</span><span style={{ flex: 0.8, textAlign: 'right' }}>Firme</span><span style={{ flex: 0.8, textAlign: 'right' }}>Forecast</span><span style={{ flex: 0.8, textAlign: 'right' }}>En OC</span><span style={{ flex: 0.8, textAlign: 'right' }}>Recibido</span><span style={{ flex: 0.9, textAlign: 'right' }}>Backorder</span><span style={{ flex: 0.7, textAlign: 'right' }}>Shots</span><span style={{ flex: 1 }}>Estatus</span></div>
+            {rows.map(r => (<div key={r.o.id} style={styles.tr}><span style={{ flex: 1, fontWeight: 600 }}>{r.o.folio}</span><span style={{ flex: 1.3 }}>{r.o.maq?.nombre || '-'}</span><span style={{ flex: 1 }}>{r.o.art?.codigo_interno || '-'}</span><span style={{ flex: 0.8, textAlign: 'right' }}>{fmt(r.firme)}</span><span style={{ flex: 0.8, textAlign: 'right', color: '#0369a1' }}>{fmt(r.forecast)}</span><span style={{ flex: 0.8, textAlign: 'right', color: '#2563eb' }}>{fmt(r.enOC)}</span><span style={{ flex: 0.8, textAlign: 'right', color: '#16a34a' }}>{fmt(r.recibido)}</span><span style={{ flex: 0.9, textAlign: 'right', fontWeight: 600, color: r.backorder > 0 ? '#dc2626' : '#334155' }}>{fmt(r.backorder)}</span><span style={{ flex: 0.7, textAlign: 'right' }}>{fmt(r.shots)}</span><span style={{ flex: 1, fontSize: '12px' }}>{(r.o.estatus || '').replace(/_/g, ' ')}</span></div>))}
+            {rows.length === 0 && <div style={styles.vacio}>Sin programas de maquila.</div>}</div>
+          <p style={styles.hint}>Resumen de programas de maquila: firme/forecast, comprometido en OC, recibido, backorder (en OC por entregar) y shots acumulados por el molde.</p>
+        </div>) })()}
 
       {tab === 'ot' && (
         <div>

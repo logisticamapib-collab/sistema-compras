@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 
 const tiposOperacion = [
   { value: 'inyeccion', label: 'Inyeccion' },
@@ -201,6 +202,11 @@ export default function RutasFabricacion() {
 
       {articuloId && (
         <>
+          {pasos.length > 0 && (() => { const cols = [{ label: 'Sec', get: p => p.secuencia }, { label: 'Operacion', get: p => p.tipo_operacion }, { label: 'Maquina', get: p => p.maquinas?.clave || '' }, { label: 'Site', get: p => p.sites?.nombre || '' }, { label: 'Ciclo (seg)', get: p => p.tiempo_estandar_seg }, { label: 'Personal', get: p => p.personal_requerido }]; return (
+          <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '10px', justifyContent: 'flex-end' }}>
+            <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('ruta', cols, pasos)}>Excel</button>
+            <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => imprimirTablaPDF('Ruta de fabricacion', cols, pasos)}>PDF</button>
+          </div>) })()}
           <div style={styles.pasos}>
             {loading ? <p style={{ color: '#666' }}>Cargando...</p> : pasos.length === 0 ? (
               <p style={{ color: '#666' }}>Este articulo aun no tiene ruta de fabricacion.</p>
