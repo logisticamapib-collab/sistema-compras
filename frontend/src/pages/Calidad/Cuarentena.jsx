@@ -169,8 +169,8 @@ export default function Cuarentena() {
     const estatusDestino = salida.disposicion === 'liberar' ? 'liberado' : salida.disposicion === 'retrabajo' ? 'retenido' : 'scrap'
     const tipoMov = salida.disposicion === 'liberar' ? 'liberacion_calidad' : salida.disposicion === 'retrabajo' ? 'retrabajo' : 'scrap'
 
-    if (esTodo && Number(ev.cantidad_liberada || 0) + Number(ev.cantidad_scrap || 0) + Number(ev.cantidad_retrabajo || 0) === 0) {
-      // Caja completa, primera y unica disposicion: re-estatus del lote original
+    if (esTodo) {
+      // Se dispone TODO lo que queda en cuarentena: el lote actual conserva su codigo y solo cambia de estatus
       if (salida.disposicion === 'scrap') {
         if (virtualRow) await supabase.from('existencias').delete().eq('id', virtualRow.id)
         await supabase.from('movimientos').insert({ empresa_id: emp, articulo_id: ev.articulo_id, lote_id: ev.lote_id, tipo: 'scrap', almacen_origen_id: param.almacen_id, ubicacion_origen_id: param.ubicacion_id, cantidad: cant, motivo: `Scrap desde cuarentena: ${salida.nota}`, usuario_id: perfil.id })
@@ -181,21 +181,23 @@ export default function Cuarentena() {
       }
       await supabase.from('lotes').update({ estatus_calidad: estatusDestino, ...(salida.disposicion === 'liberar' ? { liberado_por: perfil.id, liberado_en: new Date().toISOString() } : {}) }).eq('id', ev.lote_id)
     } else {
-      // Parcial (o ya hubo disposiciones previas): dividir en lote hijo de cajas completas
-      const childCode = `${parent.codigo_lote}-${salida.disposicion[0].toUpperCase()}${String(Date.now()).slice(-4)}`
-      const { data: hijo } = await supabase.from('lotes').insert({ empresa_id: emp, articulo_id: ev.articulo_id, codigo_lote: childCode, origen: parent.origen, estatus_calidad: estatusDestino, lote_padre_id: parent.id, fecha: new Date().toISOString().slice(0, 10), creado_por: perfil.id, ...(salida.disposicion === 'liberar' ? { liberado_por: perfil.id, liberado_en: new Date().toISOString() } : {}) }).select().single()
+      // PARCIAL: lo dispuesto (cant) CONSERVA el lote original; el REMANENTE que sigue en
+      // cuarentena se separa en un lote hijo con sufijo, en la misma ubicacion virtual.
+      const remnant = rem - cant
+      const childCode = `${parent.codigo_lote}-R${String(Date.now()).slice(-4)}`
+      const { data: hijo } = await supabase.from('lotes').insert({ empresa_id: emp, articulo_id: ev.articulo_id, codigo_lote: childCode, origen: parent.origen, estatus_calidad: 'cuarentena', lote_padre_id: parent.id, fecha: new Date().toISOString().slice(0, 10), creado_por: perfil.id }).select().single()
       loteHijo = hijo?.id || null
-      // reducir existencia virtual del padre
-      if (virtualRow) {
-        const nuevo = Number(virtualRow.cantidad) - cant
-        if (nuevo > 0) await supabase.from('existencias').update({ cantidad: nuevo }).eq('id', virtualRow.id)
-        else await supabase.from('existencias').delete().eq('id', virtualRow.id)
-      }
+      // el lote original se queda con 'cant'; el remanente pasa al lote hijo (ubicacion virtual)
+      if (virtualRow) await supabase.from('existencias').update({ cantidad: cant }).eq('id', virtualRow.id)
+      if (loteHijo) await supabase.from('existencias').insert({ lote_id: loteHijo, almacen_id: param.almacen_id, ubicacion_id: param.ubicacion_id, cantidad: remnant })
+      // disponer del lote original (conserva su codigo)
       if (salida.disposicion === 'scrap') {
-        await supabase.from('movimientos').insert({ empresa_id: emp, articulo_id: ev.articulo_id, lote_id: loteHijo, tipo: 'scrap', almacen_origen_id: param.almacen_id, ubicacion_origen_id: param.ubicacion_id, cantidad: cant, motivo: `Scrap desde cuarentena: ${salida.nota}`, usuario_id: perfil.id })
+        if (virtualRow) await supabase.from('existencias').delete().eq('id', virtualRow.id)
+        await supabase.from('movimientos').insert({ empresa_id: emp, articulo_id: ev.articulo_id, lote_id: ev.lote_id, tipo: 'scrap', almacen_origen_id: param.almacen_id, ubicacion_origen_id: param.ubicacion_id, cantidad: cant, motivo: `Scrap desde cuarentena: ${salida.nota}`, usuario_id: perfil.id })
       } else {
-        await supabase.from('existencias').insert({ lote_id: loteHijo, almacen_id: origAlm, ubicacion_id: origUbi, cantidad: cant })
-        await supabase.from('movimientos').insert({ empresa_id: emp, articulo_id: ev.articulo_id, lote_id: loteHijo, tipo: tipoMov, almacen_origen_id: param.almacen_id, ubicacion_origen_id: param.ubicacion_id, almacen_destino_id: origAlm, ubicacion_destino_id: origUbi, cantidad: cant, motivo: `${salida.disposicion} desde cuarentena: ${salida.nota}`, usuario_id: perfil.id })
+        if (virtualRow) await supabase.from('existencias').update({ almacen_id: origAlm, ubicacion_id: origUbi }).eq('id', virtualRow.id)
+        await supabase.from('contenedores').update({ almacen_id: origAlm, ubicacion_id: origUbi }).eq('lote_id', ev.lote_id)
+        await supabase.from('movimientos').insert({ empresa_id: emp, articulo_id: ev.articulo_id, lote_id: ev.lote_id, tipo: tipoMov, almacen_origen_id: param.almacen_id, ubicacion_origen_id: param.ubicacion_id, almacen_destino_id: origAlm, ubicacion_destino_id: origUbi, cantidad: cant, motivo: `${salida.disposicion} desde cuarentena: ${salida.nota}`, usuario_id: perfil.id })
       }
     }
 
@@ -208,6 +210,7 @@ export default function Cuarentena() {
       cantidad_retrabajo: Number(ev.cantidad_retrabajo || 0) + (salida.disposicion === 'retrabajo' ? cant : 0),
       estatus: nuevaRem <= 0 ? 'cerrada' : 'parcial',
     }
+    if (nuevaRem > 0 && loteHijo) patchEv.lote_id = loteHijo
     if (nuevaRem <= 0) { patchEv.salida_at = new Date().toISOString(); patchEv.salida_por = perfil.id }
     await supabase.from('cuarentena_eventos').update(patchEv).eq('id', ev.id)
     await supabase.from('cuarentena_salidas').update({ estatus: 'aplicada', lote_hijo_id: loteHijo, aplicado_por: perfil.id, aplicado_at: new Date().toISOString() }).eq('id', salida.id)
@@ -299,7 +302,7 @@ export default function Cuarentena() {
 
       {vista === 'historial' && (
         <div style={styles.tabla}>
-          <div style={styles.th}><span style={{ flex: 1 }}>Caja</span><span style={{ flex: 1 }}>Disposicion</span><span style={{ flex: 0.8, textAlign: 'right' }}>Cant.</span><span style={{ flex: 1 }}>Lote hijo</span><span style={{ flex: 1.4 }}>Autorizo</span><span style={{ flex: 1 }}>Fecha</span></div>
+          <div style={styles.th}><span style={{ flex: 1 }}>Caja</span><span style={{ flex: 1 }}>Disposicion</span><span style={{ flex: 0.8, textAlign: 'right' }}>Cant.</span><span style={{ flex: 1 }}>Remanente</span><span style={{ flex: 1.4 }}>Autorizo</span><span style={{ flex: 1 }}>Fecha</span></div>
           {salidas.filter(s => s.estatus === 'aplicada').map(s => { const l = lotes.find(x => x.id === s.lote_id); const h = lotes.find(x => x.id === s.lote_hijo_id); return (
             <div key={s.id} style={styles.tr}>
               <span style={{ flex: 1, fontWeight: 600 }}>{l?.codigo_lote || s.lote_id}</span>
