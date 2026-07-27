@@ -47,7 +47,7 @@ export default function Dashboard() {
   if (moduloActivo) {
     return (
       <div style={styles.container}>
-        <header style={styles.header}>
+        <header style={styles.header} className="no-imprimir">
           <button style={styles.botonBack} onClick={() => setModuloActivo(null)}>
             &larr; Panel de control
           </button>
@@ -74,7 +74,7 @@ export default function Dashboard() {
 
   return (
     <div style={styles.container}>
-      <header style={styles.header}>
+      <header style={styles.header} className="no-imprimir">
         <div style={styles.headerIzquierdo}>
           <img src="/syntia-logo.png" alt="SYNTIA" style={styles.logoHeader} />
           <div>

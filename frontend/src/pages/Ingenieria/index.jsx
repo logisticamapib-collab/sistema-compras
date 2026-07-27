@@ -28,7 +28,7 @@ export default function GrupoIngenieria() {
 
   return (
     <div style={styles.container}>
-      <div style={styles.sidebar}>
+      <div style={styles.sidebar} className="no-imprimir">
         <p style={styles.sidebarTitulo}>Ingenieria</p>
         {seccionesVisibles.map(s => (
           <button

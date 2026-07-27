@@ -14,7 +14,7 @@ export default function GrupoMantenimiento() {
   const [seccion, setSeccion] = useState(visibles[0]?.id || '')
   return (
     <div style={styles.container}>
-      <div style={styles.sidebar}>
+      <div style={styles.sidebar} className="no-imprimir">
         <p style={styles.sidebarTitulo}>Mantenimiento</p>
         {visibles.map(s => (
           <button key={s.id} className={seccion === s.id ? 'nav-item nav-item-activo' : 'nav-item'}

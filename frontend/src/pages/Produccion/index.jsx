@@ -25,7 +25,7 @@ export default function GrupoProduccion() {
 
   return (
     <div style={styles.container}>
-      <div style={styles.sidebar}>
+      <div style={styles.sidebar} className="no-imprimir">
         <p style={styles.sidebarTitulo}>Produccion</p>
         {seccionesVisibles.map(s => (
           <button key={s.id}

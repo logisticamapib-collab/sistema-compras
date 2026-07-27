@@ -287,7 +287,10 @@ export default function TraspasoEscaneo() {
           </div>
           <div style={{ ...styles.campo, flex: 1 }}>
             <label style={styles.label}>2. Ubicacion (escanea o elige)</label>
-            <input style={styles.input} value={destUbicacion} onChange={e => setDestUbicacion(e.target.value)} disabled={!destAlmacen} placeholder="Escanea/teclea la ubicacion" list="ubis-destino" />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input style={{ ...styles.input, flex: 1 }} value={destUbicacion} onChange={e => setDestUbicacion(e.target.value)} disabled={!destAlmacen} placeholder="Escanea/teclea la ubicacion" list="ubis-destino" />
+              <EscanerCamara onScan={t => setDestUbicacion(t)} />
+            </div>
             <datalist id="ubis-destino">{ubisDest().map(u => <option key={u.id} value={u.clave}>{u.clave}{u.es_cuarentena ? ' (cuarentena)' : ''}</option>)}</datalist>
           </div>
         </div>
