@@ -93,6 +93,8 @@ export default function Dashboard() {
         </div>
       </header>
 
+      <div style={styles.marca} aria-hidden="true"><img src="/syntia-logo.png" alt="" style={styles.marcaImg} /></div>
+
       <div style={styles.contenido}>
         <div style={styles.bienvenida}>
           <h2 style={styles.bienvenidaTitulo}>Buen dia, {perfil?.nombre?.split(' ')[0]}</h2>
@@ -133,14 +135,14 @@ const styles = {
   container: { minHeight: '100vh', backgroundColor: '#f0f2f5' },
   header: { backgroundColor: '#1a1a2e', padding: '10px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   headerIzquierdo: { display: 'flex', alignItems: 'center', gap: '12px' },
-  logoHeader: { width: '52px', height: '52px', objectFit: 'contain' },
+  logoHeader: { width: '84px', height: '84px', objectFit: 'contain' },
   titulo: { color: '#fff', fontSize: '17px', fontWeight: '600', margin: '0' },
   subtitulo: { color: '#94a3b8', fontSize: '11px', margin: '2px 0 0 0' },
   headerDerecho: { display: 'flex', alignItems: 'center', gap: '16px' },
   usuario: { color: '#cbd5e1', fontSize: '13px' },
   botonSalir: { padding: '7px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
   botonBack: { padding: '7px 14px', backgroundColor: 'transparent', color: '#94a3b8', border: '1px solid #334155', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' },
-  contenido: { padding: '28px' },
+  contenido: { padding: '28px', position: 'relative', zIndex: 1 },
   bienvenida: { marginBottom: '24px' },
   bienvenidaTitulo: { fontSize: '20px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 4px 0' },
   bienvenidaDesc: { fontSize: '13px', color: '#666', margin: '0' },
@@ -152,4 +154,6 @@ const styles = {
   tarjetaContenido: { padding: '20px' },
   tarjetaTitulo: { fontSize: '15px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 6px 0' },
   tarjetaDesc: { fontSize: '12px', color: '#666', margin: '0' },
+  marca: { position: 'fixed', top: '72px', left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 0, pointerEvents: 'none' },
+  marcaImg: { width: '60%', maxWidth: '760px', objectFit: 'contain', opacity: 0.06 },
 }
