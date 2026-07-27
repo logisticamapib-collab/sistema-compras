@@ -18,12 +18,14 @@ import MovimientoMaterial from './MovimientoMaterial'
 import TraspasoEscaneo from './TraspasoEscaneo'
 import Contenedores from './Contenedores'
 import TerminalLauncher from '../../components/TerminalLauncher'
+import SuministroProduccion from './SuministroProduccion'
 
 const secciones = [
   { id: 'almacenes', modulo: 'log_almacenes', titulo: 'Almacenes' },
   { id: 'flujos', modulo: 'log_flujos', titulo: 'Flujos de Almacen' },
   { id: 'recibos', modulo: 'log_recibos', titulo: 'Recibos' },
   { id: 'movimiento', modulo: 'log_movimiento', titulo: 'Movimiento de Material' },
+  { id: 'suministro', modulo: 'log_suministro', titulo: 'Suministro a Produccion' },
   { id: 'traspaso_escaneo', modulo: 'log_movimiento', titulo: 'Traspaso por Escaneo' },
   { id: 'contenedores', modulo: 'log_contenedores', titulo: 'Cajas y Tarimas' },
   { id: 'inventario', modulo: 'log_inventario', titulo: 'Inventario' },
@@ -66,6 +68,7 @@ export default function GrupoLogistica() {
         {seccion === 'flujos' && <FlujosAlmacen />}
         {seccion === 'recibos' && <Recibos />}
         {seccion === 'movimiento' && <MovimientoMaterial />}
+        {seccion === 'suministro' && <SuministroProduccion />}
         {seccion === 'traspaso_escaneo' && <TraspasoEscaneo />}
         {seccion === 'contenedores' && <Contenedores />}
         {seccion === 'inventario' && <Inventario />}
