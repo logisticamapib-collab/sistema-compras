@@ -11,9 +11,11 @@ import GrupoPlaneacion from './Planeacion/index'
 import ModuloPendiente from './ModuloPendiente'
 import GrupoMoldes from './Moldes/index'
 import GrupoMantenimiento from './Mantenimiento/index'
+import GrupoDireccion from './Direccion/index'
 
 // Modulos "contenedor" -- agrupan varias pantallas y dependen de permisos granulares internos
 const modulosGrupo = [
+  { id: 'direccion', titulo: 'Direccion', desc: 'Reportes ejecutivos para direccion y gerencia', color: '#1a1a2e' },
   { id: 'compras', titulo: 'Compras', desc: 'Requisiciones, ordenes, proveedores y KPI', color: '#2563eb' },
   { id: 'ingenieria', titulo: 'Ingenieria', desc: 'Articulos, rutas, BOM y niveles de ingenieria', color: '#059669' },
   { id: 'logistica', titulo: 'Logistica', desc: 'Almacen, Embarques, Customer Service y Clientes', color: '#0891b2' },
@@ -65,6 +67,7 @@ export default function Dashboard() {
           {moduloActivo === 'planeacion' && <GrupoPlaneacion />}
           {moduloActivo === 'moldes' && <GrupoMoldes />}
           {moduloActivo === 'mantenimiento' && <GrupoMantenimiento />}
+          {moduloActivo === 'direccion' && <GrupoDireccion />}
           {moduloActivo === 'configuracion' && <Configuracion />}
           {pendienteActivo && <ModuloPendiente titulo={pendienteActivo.titulo} />}
         </div>

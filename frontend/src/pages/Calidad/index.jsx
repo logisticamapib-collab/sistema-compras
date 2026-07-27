@@ -6,6 +6,7 @@ import LiberacionesCalidad from './LiberacionesCalidad'
 import NoConformidades from './NoConformidades'
 import AlertasCalidad from './AlertasCalidad'
 import Cuarentena from './Cuarentena'
+import TerminalLauncher from '../../components/TerminalLauncher'
 import ModuloPendiente from '../ModuloPendiente'
 
 const secciones = [
@@ -15,6 +16,7 @@ const secciones = [
   { id: 'no_conformidades', modulo: 'cal_nc', titulo: 'No Conformidades' },
   { id: 'alertas', modulo: 'cal_alertas', titulo: 'Alertas de Calidad' },
   { id: 'cuarentena', modulo: 'cal_cuarentena', titulo: 'Cuarentena' },
+  { id: 'terminal', modulo: 'cal_terminal', titulo: 'Terminal (piso)' },
 ]
 
 export default function GrupoCalidad() {
@@ -46,6 +48,7 @@ export default function GrupoCalidad() {
         {seccion === 'no_conformidades' && <NoConformidades />}
         {seccion === 'alertas' && <AlertasCalidad />}
         {seccion === 'cuarentena' && <Cuarentena />}
+        {seccion === 'terminal' && <TerminalLauncher titulo="Terminal de Calidad" opciones={[{ label: 'Liberacion de lotes', color: '#b91c1c', Comp: BandejaLiberacion }, { label: 'Cuarentena', color: '#d97706', Comp: Cuarentena }, { label: 'No conformidades', color: '#9f1239', Comp: NoConformidades }, { label: 'Alertas de calidad', color: '#be123c', Comp: AlertasCalidad }]} />}
       </div>
     </div>
   )

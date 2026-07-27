@@ -17,6 +17,7 @@ import ReportesLogistica from './ReportesLogistica'
 import MovimientoMaterial from './MovimientoMaterial'
 import TraspasoEscaneo from './TraspasoEscaneo'
 import Contenedores from './Contenedores'
+import TerminalLauncher from '../../components/TerminalLauncher'
 
 const secciones = [
   { id: 'almacenes', modulo: 'log_almacenes', titulo: 'Almacenes' },
@@ -35,6 +36,7 @@ const secciones = [
   { id: 'variacion_demanda', modulo: 'cs_variacion', titulo: 'Variacion de Demanda' },
   { id: 'consigna', modulo: 'cs_consigna', titulo: 'Autorizaciones de Consigna' },
   { id: 'clientes', modulo: 'ing_clientes', titulo: 'Clientes' },
+  { id: 'terminal', modulo: 'log_terminal', titulo: 'Terminal (piso)' },
 ]
 
 export default function GrupoLogistica() {
@@ -76,6 +78,7 @@ export default function GrupoLogistica() {
         {seccion === 'variacion_demanda' && <VariacionDemanda />}
         {seccion === 'consigna' && <AutorizacionesConsigna />}
         {seccion === 'clientes' && <Clientes />}
+        {seccion === 'terminal' && <TerminalLauncher titulo="Terminal de Logistica" opciones={[{ label: 'Recibos', color: '#0891b2', Comp: Recibos }, { label: 'Traspaso por escaneo', color: '#0e7490', Comp: TraspasoEscaneo }, { label: 'Preparar embarque', color: '#0369a1', Comp: EmbarquePreparar }, { label: 'Inventario', color: '#155e75', Comp: ConsultasInventario }]} />}
       </div>
     </div>
   )

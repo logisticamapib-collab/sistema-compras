@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import OrdenesMantto from './OrdenesMantto'
 import KpisMantto from './KpisMantto'
+import TerminalLauncher from '../../components/TerminalLauncher'
 
 const secciones = [
   { id: 'ordenes', modulo: 'man_ordenes', titulo: 'Ordenes de Mantenimiento' },
   { id: 'kpis', modulo: 'man_kpis', titulo: 'KPIs' },
+  { id: 'terminal', modulo: 'man_terminal', titulo: 'Terminal (piso)' },
 ]
 
 export default function GrupoMantenimiento() {
@@ -25,6 +27,7 @@ export default function GrupoMantenimiento() {
         {visibles.length === 0 && <p style={{ color: '#666', padding: '28px' }}>Tu rol no tiene secciones de Mantenimiento.</p>}
         {seccion === 'ordenes' && <OrdenesMantto />}
         {seccion === 'kpis' && <KpisMantto />}
+        {seccion === 'terminal' && <TerminalLauncher titulo="Terminal de Mantenimiento" opciones={[{ label: 'Ordenes de mantenimiento', color: '#57534e', Comp: OrdenesMantto }]} />}
       </div>
     </div>
   )

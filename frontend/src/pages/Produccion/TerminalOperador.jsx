@@ -152,6 +152,7 @@ export default function TerminalOperador() {
           <button style={{ ...styles.accBtn, backgroundColor: '#16a34a' }} onClick={() => setEstado('trabajando', null)}>TRABAJANDO</button>
           <button style={{ ...styles.accBtn, backgroundColor: '#dc2626' }} onClick={() => setModo('paro')}>PARO</button>
           <button style={{ ...styles.accBtn, backgroundColor: '#d97706' }} onClick={() => setEstado('cambio_molde', null)}>CAMBIO MOLDE</button>
+          <button style={{ ...styles.accBtn, backgroundColor: '#475569' }} onClick={() => setEstado('sin_programa', null)}>SIN PROGRAMA</button>
           <button style={{ ...styles.accBtn, backgroundColor: '#2563eb' }} onClick={() => setModo('reporte')}>REPORTAR PRODUCCION</button>
         </div>
       )}

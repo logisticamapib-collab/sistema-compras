@@ -6,6 +6,7 @@ import TiposMtto from './TiposMtto'
 import AvisosMtto from './AvisosMtto'
 import CalendarioMtto from './CalendarioMtto'
 import KpisMtto from './KpisMtto'
+import TerminalLauncher from '../../components/TerminalLauncher'
 
 const secciones = [
   { id: 'estado', modulo: 'mol_estado', titulo: 'Moldes y estado' },
@@ -14,6 +15,7 @@ const secciones = [
   { id: 'calendario', modulo: 'mol_calendario', titulo: 'Calendario / Programa' },
   { id: 'kpis', modulo: 'mol_kpis', titulo: 'KPIs' },
   { id: 'tipos', modulo: 'mol_tipos', titulo: 'Tipos y parametros' },
+  { id: 'terminal', modulo: 'mol_terminal', titulo: 'Terminal (piso)' },
 ]
 
 export default function GrupoMoldes() {
@@ -37,6 +39,7 @@ export default function GrupoMoldes() {
         {seccion === 'calendario' && <CalendarioMtto />}
         {seccion === 'kpis' && <KpisMtto />}
         {seccion === 'tipos' && <TiposMtto />}
+        {seccion === 'terminal' && <TerminalLauncher titulo="Terminal de Moldes" opciones={[{ label: 'Estado de moldes', color: '#a16207', Comp: MoldesEstado }, { label: 'Avisos', color: '#b45309', Comp: AvisosMtto }, { label: 'Ordenes de mantenimiento', color: '#92400e', Comp: OrdenesMtto }]} />}
       </div>
     </div>
   )
