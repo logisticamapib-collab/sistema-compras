@@ -50,6 +50,7 @@ export default function OrdenesTrabajo() {
   const [clientes, setClientes] = useState([])
   const [artCliente, setArtCliente] = useState([])
   const [listado, setListado] = useState(false)
+  const [cierreForm, setCierreForm] = useState(null)
 
   useEffect(() => { cargar() }, [])
 
@@ -160,7 +161,7 @@ export default function OrdenesTrabajo() {
         site_id: maq?.site_id || null, articulo_id: artSel.id,
         cantidad_programada: Number(form.cantidad) || lineas[0].cantidad,
         maquina_id: Number(form.maquina_id), molde_id: form.molde_id ? Number(form.molde_id) : null,
-        ubicacion_mp_id: ubiMp.id, fecha_programada: form.fecha_programada || null,
+        ubicacion_mp_id: ubiMp.id, fecha_programada: form.fecha_programada || null, fecha_programada_original: form.fecha_programada || null,
         turno: form.turno, notas: form.notas || null, creado_por: perfil.id,
         liberacion_fuera_proc: !!(molNoDisp && form.liberar_fuera),
         liberado_fuera_por: (molNoDisp && form.liberar_fuera) ? perfil.id : null,
@@ -178,6 +179,7 @@ export default function OrdenesTrabajo() {
       })
       const { error: e2 } = await supabase.from('ot_articulos').insert(filas)
       if (e2) throw e2
+      await logBitacora(ot.id, 'creada', 'estatus', null, 'programada')
       setExito(`OT ${ot.folio} creada${esFamilia ? ` con ${filas.length} articulos del molde` : ''}`)
       setForm(null); await cargar()
     } catch (err) { setError('Error: ' + err.message) }
@@ -189,12 +191,49 @@ export default function OrdenesTrabajo() {
     setEtqOT({ ot, lineas: arts.map(x => ({ articulo: artDe(x.articulo_id), snp: Number(x.piezas_por_caja || 0), cantidad: Number(x.cajas_estimadas || 0) || 1 })) })
   }
 
-  const cambiarEstatus = async (ot, estatus) => {
+  const logBitacora = async (otId, tipo, campo, antes, despues) => {
+    await supabase.from('programa_cambios').insert({ empresa_id: perfil.empresa_id, ot_id: otId, tipo, campo, antes: antes != null ? String(antes) : null, despues: despues != null ? String(despues) : null, usuario_id: perfil.id, usuario_nombre: perfil.nombre })
+  }
+  const iniciarOT = async (ot) => {
     setError(''); setExito('')
-    const { error: e1 } = await supabase.from('ordenes_trabajo').update({ estatus }).eq('id', ot.id)
+    const hoy = new Date().toISOString().slice(0, 10)
+    const { error: e1 } = await supabase.from('ordenes_trabajo').update({ estatus: 'en_proceso', fecha_inicio_real: new Date().toISOString() }).eq('id', ot.id)
     if (e1) { setError('Error: ' + e1.message); return }
-    setExito(`OT ${ot.folio}: ${NOMBRE_EST[estatus]}`)
-    await cargar()
+    await logBitacora(ot.id, 'inicio', 'estatus', 'programada', 'en_proceso')
+    const orig = ot.fecha_programada_original || ot.fecha_programada
+    if (orig && hoy > orig) await logBitacora(ot.id, 'inicio_tarde', 'fecha_inicio', orig, hoy)
+    setExito(`OT ${ot.folio}: En proceso`); await cargar()
+  }
+  const terminarOT = async (ot) => {
+    setError(''); setExito('')
+    const { error: e1 } = await supabase.from('ordenes_trabajo').update({ estatus: 'terminada' }).eq('id', ot.id)
+    if (e1) { setError('Error: ' + e1.message); return }
+    await logBitacora(ot.id, 'terminada', 'estatus', ot.estatus, 'terminada')
+    setExito(`OT ${ot.folio}: Terminada`); await cargar()
+  }
+  const cancelarOT = async (ot) => {
+    setError(''); setExito('')
+    const { error: e1 } = await supabase.from('ordenes_trabajo').update({ estatus: 'cancelada' }).eq('id', ot.id)
+    if (e1) { setError('Error: ' + e1.message); return }
+    await logBitacora(ot.id, 'cancelada', 'estatus', ot.estatus, 'cancelada')
+    setExito(`OT ${ot.folio}: Cancelada`); await cargar()
+  }
+  const abrirCierre = (ot) => {
+    const arts = artsDeOt(ot.id)
+    const prog = arts.reduce((s, x) => s + Number(x.cantidad_programada || 0), 0)
+    const prod = arts.reduce((s, x) => s + Number(x.cantidad_producida || 0), 0)
+    setError(''); setCierreForm({ ot, prog, prod, corto: prod < prog, motivo: '' })
+  }
+  const confirmarCierre = async () => {
+    const f = cierreForm
+    if (f.corto && !f.motivo.trim()) { setError('Indica el motivo del cierre corto.'); return }
+    setProcesando(true)
+    try {
+      await supabase.from('ordenes_trabajo').update({ estatus: 'cerrada', cantidad_producida: f.prod, cerrada_corta: f.corto, cierre_motivo: f.corto ? f.motivo.trim() : null, cerrada_por: perfil.id, cerrada_at: new Date().toISOString() }).eq('id', f.ot.id)
+      await logBitacora(f.ot.id, f.corto ? 'cierre_corto' : 'cierre', 'cantidad', f.prog, f.prod + (f.corto ? ` · ${f.motivo.trim()}` : ''))
+      setExito(`OT ${f.ot.folio} cerrada${f.corto ? ' (corta)' : ''}.`); setCierreForm(null); await cargar()
+    } catch (err) { setError('Error: ' + err.message) }
+    setProcesando(false)
   }
 
   const clientesDeOt = (otId) => {
@@ -506,6 +545,7 @@ export default function OrdenesTrabajo() {
           <option value="programada">Programadas</option>
           <option value="en_proceso">En proceso</option>
           <option value="terminada">Terminadas</option>
+          <option value="cerrada">Cerradas</option>
           <option value="todas">Todas</option>
         </select>
         <label style={styles.label}>Del:</label>
@@ -555,9 +595,10 @@ export default function OrdenesTrabajo() {
                   <span style={{ width: '230px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }} onClick={ev => ev.stopPropagation()}>
                     <button style={styles.botonAccion} onClick={() => setDetalle(o)}>Imprimir OT</button>
                     <button style={styles.botonAccion} onClick={() => abrirEtiquetasOT(o)}>Etiquetas QR</button>
-                    {puedeCrear && o.estatus === 'programada' && <button style={styles.botonAccion} onClick={() => cambiarEstatus(o, 'en_proceso')}>Iniciar</button>}
-                    {puedeCrear && o.estatus === 'en_proceso' && <button style={styles.botonAccion} onClick={() => cambiarEstatus(o, 'terminada')}>Terminar</button>}
-                    {puedeCrear && ['programada', 'en_proceso'].includes(o.estatus) && <button style={{ ...styles.botonAccion, color: '#dc2626' }} onClick={() => cambiarEstatus(o, 'cancelada')}>Cancelar</button>}
+                    {puedeCrear && o.estatus === 'programada' && <button style={styles.botonAccion} onClick={() => iniciarOT(o)}>Iniciar</button>}
+                    {puedeCrear && o.estatus === 'en_proceso' && <button style={styles.botonAccion} onClick={() => terminarOT(o)}>Terminar</button>}
+                    {puedeCrear && ['programada', 'en_proceso', 'terminada'].includes(o.estatus) && <button style={{ ...styles.botonAccion, color: '#0e7490' }} onClick={() => abrirCierre(o)}>Cerrar</button>}
+                    {puedeCrear && ['programada', 'en_proceso'].includes(o.estatus) && <button style={{ ...styles.botonAccion, color: '#dc2626' }} onClick={() => cancelarOT(o)}>Cancelar</button>}
                   </span>
                 </div>
                 {abierto && (
@@ -588,6 +629,23 @@ export default function OrdenesTrabajo() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {cierreForm && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }} onClick={() => setCierreForm(null)}>
+          <div style={{ backgroundColor: '#fff', borderRadius: '12px', padding: '22px', width: '440px', maxWidth: '92vw' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: '15px', fontWeight: 600, color: '#1a1a2e', margin: '0 0 8px' }}>Cerrar {cierreForm.ot.folio}</h3>
+            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 10px' }}>Programado: <b>{fmtNum(cierreForm.prog)}</b> · Producido: <b>{fmtNum(cierreForm.prod)}</b>{cierreForm.corto && <span style={{ color: '#c2410c' }}> · cierre CORTO ({fmtNum(cierreForm.prog - cierreForm.prod)} faltantes)</span>}</p>
+            {cierreForm.corto && (<>
+              <label style={styles.label}>Motivo del cierre corto *</label>
+              <input style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }} value={cierreForm.motivo} onChange={e => setCierreForm({ ...cierreForm, motivo: e.target.value })} placeholder="Ej. cambio a articulo urgente / falla de molde" autoFocus />
+            </>)}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+              <button style={styles.botonSec} onClick={() => setCierreForm(null)} disabled={procesando}>Cancelar</button>
+              <button style={{ ...styles.boton, backgroundColor: '#0e7490' }} onClick={confirmarCierre} disabled={procesando}>Cerrar OT</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

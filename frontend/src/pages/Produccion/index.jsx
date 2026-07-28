@@ -4,6 +4,7 @@ import OrdenesTrabajo from './OrdenesTrabajo'
 import ReporteProduccion from './ReporteProduccion'
 import CatalogosProduccion from './Catalogos'
 import ProgramacionProduccion from './ProgramacionProduccion'
+import BitacoraOT from './BitacoraOT'
 import TableroAndon from './TableroAndon'
 import Maquila from './Maquila'
 import TerminalOperador from './TerminalOperador'
@@ -11,6 +12,7 @@ import ReportesKPI from './ReportesKPI'
 
 const secciones = [
   { id: 'ordenes', modulo: 'prod_ordenes', titulo: 'Ordenes de Trabajo' },
+  { id: 'bitacora', modulo: 'prod_ordenes', titulo: 'Bitacora de OT' },
   { id: 'reporte', modulo: 'prod_reportes', titulo: 'Reporte de Produccion' },
   { id: 'kpis', modulo: 'prod_kpis', titulo: 'Reportes / KPIs' },
   { id: 'programa', modulo: 'prod_programa', titulo: 'Programacion' },
@@ -41,6 +43,7 @@ export default function GrupoProduccion() {
       <div style={styles.contenido}>
         {seccionesVisibles.length === 0 && <p style={{ color: '#666', padding: '28px' }}>Tu rol no tiene ninguna seccion de Produccion habilitada.</p>}
         {seccion === 'ordenes' && <OrdenesTrabajo />}
+        {seccion === 'bitacora' && <BitacoraOT />}
         {seccion === 'reporte' && <ReporteProduccion />}
         {seccion === 'kpis' && <ReportesKPI />}
         {seccion === 'programa' && <ProgramacionProduccion />}

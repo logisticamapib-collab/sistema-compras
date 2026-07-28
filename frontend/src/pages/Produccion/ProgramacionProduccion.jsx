@@ -25,6 +25,7 @@ export default function ProgramacionProduccion() {
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [cargando, setCargando] = useState(false)
+  const [arrastreForm, setArrastreForm] = useState(null)
 
   const lunes = ref
   const domingo = addDias(lunes, 6)
@@ -68,25 +69,39 @@ export default function ProgramacionProduccion() {
     setCargando(false)
   }
 
-  const programar = async () => {
+  // Programar la semana. Ya no bloquea si hay OT pendientes de semanas previas:
+  // ofrece arrastrarlas a esta semana (reprogramarlas) o programar sin arrastrar.
+  const iniciarProgramar = async () => {
     setError(''); setExito('')
-    // Candado: semana anterior abierta con OT sin cerrar
     const { data: prev } = await supabase.from('semanas_produccion').select('id, semana_inicio, estatus')
       .eq('empresa_id', perfil.empresa_id).lt('semana_inicio', iso(lunes)).eq('estatus', 'abierta')
       .order('semana_inicio', { ascending: false }).limit(1).maybeSingle()
     if (prev) {
-      const { count } = await supabase.from('ordenes_trabajo').select('*', { count: 'exact', head: true })
+      const { data: pend } = await supabase.from('ordenes_trabajo')
+        .select('id, folio, fecha_programada, turno, maquina_id')
         .eq('semana_id', prev.id).in('estatus', ['programada', 'en_proceso'])
-      if (count > 0) { setError(`No puedes programar: la semana del ${ddmm(prev.semana_inicio)} sigue abierta con OT sin cerrar.`); return }
+      if (pend && pend.length > 0) { setArrastreForm({ prev, ots: pend }); return }
     }
-    setCargando(true)
-    const { error } = await supabase.rpc('programar_semana', {
-      p_empresa_id: perfil.empresa_id, p_site_id: perfil.site_id || null,
-      p_semana_inicio: iso(lunes), p_usuario_id: perfil.id, p_cambio_molde_min: 60,
-    })
+    runPrograma(false)
+  }
+  const runPrograma = async (arrastrar) => {
+    setArrastreForm(null); setCargando(true); setError('')
+    try {
+      if (arrastrar && arrastreForm) {
+        for (const o of arrastreForm.ots) {
+          await supabase.from('ordenes_trabajo').update({ fecha_programada: iso(lunes) }).eq('id', o.id)
+          await supabase.from('programa_cambios').insert({ empresa_id: perfil.empresa_id, semana_id: semana?.id || null, ot_id: o.id, tipo: 'arrastre', campo: 'fecha', antes: o.fecha_programada, despues: iso(lunes), usuario_id: perfil.id, usuario_nombre: perfil.nombre })
+        }
+      }
+      const { error } = await supabase.rpc('programar_semana', {
+        p_empresa_id: perfil.empresa_id, p_site_id: perfil.site_id || null,
+        p_semana_inicio: iso(lunes), p_usuario_id: perfil.id, p_cambio_molde_min: 60,
+      })
+      if (error) { setError(error.message); setCargando(false); return }
+      setExito(arrastrar ? 'Semana programada (OT pendientes arrastradas)' : 'Semana programada')
+      await cargar(); setTimeout(() => setExito(''), 3000)
+    } catch (err) { setError('Error: ' + err.message) }
     setCargando(false)
-    if (error) { setError(error.message); return }
-    setExito('Semana programada'); await cargar(); setTimeout(() => setExito(''), 3000)
   }
 
   const cerrarSemana = async () => {
@@ -102,13 +117,14 @@ export default function ProgramacionProduccion() {
   }
 
   const guardarEdit = async () => {
-    const o = edit
+    const o = edit; const orig = o._orig || {}
     const { error } = await supabase.from('ordenes_trabajo').update({
       maquina_id: o.maquina_id ? parseInt(o.maquina_id) : null, fecha_programada: o.fecha_programada, turno: o.turno,
     }).eq('id', o.id)
     if (error) { setError(error.message); return }
     await supabase.from('programa_cambios').insert({
-      empresa_id: perfil.empresa_id, semana_id: semana?.id || null, ot_id: o.id, campo: 'reprogramacion manual',
+      empresa_id: perfil.empresa_id, semana_id: semana?.id || null, ot_id: o.id, tipo: 'reprogramacion', campo: 'maquina/fecha/turno',
+      antes: `maq ${orig.maquina_id ?? '-'} / ${orig.fecha_programada ?? '-'} / ${orig.turno ?? '-'}`,
       despues: `maq ${o.maquina_id} / ${o.fecha_programada} / ${o.turno}`, usuario_id: perfil.id, usuario_nombre: perfil.nombre,
     })
     setEdit(null); await cargar()
@@ -141,7 +157,7 @@ export default function ProgramacionProduccion() {
           <button style={styles.navBtn} onClick={() => setRef(lunesDe(new Date()))}>Hoy</button>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
-          {puedeProgramar && semana?.estatus !== 'cerrada' && <button style={styles.boton} disabled={cargando} onClick={programar}>{cargando ? '...' : 'Programar semana'}</button>}
+          {puedeProgramar && semana?.estatus !== 'cerrada' && <button style={styles.boton} disabled={cargando} onClick={iniciarProgramar}>{cargando ? '...' : 'Programar semana'}</button>}
           {puedeCerrar && semana && semana.estatus !== 'cerrada' && <button style={styles.botonCerrar} onClick={cerrarSemana}>Cerrar semana</button>}
         </div>
       </div>
@@ -180,7 +196,7 @@ export default function ProgramacionProduccion() {
                       const falt = Math.max(Number(o.cantidad_programada) - av.ok, 0)
                       const atras = o.fecha_programada < hoy && o.estatus === 'programada'
                       return (
-                        <button key={o.id} onClick={() => setEdit({ ...o })} style={{ ...styles.card, borderLeftColor: atras ? '#dc2626' : Number(o.cambio_molde_min) > 0 ? '#c2410c' : '#7c3aed' }}>
+                        <button key={o.id} onClick={() => setEdit({ ...o, _orig: { maquina_id: o.maquina_id, fecha_programada: o.fecha_programada, turno: o.turno } })} style={{ ...styles.card, borderLeftColor: atras ? '#dc2626' : Number(o.cambio_molde_min) > 0 ? '#c2410c' : '#7c3aed' }}>
                           <div style={styles.cardTop}><span style={styles.turnoBadge}>{o.turno}</span> <strong>#{o.secuencia}</strong> {o.folio}</div>
                           <div style={{ fontWeight: '600', fontSize: '12px' }}>{familia(o)}</div>
                           <div style={{ fontSize: '11px', color: '#64748b' }}>Molde {o.molde_id || '-'} · {fmt(o.cantidad_programada)} pz</div>
@@ -216,6 +232,23 @@ export default function ProgramacionProduccion() {
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
               <button style={styles.botonSec} onClick={() => setEdit(null)}>Cancelar</button>
               <button style={styles.boton} onClick={guardarEdit}>Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {arrastreForm && (
+        <div style={styles.modalBg} onClick={() => setArrastreForm(null)}>
+          <div style={{ ...styles.modal, width: '440px' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 8px', fontSize: '15px' }}>OT pendientes de la semana del {ddmm(arrastreForm.prev.semana_inicio)}</h3>
+            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 10px' }}>Hay {arrastreForm.ots.length} OT sin terminar. ¿Arrastrarlas a esta semana ({ddmm(iso(lunes))}) o programar sin arrastrar?</p>
+            <div style={{ maxHeight: '160px', overflowY: 'auto', border: '1px solid #eef2f7', borderRadius: '8px', padding: '6px 10px', marginBottom: '12px' }}>
+              {arrastreForm.ots.map(o => <div key={o.id} style={{ fontSize: '12.5px', color: '#334155', padding: '2px 0' }}>{o.folio} · {ddmm(o.fecha_programada)} · {o.turno}</div>)}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
+              <button style={styles.botonSec} onClick={() => setArrastreForm(null)}>Cancelar</button>
+              <button style={styles.botonCerrar} onClick={() => runPrograma(false)}>Programar sin arrastrar</button>
+              <button style={styles.boton} onClick={() => runPrograma(true)}>Arrastrar y programar</button>
             </div>
           </div>
         </div>
