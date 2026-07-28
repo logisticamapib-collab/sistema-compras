@@ -575,7 +575,7 @@ export default function OrdenesTrabajo() {
             <span style={{ flex: 0.8 }}>Molde</span>
             <span style={{ flex: 0.9 }}>Fecha / turno</span>
             <span style={{ flex: 0.8, textAlign: 'center' }}>Estatus</span>
-            <span style={{ width: '230px' }}></span>
+            <span style={{ width: '300px' }}></span>
           </div>
           {lista.map(o => {
             const arts = artsDeOt(o.id)
@@ -592,7 +592,7 @@ export default function OrdenesTrabajo() {
                   <span style={{ flex: 0.8, color: '#64748b' }}>{o.mol?.clave || '-'}</span>
                   <span style={{ flex: 0.9, color: '#64748b', fontSize: '13px' }}>{fmtFecha(o.fecha_programada)} {o.turno}</span>
                   <span style={{ flex: 0.8, textAlign: 'center' }}><span style={{ ...styles.badge, ...badgeEst(o.estatus) }}>{NOMBRE_EST[o.estatus]}</span></span>
-                  <span style={{ width: '230px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }} onClick={ev => ev.stopPropagation()}>
+                  <span style={{ width: '300px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end', flexWrap: 'wrap' }} onClick={ev => ev.stopPropagation()}>
                     <button style={styles.botonAccion} onClick={() => setDetalle(o)}>Imprimir OT</button>
                     <button style={styles.botonAccion} onClick={() => abrirEtiquetasOT(o)}>Etiquetas QR</button>
                     {puedeCrear && o.estatus === 'programada' && <button style={styles.botonAccion} onClick={() => iniciarOT(o)}>Iniciar</button>}
