@@ -49,6 +49,7 @@ export default function InventarioCiclico() {
   const [folioBusca, setFolioBusca] = useState('')
   const [conteo, setConteo] = useState(null)     // cabecera abierta en toma fisica
   const [lineas, setLineas] = useState([])
+  const [master, setMaster] = useState(null)   // { tarima, cajas } confirmacion de master
   const [cfg, setCfg] = useState({ dias_a: 30, dias_b: 90, dias_c: 180, tolerancia_pct: 0, requiere_segunda_aut: false, segunda_aut_rol: '' })
 
   useEffect(() => { cargar() }, [])
@@ -138,7 +139,13 @@ export default function InventarioCiclico() {
     setError('')
     const v = (valor || '').trim(); if (!v || !conteo) return
     let lote = null
-    const { data: cont } = await supabase.from('contenedores').select('lote_id, articulo_id').eq('empresa_id', emp).ilike('folio', v).maybeSingle()
+    const { data: cont } = await supabase.from('contenedores').select('id, folio, tipo, lote_id, articulo_id, cantidad').eq('empresa_id', emp).ilike('folio', v).maybeSingle()
+    // Master / tarima: pide validar fisicamente las cajas que la componen antes de palomear
+    if (cont && cont.tipo === 'tarima') {
+      const { data: hijas } = await supabase.from('contenedores').select('id, folio, lote_id, articulo_id, cantidad').eq('padre_id', cont.id).eq('estatus', 'activo').order('folio')
+      if (!hijas || hijas.length === 0) { setError(`La master ${cont.folio} no tiene cajas activas.`); return }
+      setMaster({ tarima: cont, cajas: hijas }); return
+    }
     if (cont?.lote_id) lote = lotes.find(l => l.id === cont.lote_id)
     if (!lote) lote = lotes.find(l => (l.codigo_lote || '').toLowerCase() === v.toLowerCase())
     if (!lote) {
@@ -171,6 +178,54 @@ export default function InventarioCiclico() {
     }).select().single()
     setLineas(ls => [...ls, nueva])
     setExito(`Lote ${lote.codigo_lote} agregado como AJENO. Ultimo movimiento: ${detalle}`)
+  }
+
+  // Confirmada fisicamente la master: palomea el lote de cada caja que la compone
+  const confirmarMaster = async () => {
+    const m = master; if (!m) return
+    setProc(true); setError('')
+    try {
+      const loteIds = [...new Set(m.cajas.map(c => c.lote_id).filter(Boolean))]
+      let palomeados = 0, ajenos = 0, fuera = 0
+      const articulosDelFolio = [...new Set(lineas.map(x => x.articulo_id))]
+      let nuevas = []
+      for (const lid of loteIds) {
+        const lote = lotes.find(l => l.id === lid); if (!lote) continue
+        const enLista = lineas.find(x => x.lote_id === lid)
+        if (enLista) {
+          if (!enLista.contado) {
+            await supabase.from('conteo_lineas').update({ contado: true, cantidad_contada: enLista.cantidad_teorica, contado_at: new Date().toISOString() }).eq('id', enLista.id)
+            nuevas.push({ id: enLista.id, patch: { contado: true, cantidad_contada: enLista.cantidad_teorica } })
+          }
+          palomeados++
+        } else if (!articulosDelFolio.includes(lote.articulo_id)) {
+          fuera++
+        } else {
+          const { data: mv } = await supabase.from('movimientos').select('tipo, fecha, almacen_destino_id')
+            .eq('lote_id', lid).order('fecha', { ascending: false }).limit(1)
+          const mm = mv && mv[0]
+          const detalle = mm ? `${mm.tipo}${mm.almacen_destino_id ? ` -> ${almDe(mm.almacen_destino_id)?.clave || ''}` : ''} (${new Date(mm.fecha).toLocaleDateString('es-MX')})` : 'sin movimientos registrados'
+          const { data: nl } = await supabase.from('conteo_lineas').insert({
+            conteo_id: conteo.id, articulo_id: lote.articulo_id, lote_id: lid,
+            almacen_id: conteo.almacenes?.[0] || null, cantidad_teorica: 0, cantidad_contada: 0,
+            contado: true, ajeno: true, ultimo_movimiento: detalle, contado_at: new Date().toISOString(),
+          }).select().single()
+          if (nl) nuevas.push({ nueva: nl })
+          ajenos++
+        }
+      }
+      setLineas(ls => {
+        let out = ls.map(x => { const u = nuevas.find(n => n.id === x.id); return u ? { ...x, ...u.patch } : x })
+        nuevas.filter(n => n.nueva).forEach(n => out.push(n.nueva))
+        return out
+      })
+      const partes = [`${palomeados} lote(s) palomeado(s)`]
+      if (ajenos) partes.push(`${ajenos} ajeno(s) en rojo`)
+      if (fuera) partes.push(`${fuera} fuera del folio (ignorado(s))`)
+      setExito(`Master ${m.tarima.folio}: ${partes.join(' · ')}.`)
+      setMaster(null)
+    } catch (err) { setError('Error: ' + err.message) }
+    setProc(false)
   }
 
   const setContada = async (l, valor) => {
@@ -455,6 +510,31 @@ export default function InventarioCiclico() {
           </div>
         </div>
       )}
+
+      {master && (
+        <div style={S.ov} onClick={() => setMaster(null)}>
+          <div style={S.modal} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: 15, fontWeight: 600, color: '#1a1a2e', margin: '0 0 6px' }}>Master {master.tarima.folio}</h3>
+            <p style={{ fontSize: 13.5, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '9px 12px', margin: '0 0 10px' }}>
+              Esta master contiene <b>{master.cajas.length} caja(s)</b>. Favor de validar que <b>fisicamente existan</b> antes de confirmar.
+            </p>
+            <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid #eef2f7', borderRadius: 8 }}>
+              {master.cajas.map(c => (
+                <div key={c.id} style={{ display: 'flex', gap: 8, padding: '6px 10px', borderBottom: '1px solid #f1f5f9', fontSize: 12.5 }}>
+                  <span style={{ flex: 1, fontWeight: 600 }}>{c.folio}</span>
+                  <span style={{ flex: 1.2, color: '#64748b' }}>{artDe(c.articulo_id)?.codigo_interno || ''}</span>
+                  <span style={{ flex: 1.2, color: '#64748b' }}>{loteDe(c.lote_id)?.codigo_lote || '-'}</span>
+                  <span style={{ width: 70, textAlign: 'right' }}>{fmt(c.cantidad)}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
+              <button style={S.btnSec} onClick={() => setMaster(null)} disabled={proc}>Cancelar</button>
+              <button style={S.btn} onClick={confirmarMaster} disabled={proc}>Confirmado fisicamente</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -481,6 +561,8 @@ const S = {
   btnMini: { padding: '5px 10px', background: '#0891b2', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' },
   btnMiniRed: { padding: '5px 10px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' },
   pill: { padding: '2px 8px', borderRadius: 20, fontSize: 10.5, fontWeight: 700 },
+  ov: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 },
+  modal: { background: '#fff', borderRadius: 12, padding: 22, width: 520, maxWidth: '94vw' },
   err: { color: '#dc2626', fontSize: 13, marginBottom: 12 },
   ok: { color: '#16a34a', fontSize: 13, marginBottom: 12 },
 }
