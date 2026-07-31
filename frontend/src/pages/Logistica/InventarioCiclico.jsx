@@ -49,13 +49,18 @@ export default function InventarioCiclico() {
   const [folioBusca, setFolioBusca] = useState('')
   const [conteo, setConteo] = useState(null)     // cabecera abierta en toma fisica
   const [lineas, setLineas] = useState([])
+  const [clientes, setClientes] = useState([])
+  const [artCli, setArtCli] = useState([])
+  const [bom, setBom] = useState([])
+  const [cliSel, setCliSel] = useState([])
+  const [periodo, setPeriodo] = useState(new Date().toISOString().slice(0, 7))
   const [master, setMaster] = useState(null)   // { tarima, cajas } confirmacion de master
   const [cfg, setCfg] = useState({ dias_a: 30, dias_b: 90, dias_c: 180, tolerancia_pct: 0, requiere_segunda_aut: false, segunda_aut_rol: '' })
 
   useEffect(() => { cargar() }, [])
   const cargar = async () => {
     setLoading(true)
-    const [a, al, ub, lo, ex, cc, pa, us] = await Promise.all([
+    const [a, al, ub, lo, ex, cc, pa, us, cli, ac, bm] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, clasificacion_abc, abc_criterio, ultima_fecha_conteo, costo').eq('empresa_id', emp).eq('activo', true),
       supabase.from('almacenes').select('*').eq('empresa_id', emp).eq('activo', true).order('clave'),
       supabase.from('ubicaciones').select('id, clave, almacen_id').eq('activo', true),
@@ -64,9 +69,13 @@ export default function InventarioCiclico() {
       supabase.from('conteos_ciclicos').select('*').eq('empresa_id', emp).order('id', { ascending: false }).limit(200),
       supabase.from('inventario_parametros').select('*').eq('empresa_id', emp).maybeSingle(),
       supabase.from('usuarios').select('id, nombre'),
+      supabase.from('clientes').select('id, nombre').eq('empresa_id', emp).eq('activo', true).order('nombre'),
+      supabase.from('articulo_cliente').select('articulo_id, cliente_id').eq('activo', true),
+      supabase.from('bom').select('articulo_padre_id, componente_articulo_id'),
     ])
     setArts(a.data || []); setAlmacenes(al.data || []); setUbis(ub.data || []); setLotes(lo.data || [])
     setExs(ex.data || []); setConteos(cc.data || []); setUsuarios(us.data || [])
+    setClientes(cli.data || []); setArtCli(ac.data || []); setBom(bm.data || [])
     setParam(pa.data || null); if (pa.data) setCfg({ ...cfg, ...pa.data })
     setLoading(false)
   }
@@ -122,6 +131,64 @@ export default function InventarioCiclico() {
     setProc(false)
   }
 
+  // ---------- Cierre de mes por CLIENTE ----------
+  // El PT trae su cliente (articulo_cliente). De ahi se explota el BOM multinivel
+  // para atribuir WIP, componentes y MP al mismo cliente. Cubre todos los almacenes.
+  const articulosDeClientes = (ids) => {
+    const pts = artCli.filter(x => ids.includes(x.cliente_id)).map(x => x.articulo_id)
+    const set = new Set(pts)
+    const cliDe = {}
+    pts.forEach(p => { const c = artCli.find(x => x.articulo_id === p && ids.includes(x.cliente_id)); if (c) cliDe[p] = c.cliente_id })
+    let frontera = [...pts], guard = 0
+    while (frontera.length && guard < 20) {
+      const hijos = bom.filter(b => frontera.includes(b.articulo_padre_id) && b.componente_articulo_id)
+      const nuevos = []
+      hijos.forEach(h => {
+        if (!set.has(h.componente_articulo_id)) { set.add(h.componente_articulo_id); nuevos.push(h.componente_articulo_id) }
+        if (!cliDe[h.componente_articulo_id]) cliDe[h.componente_articulo_id] = cliDe[h.articulo_padre_id]
+      })
+      frontera = nuevos; guard++
+    }
+    return { ids: [...set], cliDe }
+  }
+
+  const previoCierre = () => {
+    if (cliSel.length === 0) return { filas: [], articulos: 0 }
+    const { ids, cliDe } = articulosDeClientes(cliSel)
+    const filas = []
+    exs.filter(e => Number(e.cantidad) > 0).forEach(e => {
+      const l = loteDe(e.lote_id); if (!l || !ids.includes(l.articulo_id)) return
+      filas.push({ articulo_id: l.articulo_id, lote_id: l.id, almacen_id: e.almacen_id, ubicacion_id: e.ubicacion_id || null, cantidad_teorica: Number(e.cantidad), cliente_id: cliDe[l.articulo_id] || null })
+    })
+    return { filas, articulos: new Set(filas.map(f => f.articulo_id)).size }
+  }
+
+  const generarCierreMes = async () => {
+    setError('')
+    if (cliSel.length === 0) { setError('Selecciona al menos un cliente.'); return }
+    const { filas } = previoCierre()
+    if (filas.length === 0) { setError('No hay existencias para esos clientes.'); return }
+    setProc(true)
+    try {
+      const folio = 'CM-' + periodo.replace('-', '') + '-' + String(Date.now()).slice(-4)
+      const { data: cab, error: e1 } = await supabase.from('conteos_ciclicos').insert({
+        empresa_id: emp, site_id: perfil.site_id || null, folio, tipo: 'cierre_mes', periodo,
+        clientes: cliSel, almacenes: almacenes.map(a => a.id),
+        asignado_a: perfil.id, creado_por: perfil.id, estatus: 'asignado',
+      }).select().single()
+      if (e1) throw e1
+      const nomCli = (id) => clientes.find(c => c.id === id)?.nombre || ''
+      await supabase.from('conteo_lineas').insert(filas.map(f => ({
+        conteo_id: cab.id, articulo_id: f.articulo_id, lote_id: f.lote_id,
+        almacen_id: f.almacen_id, ubicacion_id: f.ubicacion_id,
+        cantidad_teorica: f.cantidad_teorica, origen_cliente: nomCli(f.cliente_id),
+      })))
+      setExito(`Cierre de mes ${folio} generado: ${filas.length} lote(s) en todos los almacenes.`)
+      setCliSel([]); await cargar(); setVista('toma'); setFolioBusca(folio)
+    } catch (err) { setError('Error: ' + err.message) }
+    setProc(false)
+  }
+
   // ---------- 2) Toma fisica ----------
   const abrirFolio = async (folio) => {
     setError(''); setExito('')
@@ -144,7 +211,7 @@ export default function InventarioCiclico() {
     if (cont && cont.tipo === 'tarima') {
       const { data: hijas } = await supabase.from('contenedores').select('id, folio, lote_id, articulo_id, cantidad').eq('padre_id', cont.id).eq('estatus', 'activo').order('folio')
       if (!hijas || hijas.length === 0) { setError(`La master ${cont.folio} no tiene cajas activas.`); return }
-      setMaster({ tarima: cont, cajas: hijas }); return
+      setMaster({ tarima: cont, cajas: hijas.map(h => ({ ...h, existe: true })) }); return
     }
     if (cont?.lote_id) lote = lotes.find(l => l.id === cont.lote_id)
     if (!lote) lote = lotes.find(l => (l.codigo_lote || '').toLowerCase() === v.toLowerCase())
@@ -185,7 +252,9 @@ export default function InventarioCiclico() {
     const m = master; if (!m) return
     setProc(true); setError('')
     try {
-      const loteIds = [...new Set(m.cajas.map(c => c.lote_id).filter(Boolean))]
+      const presentes = m.cajas.filter(c => c.existe)
+      const faltantes = m.cajas.filter(c => !c.existe)
+      const loteIds = [...new Set(presentes.map(c => c.lote_id).filter(Boolean))]
       let palomeados = 0, ajenos = 0, fuera = 0
       const articulosDelFolio = [...new Set(lineas.map(x => x.articulo_id))]
       let nuevas = []
@@ -214,12 +283,23 @@ export default function InventarioCiclico() {
           ajenos++
         }
       }
+      // Cajas NO validadas fisicamente: se marcan contadas en 0 -> quedan como diferencia
+      let faltCount = 0
+      for (const c of faltantes) {
+        const enLista = lineas.find(x => x.lote_id === c.lote_id)
+        if (!enLista) continue
+        const restante = Math.max(0, Number(enLista.cantidad_teorica) - Number(c.cantidad || 0))
+        await supabase.from('conteo_lineas').update({ contado: true, cantidad_contada: restante, contado_at: new Date().toISOString() }).eq('id', enLista.id)
+        nuevas.push({ id: enLista.id, patch: { contado: true, cantidad_contada: restante } })
+        faltCount++
+      }
       setLineas(ls => {
         let out = ls.map(x => { const u = nuevas.find(n => n.id === x.id); return u ? { ...x, ...u.patch } : x })
         nuevas.filter(n => n.nueva).forEach(n => out.push(n.nueva))
         return out
       })
       const partes = [`${palomeados} lote(s) palomeado(s)`]
+      if (faltCount) partes.push(`${faltCount} caja(s) NO encontrada(s) -> diferencia`)
       if (ajenos) partes.push(`${ajenos} ajeno(s) en rojo`)
       if (fuera) partes.push(`${fuera} fuera del folio (ignorado(s))`)
       setExito(`Master ${m.tarima.folio}: ${partes.join(' · ')}.`)
@@ -347,7 +427,7 @@ export default function InventarioCiclico() {
       {error && <p style={S.err}>{error}</p>}
       {exito && <p style={S.ok}>{exito}</p>}
       <div style={S.tabs}>
-        {[['programa', `Programa de hoy (${pend.length})`], ['toma', 'Toma fisica'], ['aprobar', `Por aprobar (${porAprobar.length})`], ['historial', 'Historial'], ['config', 'Configuracion']].map(([id, n]) => (
+        {[['programa', `Programa de hoy (${pend.length})`], ['cierre', 'Cierre de mes'], ['toma', 'Toma fisica'], ['aprobar', `Por aprobar (${porAprobar.length})`], ['historial', 'Historial'], ['config', 'Configuracion']].map(([id, n]) => (
           <button key={id} style={vista === id ? S.tabOn : S.tab} onClick={() => { setVista(id); setError(''); setExito('') }}>{n}</button>
         ))}
       </div>
@@ -386,6 +466,52 @@ export default function InventarioCiclico() {
           )}
         </>
       )}
+
+      {vista === 'cierre' && (() => {
+        const prev = previoCierre()
+        return (
+          <>
+            <div style={S.box}>
+              <p style={S.hint}>Inventario de <b>cierre de mes por cliente</b>: incluye PT, WIP, componentes y MP. El PT trae su cliente y desde su BOM se atribuyen los materiales que lo componen. Cubre <b>todos los almacenes</b>.</p>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div style={{ minWidth: 150 }}>
+                  <label style={S.lbl}>Periodo</label>
+                  <input style={S.input} type="month" value={periodo} onChange={e => setPeriodo(e.target.value)} />
+                </div>
+              </div>
+              <p style={{ ...S.lbl, marginTop: 12 }}>Clientes a inventariar (uno o varios):</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                {clientes.map(c => (
+                  <label key={c.id} style={S.chk}>
+                    <input type="checkbox" checked={cliSel.includes(c.id)} onChange={e => setCliSel(s => e.target.checked ? [...s, c.id] : s.filter(x => x !== c.id))} />
+                    {c.nombre}
+                  </label>
+                ))}
+                {clientes.length === 0 && <span style={{ fontSize: 13, color: '#94a3b8' }}>No hay clientes activos.</span>}
+              </div>
+            </div>
+            {cliSel.length > 0 && (
+              <>
+                <p style={S.hint}>Se incluiran <b>{prev.articulos}</b> articulo(s) y <b>{prev.filas.length}</b> lote(s) de todos los almacenes.</p>
+                <div style={S.tabla}>
+                  <div style={S.th}><span style={{ flex: 1.5 }}>Articulo</span><span style={{ flex: 1 }}>Lote</span><span style={{ flex: 1 }}>Almacen</span><span style={{ flex: 1 }}>Cliente</span><span style={{ flex: 0.8, textAlign: 'right' }}>Teorico</span></div>
+                  {prev.filas.slice(0, 200).map((f, i) => (
+                    <div key={i} style={S.tr}>
+                      <span style={{ flex: 1.5, fontSize: 12.5 }}><b>{artDe(f.articulo_id)?.codigo_interno}</b> <span style={{ color: '#94a3b8' }}>{artDe(f.articulo_id)?.descripcion}</span></span>
+                      <span style={{ flex: 1, fontSize: 12.5 }}>{loteDe(f.lote_id)?.codigo_lote}</span>
+                      <span style={{ flex: 1, fontSize: 12, color: '#64748b' }}>{almDe(f.almacen_id)?.clave}</span>
+                      <span style={{ flex: 1, fontSize: 12, color: '#64748b' }}>{clientes.find(c => c.id === f.cliente_id)?.nombre || '-'}</span>
+                      <span style={{ flex: 0.8, textAlign: 'right' }}>{fmt(f.cantidad_teorica)}</span>
+                    </div>
+                  ))}
+                  {prev.filas.length > 200 && <div style={S.vacio}>... y {prev.filas.length - 200} lote(s) mas</div>}
+                </div>
+                {puedeContar && <div style={{ textAlign: 'right', marginTop: 12 }}><button style={S.btn} onClick={generarCierreMes} disabled={proc}>Generar cierre de mes ({prev.filas.length} lotes)</button></div>}
+              </>
+            )}
+          </>
+        )
+      })()}
 
       {vista === 'toma' && !conteo && (
         <div style={S.box}>
@@ -468,7 +594,7 @@ export default function InventarioCiclico() {
           <div style={S.th}><span style={{ flex: 1 }}>Folio</span><span style={{ flex: 1 }}>Fecha</span><span style={{ flex: 1.2 }}>Conto</span><span style={{ flex: 1 }}>Estatus</span><span style={{ flex: 1.2 }}>Aprobo</span></div>
           {conteos.map(c => (
             <div key={c.id} style={S.tr}>
-              <span style={{ flex: 1, fontWeight: 600 }}>{c.folio}</span>
+              <span style={{ flex: 1, fontWeight: 600 }}>{c.folio}{c.tipo === 'cierre_mes' && <span style={{ ...S.pill, backgroundColor: '#ede9fe', color: '#6d28d9', marginLeft: 4 }}>cierre {c.periodo || ''}</span>}</span>
               <span style={{ flex: 1, color: '#64748b' }}>{c.fecha}</span>
               <span style={{ flex: 1.2, fontSize: 12 }}>{usrDe(c.asignado_a)}</span>
               <span style={{ flex: 1 }}><span style={{ ...S.pill, backgroundColor: (EST[c.estatus]?.c || '#64748b') + '22', color: EST[c.estatus]?.c }}>{EST[c.estatus]?.l || c.estatus}</span></span>
@@ -515,22 +641,30 @@ export default function InventarioCiclico() {
         <div style={S.ov} onClick={() => setMaster(null)}>
           <div style={S.modal} onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: 15, fontWeight: 600, color: '#1a1a2e', margin: '0 0 6px' }}>Master {master.tarima.folio}</h3>
-            <p style={{ fontSize: 13.5, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '9px 12px', margin: '0 0 10px' }}>
-              Esta master contiene <b>{master.cajas.length} caja(s)</b>. Favor de validar que <b>fisicamente existan</b> antes de confirmar.
+            <p style={{ fontSize: 13.5, color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '9px 12px', margin: '0 0 8px' }}>
+              Esta master contiene <b>{master.cajas.length} caja(s)</b>. Marca las que <b>fisicamente existan</b>; las que dejes sin marcar se registran como diferencia.
             </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, fontSize: 12.5 }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={master.cajas.every(c => c.existe)} onChange={e => setMaster({ ...master, cajas: master.cajas.map(c => ({ ...c, existe: e.target.checked })) })} />
+                Marcar todas
+              </label>
+              <span style={{ color: '#64748b' }}>{master.cajas.filter(c => c.existe).length} de {master.cajas.length} validadas</span>
+            </div>
             <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid #eef2f7', borderRadius: 8 }}>
               {master.cajas.map(c => (
-                <div key={c.id} style={{ display: 'flex', gap: 8, padding: '6px 10px', borderBottom: '1px solid #f1f5f9', fontSize: 12.5 }}>
+                <label key={c.id} style={{ display: 'flex', gap: 8, padding: '6px 10px', borderBottom: '1px solid #f1f5f9', fontSize: 12.5, alignItems: 'center', cursor: 'pointer', backgroundColor: c.existe ? '#fff' : '#fef2f2' }}>
+                  <input type="checkbox" checked={!!c.existe} onChange={e => setMaster({ ...master, cajas: master.cajas.map(x => x.id === c.id ? { ...x, existe: e.target.checked } : x) })} />
                   <span style={{ flex: 1, fontWeight: 600 }}>{c.folio}</span>
                   <span style={{ flex: 1.2, color: '#64748b' }}>{artDe(c.articulo_id)?.codigo_interno || ''}</span>
                   <span style={{ flex: 1.2, color: '#64748b' }}>{loteDe(c.lote_id)?.codigo_lote || '-'}</span>
                   <span style={{ width: 70, textAlign: 'right' }}>{fmt(c.cantidad)}</span>
-                </div>
+                </label>
               ))}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
               <button style={S.btnSec} onClick={() => setMaster(null)} disabled={proc}>Cancelar</button>
-              <button style={S.btn} onClick={confirmarMaster} disabled={proc}>Confirmado fisicamente</button>
+              <button style={S.btn} onClick={confirmarMaster} disabled={proc}>Confirmar validacion</button>
             </div>
           </div>
         </div>
