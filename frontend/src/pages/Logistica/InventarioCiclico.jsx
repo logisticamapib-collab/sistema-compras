@@ -29,6 +29,7 @@ export default function InventarioCiclico() {
   const emp = perfil.empresa_id
   const puedeContar = tienePermiso('log_ciclico', 'crear')
   const puedeAprobar = tienePermiso('log_ciclico', 'aprobar')
+  const etiquetaRol = (r) => ({ gerente_planta: 'Gerente de Planta', direccion: 'Direccion', gerente_administrativo: 'Gerente Administrativo' }[r] || r || 'segundo autorizador')
 
   const [vista, setVista] = useState('programa')
   const [arts, setArts] = useState([])
@@ -53,6 +54,7 @@ export default function InventarioCiclico() {
   const [artCli, setArtCli] = useState([])
   const [bom, setBom] = useState([])
   const [cliSel, setCliSel] = useState([])
+  const [cliAsign, setCliAsign] = useState({})   // articulo_id -> cliente_id elegido para MP compartida
   const [periodo, setPeriodo] = useState(new Date().toISOString().slice(0, 7))
   const [master, setMaster] = useState(null)   // { tarima, cajas } confirmacion de master
   const [cfg, setCfg] = useState({ dias_a: 30, dias_b: 90, dias_c: 180, tolerancia_pct: 0, requiere_segunda_aut: false, segunda_aut_rol: '' })
@@ -135,32 +137,46 @@ export default function InventarioCiclico() {
   // El PT trae su cliente (articulo_cliente). De ahi se explota el BOM multinivel
   // para atribuir WIP, componentes y MP al mismo cliente. Cubre todos los almacenes.
   const articulosDeClientes = (ids) => {
-    const pts = artCli.filter(x => ids.includes(x.cliente_id)).map(x => x.articulo_id)
-    const set = new Set(pts)
-    const cliDe = {}
-    pts.forEach(p => { const c = artCli.find(x => x.articulo_id === p && ids.includes(x.cliente_id)); if (c) cliDe[p] = c.cliente_id })
-    let frontera = [...pts], guard = 0
-    while (frontera.length && guard < 20) {
-      const hijos = bom.filter(b => frontera.includes(b.articulo_padre_id) && b.componente_articulo_id)
-      const nuevos = []
-      hijos.forEach(h => {
-        if (!set.has(h.componente_articulo_id)) { set.add(h.componente_articulo_id); nuevos.push(h.componente_articulo_id) }
-        if (!cliDe[h.componente_articulo_id]) cliDe[h.componente_articulo_id] = cliDe[h.articulo_padre_id]
-      })
-      frontera = nuevos; guard++
+    // duenos[articulo] = Set de clientes que lo alcanzan (para detectar MP compartida)
+    const duenos = {}
+    const add = (art, cli) => { (duenos[art] = duenos[art] || new Set()).add(cli) }
+    const set = new Set()
+    for (const cli of ids) {
+      const pts = artCli.filter(x => x.cliente_id === cli).map(x => x.articulo_id)
+      pts.forEach(p => { set.add(p); add(p, cli) })
+      let frontera = [...pts], guard = 0
+      while (frontera.length && guard < 20) {
+        const hijos = bom.filter(b => frontera.includes(b.articulo_padre_id) && b.componente_articulo_id)
+        const nuevos = []
+        hijos.forEach(h => {
+          const c = h.componente_articulo_id
+          if (!set.has(c)) { set.add(c); nuevos.push(c) }
+          else if (!(duenos[c] || new Set()).has(cli)) nuevos.push(c)
+          add(c, cli)
+        })
+        frontera = [...new Set(nuevos)]; guard++
+      }
     }
-    return { ids: [...set], cliDe }
+    const cliDe = {}; const compartidos = []
+    Object.entries(duenos).forEach(([art, setCli]) => {
+      const lista = [...setCli]
+      const aid = Number(art)
+      if (lista.length > 1) { compartidos.push({ articulo_id: aid, clientes: lista }); cliDe[aid] = cliAsign[aid] || lista[0] }
+      else cliDe[aid] = lista[0]
+    })
+    return { ids: [...set], cliDe, compartidos }
   }
 
   const previoCierre = () => {
-    if (cliSel.length === 0) return { filas: [], articulos: 0 }
-    const { ids, cliDe } = articulosDeClientes(cliSel)
+    if (cliSel.length === 0) return { filas: [], articulos: 0, compartidos: [] }
+    const { ids, cliDe, compartidos } = articulosDeClientes(cliSel)
+    const compSet = new Set(compartidos.map(c => c.articulo_id))
     const filas = []
     exs.filter(e => Number(e.cantidad) > 0).forEach(e => {
       const l = loteDe(e.lote_id); if (!l || !ids.includes(l.articulo_id)) return
-      filas.push({ articulo_id: l.articulo_id, lote_id: l.id, almacen_id: e.almacen_id, ubicacion_id: e.ubicacion_id || null, cantidad_teorica: Number(e.cantidad), cliente_id: cliDe[l.articulo_id] || null })
+      filas.push({ articulo_id: l.articulo_id, lote_id: l.id, almacen_id: e.almacen_id, ubicacion_id: e.ubicacion_id || null, cantidad_teorica: Number(e.cantidad), cliente_id: cliDe[l.articulo_id] || null, compartido: compSet.has(l.articulo_id) })
     })
-    return { filas, articulos: new Set(filas.map(f => f.articulo_id)).size }
+    return { filas, articulos: new Set(filas.map(f => f.articulo_id)).size, compartidos }
   }
 
   const generarCierreMes = async () => {
@@ -181,7 +197,7 @@ export default function InventarioCiclico() {
       await supabase.from('conteo_lineas').insert(filas.map(f => ({
         conteo_id: cab.id, articulo_id: f.articulo_id, lote_id: f.lote_id,
         almacen_id: f.almacen_id, ubicacion_id: f.ubicacion_id,
-        cantidad_teorica: f.cantidad_teorica, origen_cliente: nomCli(f.cliente_id),
+        cantidad_teorica: f.cantidad_teorica, origen_cliente: nomCli(f.cliente_id), compartido: !!f.compartido,
       })))
       setExito(`Cierre de mes ${folio} generado: ${filas.length} lote(s) en todos los almacenes.`)
       setCliSel([]); await cargar(); setVista('toma'); setFolioBusca(folio)
@@ -353,6 +369,15 @@ export default function InventarioCiclico() {
         await supabase.from('conteos_ciclicos').update({ estatus: 'rechazado', rechazo_motivo: 'Rechazado por el Gerente de Logistica' }).eq('id', cab.id)
         setExito('Conteo rechazado.'); await cargar(); setProc(false); return
       }
+      // Primera firma (Gerente de Logistica). Si se exige segunda autorizacion,
+      // NO se aplican ajustes todavia: queda esperando la firma del rol configurado.
+      if (param?.requiere_segunda_aut && !cab.aprobado_at) {
+        await supabase.from('conteos_ciclicos').update({
+          aprobado_por: perfil.id, aprobado_at: new Date().toISOString(), segunda_aut_rol: param.segunda_aut_rol || null,
+        }).eq('id', cab.id)
+        setExito(`Conteo ${cab.folio}: firma de Logistica registrada. Falta la segunda autorizacion (${etiquetaRol(param.segunda_aut_rol)}) para aplicar los ajustes.`)
+        await cargar(); setProc(false); return
+      }
       const { data: ln } = await supabase.from('conteo_lineas').select('*').eq('conteo_id', cab.id)
       for (const l of (ln || [])) {
         const d = Number(l.cantidad_contada ?? 0) - Number(l.cantidad_teorica || 0)
@@ -375,7 +400,7 @@ export default function InventarioCiclico() {
         await supabase.from('conteo_lineas').update({ ajustado: true }).eq('id', l.id)
         await supabase.from('articulos').update({ ultima_fecha_conteo: hoyISO() }).eq('id', l.articulo_id)
       }
-      await supabase.from('conteos_ciclicos').update({ estatus: 'aprobado', aprobado_por: perfil.id, aprobado_at: new Date().toISOString() }).eq('id', cab.id)
+      await supabase.from('conteos_ciclicos').update({ estatus: 'aprobado', segunda_aut_por: perfil.id, segunda_aut_at: new Date().toISOString() }).eq('id', cab.id)
       setExito(`Conteo ${cab.folio} aprobado y ajustes aplicados.`); await cargar()
     } catch (err) { setError('Error: ' + err.message) }
     setProc(false)
@@ -493,6 +518,19 @@ export default function InventarioCiclico() {
             {cliSel.length > 0 && (
               <>
                 <p style={S.hint}>Se incluiran <b>{prev.articulos}</b> articulo(s) y <b>{prev.filas.length}</b> lote(s) de todos los almacenes.</p>
+                {prev.compartidos.length > 0 && (
+                  <div style={{ ...S.box, background: '#fffbeb', border: '1px solid #fde68a' }}>
+                    <p style={{ ...S.lbl, color: '#b45309' }}>Materiales compartidos entre clientes ({prev.compartidos.length}) — elige a que cliente se atribuyen:</p>
+                    {prev.compartidos.map(c => (
+                      <div key={c.articulo_id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '4px 0', fontSize: 13 }}>
+                        <span style={{ flex: 1 }}><b>{artDe(c.articulo_id)?.codigo_interno}</b> <span style={{ color: '#94a3b8' }}>{artDe(c.articulo_id)?.descripcion}</span></span>
+                        <select style={{ ...S.input, width: 220 }} value={cliAsign[c.articulo_id] || c.clientes[0]} onChange={e => setCliAsign({ ...cliAsign, [c.articulo_id]: Number(e.target.value) })}>
+                          {c.clientes.map(id => <option key={id} value={id}>{clientes.find(x => x.id === id)?.nombre}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div style={S.tabla}>
                   <div style={S.th}><span style={{ flex: 1.5 }}>Articulo</span><span style={{ flex: 1 }}>Lote</span><span style={{ flex: 1 }}>Almacen</span><span style={{ flex: 1 }}>Cliente</span><span style={{ flex: 0.8, textAlign: 'right' }}>Teorico</span></div>
                   {prev.filas.slice(0, 200).map((f, i) => (
@@ -500,7 +538,7 @@ export default function InventarioCiclico() {
                       <span style={{ flex: 1.5, fontSize: 12.5 }}><b>{artDe(f.articulo_id)?.codigo_interno}</b> <span style={{ color: '#94a3b8' }}>{artDe(f.articulo_id)?.descripcion}</span></span>
                       <span style={{ flex: 1, fontSize: 12.5 }}>{loteDe(f.lote_id)?.codigo_lote}</span>
                       <span style={{ flex: 1, fontSize: 12, color: '#64748b' }}>{almDe(f.almacen_id)?.clave}</span>
-                      <span style={{ flex: 1, fontSize: 12, color: '#64748b' }}>{clientes.find(c => c.id === f.cliente_id)?.nombre || '-'}</span>
+                      <span style={{ flex: 1, fontSize: 12, color: '#64748b' }}>{clientes.find(c => c.id === f.cliente_id)?.nombre || '-'}{f.compartido && <span style={{ ...S.pill, backgroundColor: '#fef3c7', color: '#b45309', marginLeft: 4 }}>compartido</span>}</span>
                       <span style={{ flex: 0.8, textAlign: 'right' }}>{fmt(f.cantidad_teorica)}</span>
                     </div>
                   ))}
@@ -575,11 +613,18 @@ export default function InventarioCiclico() {
                 <span style={{ flex: 1, fontWeight: 600 }}>{c.folio}</span>
                 <span style={{ flex: 1, color: '#64748b' }}>{c.fecha}</span>
                 <span style={{ flex: 1.2, fontSize: 12 }}>{usrDe(c.asignado_a)}</span>
-                <span style={{ flex: 1.2, fontSize: 12, color: '#64748b' }}>{(c.almacenes || []).map(id => almDe(id)?.clave).join(', ')}</span>
+                <span style={{ flex: 1.2, fontSize: 11, color: '#64748b' }}>Log: {c.aprobado_at ? <b style={{ color: '#15803d' }}>OK</b> : 'pendiente'}{param?.requiere_segunda_aut && <> · {etiquetaRol(c.segunda_aut_rol || param.segunda_aut_rol)}: {c.segunda_aut_at ? 'OK' : 'pendiente'}</>}</span>
                 <span style={{ width: 200, textAlign: 'right', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                   <button style={S.btnMini} onClick={() => abrirFolio(c.folio)}>Ver detalle</button>
-                  {puedeAprobar && <><button style={S.btnMini} disabled={proc} onClick={() => aprobar(c, true)}>Aprobar</button>
-                  <button style={S.btnMiniRed} disabled={proc} onClick={() => aprobar(c, false)}>Rechazar</button></>}
+                  {(() => {
+                    const esperaSegunda = !!c.aprobado_at
+                    const rolOK = !esperaSegunda ? puedeAprobar : [c.segunda_aut_rol, 'admin'].includes(perfil.rol)
+                    if (!rolOK) return <span style={{ fontSize: 11, color: '#94a3b8' }}>{esperaSegunda ? `espera ${etiquetaRol(c.segunda_aut_rol)}` : 'espera Logistica'}</span>
+                    return (<>
+                      <button style={S.btnMini} disabled={proc} onClick={() => aprobar(c, true)}>{esperaSegunda ? 'Firmar y aplicar' : (param?.requiere_segunda_aut ? 'Firmar (Logistica)' : 'Aprobar')}</button>
+                      <button style={S.btnMiniRed} disabled={proc} onClick={() => aprobar(c, false)}>Rechazar</button>
+                    </>)
+                  })()}
                 </span>
               </div>
             </div>
