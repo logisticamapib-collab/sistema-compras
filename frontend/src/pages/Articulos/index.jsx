@@ -28,6 +28,7 @@ const formVacio = {
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
+  clasificacion_abc: '', abc_criterio: 'manual',
 }
 
 export default function Articulos() {
@@ -136,6 +137,8 @@ export default function Articulos() {
       admite_molido: articulo.admite_molido || false,
       pct_molido_max: articulo.pct_molido_max ?? 0,
       site_id: articulo.site_id?.toString() || '',
+      clasificacion_abc: articulo.clasificacion_abc || '',
+      abc_criterio: articulo.abc_criterio || 'manual',
       sites_destino: (destinos || []).map(d => d.site_id.toString()),
     })
     setMostrarForm(true)
@@ -189,6 +192,8 @@ export default function Articulos() {
       admite_molido: esFabricado ? form.admite_molido : false,
       pct_molido_max: esFabricado && form.admite_molido ? (parseFloat(form.pct_molido_max) || 0) : 0,
       site_id: form.site_id ? parseInt(form.site_id) : null,
+      clasificacion_abc: form.clasificacion_abc || null,
+      abc_criterio: form.abc_criterio || 'manual',
     }
 
     let error, articuloId
@@ -521,6 +526,25 @@ export default function Articulos() {
                   <label style={styles.label}>Tiempo de transito (dias)</label>
                   <input style={styles.input} type="number" min="0" value={form.tiempo_transito_dias}
                     onChange={e => setForm({ ...form, tiempo_transito_dias: e.target.value })} placeholder="0" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Clasificacion ABC (inv. ciclico)</label>
+                  <select style={styles.input} value={form.clasificacion_abc}
+                    onChange={e => setForm({ ...form, clasificacion_abc: e.target.value })}>
+                    <option value="">Sin clasificar</option>
+                    <option value="A">A - alta rotacion / valor</option>
+                    <option value="B">B - media</option>
+                    <option value="C">C - baja</option>
+                  </select>
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Criterio ABC</label>
+                  <select style={styles.input} value={form.abc_criterio}
+                    onChange={e => setForm({ ...form, abc_criterio: e.target.value })}>
+                    <option value="manual">Manual (lo fijo yo)</option>
+                    <option value="costo">Por costo (valor de consumo)</option>
+                    <option value="piezas">Por piezas embarcadas</option>
+                  </select>
                 </div>
                 <div style={styles.campo}>
                   <label style={styles.label}>Stock minimo (alerta)</label>

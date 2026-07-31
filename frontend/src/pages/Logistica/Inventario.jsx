@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { asegurarCajas } from '../../lib/contenedores'
+import { datosEtiqueta } from '../../lib/etiquetas'
+import EtiquetaProducto from '../../components/EtiquetaProducto'
+import PortalImpresion from '../../components/PortalImpresion'
+import { imprimirAislado } from '../../lib/impresion'
 
 // Capa 3 - Inventario por LOTE con trazabilidad y estatus de calidad.
 // - Existencias = cantidad de un lote en un almacen/ubicacion.
@@ -33,6 +38,7 @@ export default function Inventario() {
   const [lotes, setLotes] = useState([])
   const [existencias, setExistencias] = useState([])
   const [contenedores, setContenedores] = useState([])
+  const [etq, setEtq] = useState(null)   // { cajas, articulo, lote, empresa }
   const [movimientos, setMovimientos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -202,6 +208,26 @@ export default function Inventario() {
   }
 
   // ---------- Liberacion / Rechazo de calidad (a nivel lote) ----------
+  // Etiquetas del inventario inicial: crea las cajas segun la SNP del articulo
+  // (si el lote aun no las tiene) y abre la vista de impresion con QR por caja.
+  const generarEtiquetas = async (ex, lote) => {
+    setError(''); setExito('')
+    try {
+      const art = articulos.find(a => a.id === (ex._articuloId || lote.articulo_id))
+      if (!art) { setError('No se encontro el articulo del lote'); return }
+      const { data: norma } = await supabase.from('normas_empaque').select('piezas_por_empaque')
+        .eq('articulo_id', art.id).eq('activa', true).eq('tipo', 'oficial').maybeSingle()
+      const snp = Number(norma?.piezas_por_empaque || art.snp || 0)
+      const cajas = await asegurarCajas(supabase, {
+        empresaId: perfil.empresa_id, loteId: lote.id, articuloId: art.id,
+        cantidad: Number(ex.cantidad), snp, almacenId: ex.almacen_id, ubicacionId: ex.ubicacion_id || null,
+        origen: 'Inventario inicial', usuarioId: perfil.id,
+      })
+      const { data: emp } = await supabase.from('empresas').select('*').eq('id', perfil.empresa_id).maybeSingle()
+      setEtq({ cajas, articulo: art, lote, empresa: emp || null })
+    } catch (err) { setError('No se pudieron generar las etiquetas: ' + err.message) }
+  }
+
   const cambiarCalidad = async (lote, nuevoEstatus) => {
     setError(''); setExito('')
     setProcesando(true)
@@ -386,6 +412,33 @@ export default function Inventario() {
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando inventario...</p>
 
+
+  // Vista de impresion de etiquetas (una por caja, 4x4 con QR)
+  if (etq) {
+    return (
+      <div style={styles.container} className="aparecer">
+        <style>{`@media print { @page { size: 4cm 4cm; margin: 0; } }`}</style>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }} className="no-imprimir">
+          <button style={styles.botonSec} onClick={() => setEtq(null)}>&larr; Volver</button>
+          <button style={styles.boton} onClick={imprimirAislado}>Imprimir {etq.cajas.length} etiqueta(s)</button>
+        </div>
+        <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '10px' }} className="no-imprimir">
+          Lote <b>{etq.lote.codigo_lote}</b> · {etq.articulo.codigo_interno} · {etq.cajas.length} caja(s) segun la norma de empaque.
+        </p>
+        <PortalImpresion>
+          <div>
+            {etq.cajas.map(c => (
+              <EtiquetaProducto key={c.id} datos={datosEtiqueta({
+                lote: etq.lote, articulo: etq.articulo, empresa: etq.empresa,
+                cantidad: c.cantidad, contenedor: c, qrContenido: 'contenedor',
+              })} />
+            ))}
+          </div>
+        </PortalImpresion>
+      </div>
+    )
+  }
+
   return (
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}>
@@ -540,6 +593,7 @@ export default function Inventario() {
                           <span style={{ width: '220px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
 
                             {puedeTraspaso && <button style={styles.botonAccion} onClick={() => { setError(''); setAjuste({ ex: e, signo: '-', cantidad: '', motivo: '' }) }}>Ajustar</button>}
+                            <button style={styles.botonAccion} onClick={() => generarEtiquetas(e, lote)}>Etiquetas</button>
                             {puedeLiberar && lote.estatus_calidad === 'retenido' && (
                               <>
                                 <button style={{ ...styles.botonAccion, color: '#16a34a' }} onClick={() => cambiarCalidad(lote, 'liberado')}>Liberar</button>

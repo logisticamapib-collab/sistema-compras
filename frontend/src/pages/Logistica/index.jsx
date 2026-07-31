@@ -19,6 +19,7 @@ import TraspasoEscaneo from './TraspasoEscaneo'
 import Contenedores from './Contenedores'
 import TerminalLauncher from '../../components/TerminalLauncher'
 import SuministroProduccion from './SuministroProduccion'
+import InventarioCiclico from './InventarioCiclico'
 
 const secciones = [
   { id: 'almacenes', modulo: 'log_almacenes', titulo: 'Almacenes' },
@@ -29,6 +30,7 @@ const secciones = [
   { id: 'traspaso_escaneo', modulo: 'log_movimiento', titulo: 'Traspaso por Escaneo' },
   { id: 'contenedores', modulo: 'log_contenedores', titulo: 'Cajas y Tarimas' },
   { id: 'inventario', modulo: 'log_inventario', titulo: 'Inventario' },
+  { id: 'ciclico', modulo: 'log_ciclico', titulo: 'Inventario Ciclico' },
   { id: 'consultas', modulo: 'log_consultas', titulo: 'Consultas de Inventario' },
   { id: 'reportes', modulo: 'log_consultas', titulo: 'Reportes / KPIs' },
   { id: 'embarques', modulo: 'log_embarques', titulo: 'Embarques' },
@@ -72,6 +74,7 @@ export default function GrupoLogistica() {
         {seccion === 'traspaso_escaneo' && <TraspasoEscaneo />}
         {seccion === 'contenedores' && <Contenedores />}
         {seccion === 'inventario' && <Inventario />}
+        {seccion === 'ciclico' && <InventarioCiclico />}
         {seccion === 'consultas' && <ConsultasInventario />}
         {seccion === 'reportes' && <ReportesLogistica />}
         {seccion === 'embarques' && <Embarques />}
