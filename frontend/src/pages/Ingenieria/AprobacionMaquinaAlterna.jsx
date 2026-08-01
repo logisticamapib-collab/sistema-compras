@@ -7,7 +7,7 @@ import { useAuth } from '../../context/AuthContext'
 // como maquina alterna permanente de esa ruta (y marcar si el cliente la aprobo).
 
 const fFecha = (t) => t ? new Date(t).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '-'
-const EST = { pendiente: { l: 'Pendiente', c: '#b45309' }, aprobada: { l: 'Aprobada', c: '#16a34a' }, rechazada: { l: 'Rechazada', c: '#dc2626' } }
+const EST = { pendiente: { l: 'Pendiente Ingenieria', c: '#b45309' }, pendiente_calidad: { l: 'Pendiente Calidad', c: '#7c3aed' }, aprobada: { l: 'Aprobada', c: '#16a34a' }, rechazada: { l: 'Rechazada', c: '#dc2626' } }
 
 export default function AprobacionMaquinaAlterna() {
   const { perfil, tienePermiso } = useAuth()
@@ -42,40 +42,44 @@ export default function AprobacionMaquinaAlterna() {
     setLoading(false)
   }
 
+  const subirDoc = async (file) => {
+    const ruta = `maq-alterna/${Date.now()}-${file.name.replace(/\s+/g, '_')}`
+    const { error: e } = await supabase.storage.from('calidad').upload(ruta, file)
+    if (e) throw new Error('No se pudo subir el archivo: ' + e.message)
+    return { url: supabase.storage.from('calidad').getPublicUrl(ruta).data.publicUrl, nombre: file.name }
+  }
+
   const otDe = (id) => ots.find(x => x.id === id)
   const artDe = (id) => arts.find(x => x.id === id)
   const maqDe = (id) => maqs.find(x => x.id === id)
   const usrDe = (id) => usuarios.find(x => x.id === id)?.nombre || '-'
 
+  // Ingenieria valida y ADJUNTA el PPAP o la Desviacion. La OT no se mueve aqui:
+  // la solicitud pasa a autorizacion de Calidad, que es quien la libera.
   const resolver = async (s, aprobar) => {
-    setError(''); setProc(true)
+    setError('')
+    if (aprobar) {
+      if (!form?.doc_tipo) { setError('Indica si adjuntas PPAP o Desviacion.'); return }
+      if (!form?.archivo && !s.doc_url) { setError('Adjunta el documento (PPAP o Desviacion) antes de autorizar.'); return }
+    }
+    setProc(true)
     try {
-      if (aprobar) {
-        // 1) mueve la OT a la maquina solicitada
-        await supabase.from('ordenes_trabajo').update({ maquina_id: s.maquina_solicitada_id }).eq('id', s.ot_id)
-        // 2) opcionalmente deja la maquina registrada como alterna de la ruta
-        if (form?.registrar) {
-          const ruta = rutas.find(r => r.articulo_id === s.articulo_id)
-          if (ruta) {
-            const { data: ya } = await supabase.from('ruta_maquinas_alternas').select('id').eq('ruta_id', ruta.id).eq('maquina_id', s.maquina_solicitada_id).maybeSingle()
-            if (!ya) await supabase.from('ruta_maquinas_alternas').insert({ ruta_id: ruta.id, maquina_id: s.maquina_solicitada_id, aprobada_por_cliente: !!form?.cliente })
-            else await supabase.from('ruta_maquinas_alternas').update({ aprobada_por_cliente: !!form?.cliente }).eq('id', ya.id)
-          }
-        }
-        await supabase.from('programa_cambios').insert({
-          empresa_id: emp, ot_id: s.ot_id, tipo: 'maquina_alterna_aprobada', campo: 'maquina',
-          antes: String(s.maquina_actual_id ?? '-'), despues: String(s.maquina_solicitada_id),
-          usuario_id: perfil.id, usuario_nombre: perfil.nombre,
-        })
-      }
+      let doc = { url: s.doc_url, nombre: s.doc_nombre }
+      if (aprobar && form?.archivo) doc = await subirDoc(form.archivo)
       await supabase.from('solicitudes_maquina_alterna').update({
-        estatus: aprobar ? 'aprobada' : 'rechazada',
+        estatus: aprobar ? 'pendiente_calidad' : 'rechazada',
         aprobada_por_cliente: aprobar ? !!form?.cliente : false,
         registrar_como_alterna: aprobar ? !!form?.registrar : false,
         comentario_ingenieria: form?.comentario || null,
-        resuelto_por: perfil.id, resuelto_at: new Date().toISOString(),
+        doc_tipo: aprobar ? form.doc_tipo : null,
+        doc_url: aprobar ? doc.url : null, doc_nombre: aprobar ? doc.nombre : null,
+        doc_vigencia: aprobar && form?.vigencia ? form.vigencia : null,
+        aut_ing_por: perfil.id, aut_ing_at: new Date().toISOString(),
+        resuelto_por: aprobar ? null : perfil.id, resuelto_at: aprobar ? null : new Date().toISOString(),
       }).eq('id', s.id)
-      setExito(aprobar ? `Autorizada: la OT se movio a ${maqDe(s.maquina_solicitada_id)?.clave}.` : 'Solicitud rechazada.')
+      setExito(aprobar
+        ? `Ingenieria autorizo y adjunto el ${form.doc_tipo === 'ppap' ? 'PPAP' : 'documento de desviacion'}. Pasa a autorizacion de Calidad; la OT se movera cuando Calidad libere.`
+        : 'Solicitud rechazada.')
       setForm(null); await cargar()
     } catch (err) { setError('Error: ' + err.message) }
     setProc(false)
@@ -103,7 +107,7 @@ export default function AprobacionMaquinaAlterna() {
             <span style={{ flex: 1, fontSize: 11.5, color: '#64748b' }}>{usrDe(s.solicitado_por)}<div>{fFecha(s.solicitado_at)}</div></span>
             <span style={{ width: 190, textAlign: 'right' }}>
               {puedeAprobar
-                ? <button style={S.btn} onClick={() => setForm({ sol: s, registrar: true, cliente: false, comentario: '' })}>Revisar</button>
+                ? <button style={S.btn} onClick={() => setForm({ sol: s, registrar: true, cliente: false, comentario: '', doc_tipo: '', archivo: null, vigencia: '' })}>Revisar</button>
                 : <span style={{ fontSize: 11, color: '#94a3b8' }}>solo Ingenieria autoriza</span>}
             </span>
           </div>
@@ -135,7 +139,16 @@ export default function AprobacionMaquinaAlterna() {
               {maqDe(form.sol.maquina_actual_id)?.clave || '-'} → <b>{maqDe(form.sol.maquina_solicitada_id)?.clave}</b><br />
               <span style={{ color: '#475569' }}>Motivo: {form.sol.motivo}</span>
             </p>
-            <label style={S.chk}><input type="checkbox" checked={form.registrar} onChange={e => setForm({ ...form, registrar: e.target.checked })} /> Registrar esta maquina como <b>alterna permanente</b> en la ruta del articulo</label>
+            <label style={S.lbl}>Documento de respaldo *</label>
+            <div style={{ display: 'flex', gap: 8, margin: '4px 0 8px' }}>
+              <button style={form.doc_tipo === 'ppap' ? S.optOn : S.opt} onClick={() => setForm({ ...form, doc_tipo: 'ppap' })}>PPAP</button>
+              <button style={form.doc_tipo === 'desviacion' ? S.optOn : S.opt} onClick={() => setForm({ ...form, doc_tipo: 'desviacion' })}>Desviacion</button>
+            </div>
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" style={{ fontSize: 13 }} onChange={e => setForm({ ...form, archivo: e.target.files?.[0] || null })} />
+            {form.archivo && <div style={{ fontSize: 12, color: '#16a34a', marginTop: 4 }}>Listo: {form.archivo.name}</div>}
+            <label style={{ ...S.lbl, marginTop: 8 }}>Vigencia del documento (opcional)</label>
+            <input style={S.input} type="date" value={form.vigencia || ''} onChange={e => setForm({ ...form, vigencia: e.target.value })} />
+            <label style={{ ...S.chk, marginTop: 8 }}><input type="checkbox" checked={form.registrar} onChange={e => setForm({ ...form, registrar: e.target.checked })} /> Registrar esta maquina como <b>alterna permanente</b> en la ruta del articulo</label>
             <label style={S.chk}><input type="checkbox" checked={form.cliente} onChange={e => setForm({ ...form, cliente: e.target.checked })} /> La maquina esta <b>aprobada por el cliente</b> (PPAP)</label>
             <label style={{ ...S.lbl, marginTop: 8 }}>Comentario de Ingenieria</label>
             <input style={S.input} value={form.comentario} onChange={e => setForm({ ...form, comentario: e.target.value })} />
@@ -143,7 +156,7 @@ export default function AprobacionMaquinaAlterna() {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
               <button style={S.btnSec} onClick={() => setForm(null)} disabled={proc}>Cerrar</button>
               <button style={S.btnRed} onClick={() => resolver(form.sol, false)} disabled={proc}>Rechazar</button>
-              <button style={S.btn} onClick={() => resolver(form.sol, true)} disabled={proc}>Autorizar y mover OT</button>
+              <button style={S.btn} onClick={() => resolver(form.sol, true)} disabled={proc}>Autorizar y enviar a Calidad</button>
             </div>
           </div>
         </div>
@@ -167,6 +180,8 @@ const S = {
   btn: { padding: '8px 16px', background: '#059669', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer' },
   btnRed: { padding: '8px 16px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer' },
   btnSec: { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: 7, fontSize: 13, cursor: 'pointer' },
+  opt: { flex: 1, padding: '8px', background: '#f1f5f9', color: '#334155', border: '1px solid #e2e8f0', borderRadius: 7, fontSize: 13, cursor: 'pointer' },
+  optOn: { flex: 1, padding: '8px', background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd', borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   pill: { padding: '2px 8px', borderRadius: 20, fontSize: 10.5, fontWeight: 700 },
   ov: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 },
   modal: { background: '#fff', borderRadius: 12, padding: 22, width: 500, maxWidth: '94vw' },

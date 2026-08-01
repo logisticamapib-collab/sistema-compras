@@ -228,7 +228,34 @@ export default function RutasFabricacion() {
         <label style={styles.label}>Articulo</label>
         <select style={styles.input} value={articuloId} onChange={e => { setArticuloId(e.target.value); setMostrarForm(false); setEditandoPaso(null) }}>
           <option value="">Selecciona un articulo fabricado</option>
-          {articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>)}
+          {(() => {
+            // Agrupado por FAMILIA DE MOLDE: los articulos que comparten molde aparecen
+            // bajo su molde y basta elegir uno para capturar la ruta de toda la familia.
+            const porMolde = {}
+            const sueltos = []
+            articulos.forEach(a => {
+              const cav = cavidades.find(c => c.articulo_id === a.id)
+              if (cav) (porMolde[cav.molde_id] = porMolde[cav.molde_id] || []).push(a)
+              else sueltos.push(a)
+            })
+            const grupos = Object.entries(porMolde)
+            return (<>
+              {grupos.map(([mid, arts]) => {
+                const mol = moldes.find(m => m.id === Number(mid))
+                const etiqueta = `Molde ${mol?.clave || mid}${arts.length > 1 ? ` (familiar - ${arts.length} articulos)` : ''}`
+                return (
+                  <optgroup key={mid} label={etiqueta}>
+                    {arts.map(a => <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>)}
+                  </optgroup>
+                )
+              })}
+              {sueltos.length > 0 && (
+                <optgroup label="Sin molde asignado">
+                  {sueltos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>)}
+                </optgroup>
+              )}
+            </>)
+          })()}
         </select>
       </div>
 
