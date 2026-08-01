@@ -68,6 +68,18 @@ export default function TransferenciaMoldes() {
     if (!f.fecha_notificacion) { setError('Indica la fecha en que se notifico al cliente.'); return }
     setProc(true)
     try {
+      // Se crea la orden de mantenimiento en TRY-OUT: la transferencia solo se cierra
+      // cuando esa orden quede firmada por las areas requeridas (Calidad/Produccion/Ingenieria).
+      const folioTO = 'MM-TR-' + String(Date.now()).slice(-6)
+      const { data: mtto, error: eM } = await supabase.from('molde_mtto').insert({
+        empresa_id: emp, folio: folioTO, molde_id: f.molde.id,
+        motivo_origen: 'cliente', causa: 'otro',
+        maquina_id: f.maquina_destino_id ? Number(f.maquina_destino_id) : null,
+        descripcion: `Try-out por transferencia de site: ${siteNom(f.molde.site_id)} -> ${siteNom(Number(f.site_destino_id))}. Motivo: ${f.motivo.trim()}`,
+        estatus: 'tryout', shots_al_abrir: f.molde.shots_acumulados || 0,
+        creado_por: perfil.id,
+      }).select().single()
+      if (eM) throw eM
       await supabase.from('molde_transferencias').insert({
         empresa_id: emp, molde_id: f.molde.id,
         site_origen_id: f.molde.site_id, site_destino_id: Number(f.site_destino_id),
@@ -76,7 +88,7 @@ export default function TransferenciaMoldes() {
         ubicacion_origen: f.molde.ubicacion_fisica || null, ubicacion_destino: f.ubicacion_destino || null,
         motivo: f.motivo.trim(), cliente_notificado: true,
         fecha_notificacion: f.fecha_notificacion, referencia_notificacion: f.referencia_notificacion || null,
-        requiere_tryout: true, estatus: 'pendiente_tryout',
+        requiere_tryout: true, estatus: 'pendiente_tryout', tryout_mtto_id: mtto.id,
         autorizado_por: perfil.id, autorizado_at: new Date().toISOString(), creado_por: perfil.id,
       })
       // El molde cambia de site y queda bloqueado hasta el try-out de liberacion
@@ -86,18 +98,27 @@ export default function TransferenciaMoldes() {
         ubicacion_fisica: f.ubicacion_destino || null,
         pendiente_tryout: true, estado: 'en_mantenimiento',
       }).eq('id', f.molde.id)
-      setExito(`Molde ${f.molde.clave} transferido a ${siteNom(Number(f.site_destino_id))}. Queda PENDIENTE DE TRY-OUT: no debe programarse hasta liberarlo.`)
+      setExito(`Molde ${f.molde.clave} transferido a ${siteNom(Number(f.site_destino_id))}. Se genero la orden de try-out ${folioTO}: debe firmarse en Moldes > Ordenes de mantenimiento para liberar el molde.`)
       setForm(null); await cargar()
     } catch (err) { setError('Error: ' + err.message) }
     setProc(false)
   }
 
+  // La transferencia SOLO se cierra si su orden de try-out quedo cerrada y efectiva
+  // (es decir, firmada y aprobada por las areas requeridas en Ordenes de mantenimiento).
   const cerrarTransferencia = async (t) => {
-    setError(''); setProc(true)
+    setError(''); setExito(''); setProc(true)
     try {
+      if (!t.tryout_mtto_id) { setError('Esta transferencia no tiene orden de try-out ligada. Genera el try-out en Ordenes de mantenimiento.'); setProc(false); return }
+      const { data: mt } = await supabase.from('molde_mtto').select('folio, estatus, tryout_efectiva').eq('id', t.tryout_mtto_id).maybeSingle()
+      if (!mt) { setError('No se encontro la orden de try-out ligada.'); setProc(false); return }
+      if (mt.estatus !== 'cerrada' || !mt.tryout_efectiva) {
+        setError(`El try-out ${mt.folio} aun no esta liberado (estatus: ${mt.estatus}${mt.tryout_efectiva ? '' : ', sin firmas aprobadas'}). Debe firmarse en Moldes > Ordenes de mantenimiento.`)
+        setProc(false); return
+      }
       await supabase.from('molde_transferencias').update({ estatus: 'completada' }).eq('id', t.id)
       await supabase.from('moldes').update({ pendiente_tryout: false, estado: 'disponible' }).eq('id', t.molde_id)
-      setExito(`Transferencia cerrada: el molde ${t.molde?.clave || ''} queda liberado para producir en su nuevo site.`)
+      setExito(`Transferencia cerrada con el try-out ${mt.folio} firmado: el molde ${t.molde?.clave || ''} queda liberado para producir en su nuevo site.`)
       await cargar()
     } catch (err) { setError('Error: ' + err.message) }
     setProc(false)
@@ -143,10 +164,10 @@ export default function TransferenciaMoldes() {
           <div key={t.id} style={S.tr}>
             <span style={{ flex: 1, fontWeight: 600 }}>{t.molde?.clave || t.molde_id}</span>
             <span style={{ flex: 1.6, fontSize: 12.5 }}>{siteNom(t.site_origen_id)} → <b>{siteNom(t.site_destino_id)}</b><div style={{ color: '#94a3b8', fontSize: 11 }}>{maqNom(t.maquina_origen_id)} → {maqNom(t.maquina_destino_id)}</div></span>
-            <span style={{ flex: 1.4, fontSize: 12, color: '#64748b' }}>{t.motivo}</span>
+            <span style={{ flex: 1.4, fontSize: 12, color: '#64748b' }}>{t.motivo}{t.tryout_mtto_id && <div style={{ fontSize: 11, color: '#a16207' }}>try-out ligado #{t.tryout_mtto_id}</div>}</span>
             <span style={{ flex: 1.2, fontSize: 12 }}>{t.cliente_notificado ? <>Si · {fFecha(t.fecha_notificacion)}<div style={{ color: '#94a3b8', fontSize: 11 }}>{t.referencia_notificacion || ''}</div></> : <span style={{ color: '#dc2626' }}>No</span>}</span>
             <span style={{ flex: 1 }}><span style={{ ...S.pill, backgroundColor: (EST[t.estatus]?.c || '#64748b') + '22', color: EST[t.estatus]?.c }}>{EST[t.estatus]?.l || t.estatus}</span></span>
-            <span style={{ width: 120, textAlign: 'right' }}>{t.estatus === 'pendiente_tryout' && puedeTransferir && <button style={S.btnMini} disabled={proc} onClick={() => cerrarTransferencia(t)}>Try-out OK</button>}</span>
+            <span style={{ width: 120, textAlign: 'right' }}>{t.estatus === 'pendiente_tryout' && puedeTransferir && <button style={S.btnMini} disabled={proc} onClick={() => cerrarTransferencia(t)} title="Valida que el try-out este firmado">Validar try-out</button>}</span>
           </div>
         ))}
         {transfs.length === 0 && <div style={S.vacio}>Sin transferencias registradas.</div>}
@@ -183,7 +204,7 @@ export default function TransferenciaMoldes() {
                 </div>
               )}
             </div>
-            <p style={{ fontSize: 12, color: '#b45309', marginTop: 8 }}>Al confirmar, el molde queda <b>pendiente de try-out</b> y no debe programarse hasta ser liberado.</p>
+            <p style={{ fontSize: 12, color: '#b45309', marginTop: 8 }}>Al confirmar se genera automaticamente una <b>orden de try-out</b>; el molde queda bloqueado hasta que esa orden sea <b>firmada por las areas requeridas</b> (Calidad / Produccion / Ingenieria).</p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
               <button style={S.btnSec} onClick={() => setForm(null)} disabled={proc}>Cancelar</button>
               <button style={S.btn} onClick={guardar} disabled={proc}>Confirmar transferencia</button>
