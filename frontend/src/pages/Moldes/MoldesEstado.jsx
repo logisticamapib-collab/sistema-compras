@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // Estado y disponibilidad de moldes. Si el molde NO esta disponible, no puede
 // programarse (se valida en el alta de OT). Aqui se cambia el estado manualmente
@@ -12,14 +14,15 @@ export default function MoldesEstado() {
   const { perfil, tienePermiso } = useAuth()
   const puedeEditar = tienePermiso('mol_estado', 'editar') || tienePermiso('mol_estado', 'crear')
   const [moldes, setMoldes] = useState([])
+  const [site, setSite] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
     setLoading(true)
-    const { data } = await supabase.from('moldes').select('*').eq('empresa_id', perfil.empresa_id).order('clave')
+    const { data } = await (siteEfectivo(perfil, site) ? supabase.from('moldes').select('*').eq('empresa_id', perfil.empresa_id).eq('site_id', siteEfectivo(perfil, site)) : supabase.from('moldes').select('*').eq('empresa_id', perfil.empresa_id)).order('clave')
     setMoldes(data || []); setLoading(false)
   }
 
@@ -38,6 +41,7 @@ export default function MoldesEstado() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Moldes y estado</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       <p style={styles.sub}>Disponibilidad y conteo de shots. Un molde en reparacion o mantenimiento <b>no puede programarse</b> en OT.</p>
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}

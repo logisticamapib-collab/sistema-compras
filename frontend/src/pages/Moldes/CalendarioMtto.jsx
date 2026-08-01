@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // Calendario / programa de mantenimiento preventivo. Detecta moldes vencidos
 // por SHOTS (>= alerta) y por PERIODICIDAD (dias desde el ultimo mtto), y permite
@@ -15,6 +17,7 @@ export default function CalendarioMtto() {
   const { perfil, tienePermiso } = useAuth()
   const puedeCrear = tienePermiso('mol_calendario', 'crear')
   const [moldes, setMoldes] = useState([])
+  const [site, setSite] = useState('')
   const [abiertas, setAbiertas] = useState([])
   const [tipos, setTipos] = useState([])
   const [loading, setLoading] = useState(true)
@@ -22,7 +25,7 @@ export default function CalendarioMtto() {
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
     setLoading(true)
     const emp = perfil.empresa_id
@@ -92,6 +95,7 @@ export default function CalendarioMtto() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Calendario / Programa de mantenimiento</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       <p style={styles.sub}>Preventivo automatico por <b>shots</b> (&ge; alerta) y por <b>periodicidad</b> (dias desde el ultimo mtto, se define en cada molde). Genera la orden con un clic; queda programada hasta que se inicia.</p>
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}

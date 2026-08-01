@@ -5,12 +5,15 @@ import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 
 const formVacio = {
   clave: '', nombre: '', num_cavidades: 1,
-  shots_alerta_min: '', shots_alerta_max: '', ubicacion_fisica: ''
+  shots_alerta_min: '', shots_alerta_max: '', ubicacion_fisica: '',
+  site_id: '', maquina_asignada_id: ''
 }
 
 export default function Moldes() {
   const { perfil, tienePermiso } = useAuth()
   const [moldes, setMoldes] = useState([])
+  const [sites, setSites] = useState([])
+  const [maquinas, setMaquinas] = useState([])
   const [filtroMol, setFiltroMol] = useState('')
   const [articulos, setArticulos] = useState([])
   const [loading, setLoading] = useState(true)
@@ -28,17 +31,20 @@ export default function Moldes() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: m }, { data: a }] = await Promise.all([
-      supabase.from('moldes').select('*').eq('empresa_id', perfil.empresa_id).order('clave'),
+    const [{ data: m }, { data: a }, st, mq] = await Promise.all([
+      supabase.from('moldes').select('*, site:sites(nombre), maq:maquinas(clave)').eq('empresa_id', perfil.empresa_id).order('clave'),
+      supabase.from('sites').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id).order('nombre'),
+      supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
       supabase.from('articulos').select('id, codigo_interno, descripcion').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
     ])
+    setSites(st.data || []); setMaquinas(mq.data || [])
     setMoldes(m || [])
     setArticulos(a || [])
     setLoading(false)
   }
 
   const moldesFiltrados = moldes.filter(m => !filtroMol || (`${m.clave} ${m.nombre}`).toLowerCase().includes(filtroMol.toLowerCase()))
-  const colsMol = [{ label: 'Clave', get: m => m.clave }, { label: 'Nombre', get: m => m.nombre }, { label: 'Cavidades', get: m => m.num_cavidades }, { label: 'Shots acum.', get: m => m.shots_acumulados }, { label: 'Estado', get: m => m.estado }, { label: 'Ubicacion', get: m => m.ubicacion_fisica || '' }, { label: 'Estatus', get: m => m.activo ? 'Activo' : 'Inactivo' }]
+  const colsMol = [{ label: 'Clave', get: m => m.clave }, { label: 'Nombre', get: m => m.nombre }, { label: 'Cavidades', get: m => m.num_cavidades }, { label: 'Shots acum.', get: m => m.shots_acumulados }, { label: 'Estado', get: m => m.estado }, { label: 'Site', get: m => m.site?.nombre || '' }, { label: 'Maquina PPAP', get: m => m.maq?.clave || '' }, { label: 'Ubicacion', get: m => m.ubicacion_fisica || '' }, { label: 'Estatus', get: m => m.activo ? 'Activo' : 'Inactivo' }]
   const abrirNuevo = () => { setEditando(null); setForm(formVacio); setMostrarForm(true); setError('') }
   const abrirEditar = (m) => {
     setEditando(m)
@@ -46,6 +52,7 @@ export default function Moldes() {
       clave: m.clave, nombre: m.nombre || '', num_cavidades: m.num_cavidades,
       shots_alerta_min: m.shots_alerta_min || '', shots_alerta_max: m.shots_alerta_max || '',
       ubicacion_fisica: m.ubicacion_fisica || '',
+      site_id: m.site_id?.toString() || '', maquina_asignada_id: m.maquina_asignada_id?.toString() || '',
     })
     setMostrarForm(true)
     setError('')
@@ -61,6 +68,8 @@ export default function Moldes() {
       shots_alerta_min: form.shots_alerta_min ? parseInt(form.shots_alerta_min) : null,
       shots_alerta_max: form.shots_alerta_max ? parseInt(form.shots_alerta_max) : null,
       ubicacion_fisica: form.ubicacion_fisica,
+      site_id: form.site_id ? parseInt(form.site_id) : null,
+      maquina_asignada_id: form.maquina_asignada_id ? parseInt(form.maquina_asignada_id) : null,
     }
 
     let error, moldeId
@@ -194,6 +203,20 @@ export default function Moldes() {
             <div style={styles.campo}>
               <label style={styles.label}>Shots alerta maximo</label>
               <input style={styles.input} type="number" value={form.shots_alerta_max} onChange={e => setForm({ ...form, shots_alerta_max: e.target.value })} placeholder="Ej: 500000" />
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Site (planta a la que pertenece)</label>
+              <select style={styles.input} value={form.site_id} onChange={e => setForm({ ...form, site_id: e.target.value, maquina_asignada_id: '' })}>
+                <option value="">Sin asignar</option>
+                {sites.map(x => <option key={x.id} value={x.id}>{x.codigo ? x.codigo + ' - ' : ''}{x.nombre}</option>)}
+              </select>
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Maquina asignada (PPAP)</label>
+              <select style={styles.input} value={form.maquina_asignada_id} onChange={e => setForm({ ...form, maquina_asignada_id: e.target.value })}>
+                <option value="">Sin asignar</option>
+                {maquinas.filter(x => !form.site_id || x.site_id === Number(form.site_id)).map(x => <option key={x.id} value={x.id}>{x.clave} - {x.nombre}</option>)}
+              </select>
             </div>
             <div style={styles.campo}>
               <label style={styles.label}>Ubicacion fisica</label>

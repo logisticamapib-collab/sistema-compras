@@ -146,6 +146,10 @@ export default function OrdenesTrabajo() {
     }
     if (REQUIERE_MOLDE.includes(artSel.tipo_proceso) && !form.molde_id) { setError('El proceso requiere molde y el articulo no tiene molde/cavidad asignado'); return }
     const _mol = form.molde_id ? moldes.find(m => m.id === Number(form.molde_id)) : null
+    if (_mol?.pendiente_tryout) {
+      setError(`El molde ${_mol.clave} fue transferido de site y esta PENDIENTE DE TRY-OUT. No puede programarse hasta que Moldes cierre la transferencia con el try-out de liberacion.`)
+      return
+    }
     const molNoDisp = _mol && !['disponible', 'en_produccion'].includes(_mol.estado || 'disponible')
     if (molNoDisp) {
       const esGtePlanta = ['gerente_planta', 'admin'].includes(perfil?.rol)
