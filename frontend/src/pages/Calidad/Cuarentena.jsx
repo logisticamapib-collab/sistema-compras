@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
+import EscanerCamara from '../../components/EscanerCamara'
 
 // Cuarentena por CAJA (cada caja = su lote). Al ENVIAR se exige CAUSA y el material
 // se mueve a la UBICACION VIRTUAL de cuarentena (configurable por empresa). La SALIDA
@@ -30,6 +31,8 @@ export default function Cuarentena() {
   const [eventos, setEventos] = useState([])
   const [salidas, setSalidas] = useState([])
   const [causas, setCausas] = useState([])
+  const [cajas, setCajas] = useState([])
+  const [buscaCaja, setBuscaCaja] = useState('')
   const [articulos, setArticulos] = useState([])
   const [normas, setNormas] = useState([])
   const [almacenes, setAlmacenes] = useState([])
@@ -49,12 +52,13 @@ export default function Cuarentena() {
   const cargar = async () => {
     const sid = siteEfectivo(perfil, site)
     setLoading(true)
-    const [lo, ex, ev, sa, ca, ar, no, al, ub, us, pa] = await Promise.all([
+    const [lo, ex, ev, sa, ca, cj, ar, no, al, ub, us, pa] = await Promise.all([
       supabase.from('lotes').select('*, articulo:articulos(codigo_interno, descripcion, origen)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('existencias').select('*'),
       supabase.from('cuarentena_eventos').select('*, envio:usuarios!cuarentena_eventos_enviado_por_fkey(nombre)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('cuarentena_salidas').select('*').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('causas_scrap').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true),
+      supabase.from('contenedores').select('*').eq('empresa_id', emp).eq('estatus', 'activo').eq('tipo', 'caja').order('folio'),
       supabase.from('articulos').select('id, codigo_interno, descripcion, origen').eq('empresa_id', emp),
       supabase.from('normas_empaque').select('articulo_id, piezas_por_empaque, activa').eq('activa', true),
       supabase.from('almacenes').select('*').eq('empresa_id', emp).eq('activo', true).order('clave'),
@@ -64,7 +68,7 @@ export default function Cuarentena() {
     ])
     const _almOK = (id) => { if (!sid) return true; const a = (al.data || []).find(z => z.id === id); return a && a.site_id === sid }
     setLotes(lo.data || []); setExistencias((ex.data || []).filter(x => _almOK(x.almacen_id))); setEventos(ev.data || []); setSalidas(sa.data || [])
-    setCausas(ca.data || []); setArticulos(ar.data || []); setNormas(no.data || [])
+    setCausas(ca.data || []); setCajas(cj.data || []); setArticulos(ar.data || []); setNormas(no.data || [])
     setAlmacenes(al.data || []); setUbicaciones(ub.data || []); setUsuarios(us.data || [])
     setParam(pa.data || null)
     if (pa.data) setCfgForm({ almacen_id: pa.data.almacen_id || '', ubicacion_id: pa.data.ubicacion_id || '' })
@@ -78,7 +82,10 @@ export default function Cuarentena() {
   const almDe = (id) => almacenes.find(a => a.id === id)
   const ubiDe = (id) => ubicaciones.find(u => u.id === id)
 
-  // ---------- ENVIAR A CUARENTENA ----------
+  // ---------- ENVIAR A CUARENTENA (POR CAJA) ----------
+  // Se retiene la CAJA escaneada/seleccionada, no todo el lote. Si al lote le quedan
+  // otras cajas fuera, la caja retenida se separa en un lote hijo con sufijo -Q para
+  // que el resto del lote siga liberado. Se guarda el origen para devolverla ahi mismo.
   const enviar = async () => {
     setError('')
     const f = envForm
@@ -86,20 +93,78 @@ export default function Cuarentena() {
     if (!f.causa || !f.causa.trim()) { setError('La causa es obligatoria para enviar a cuarentena.'); return }
     setProc(true)
     try {
-      const exs = existencias.filter(x => x.lote_id === f.lote.id && Number(x.cantidad) > 0)
-      if (exs.length === 0) { setError('La caja no tiene existencia.'); setProc(false); return }
-      const total = exs.reduce((s, e) => s + Number(e.cantidad), 0)
-      const origen = { alm: exs[0].almacen_id, ubi: exs[0].ubicacion_id || null }
-      // mover a la ubicacion virtual: consolidar en una sola existencia
-      for (const e of exs) await supabase.from('existencias').delete().eq('id', e.id)
-      await supabase.from('existencias').insert({ lote_id: f.lote.id, almacen_id: param.almacen_id, ubicacion_id: param.ubicacion_id, cantidad: total })
-      await supabase.from('contenedores').update({ almacen_id: param.almacen_id, ubicacion_id: param.ubicacion_id }).eq('lote_id', f.lote.id)
-      await supabase.from('movimientos').insert({ empresa_id: emp, articulo_id: f.lote.articulo_id, lote_id: f.lote.id, tipo: 'cuarentena', almacen_origen_id: origen.alm, ubicacion_origen_id: origen.ubi, almacen_destino_id: param.almacen_id, ubicacion_destino_id: param.ubicacion_id, cantidad: total, motivo: `Cuarentena: ${f.causa.trim()}`, usuario_id: perfil.id })
-      await supabase.from('lotes').update({ estatus_calidad: 'cuarentena' }).eq('id', f.lote.id)
-      await supabase.from('cuarentena_eventos').insert({ empresa_id: emp, lote_id: f.lote.id, articulo_id: f.lote.articulo_id, cantidad: total, causa: f.causa.trim(), causa_id: f.causa_id ? Number(f.causa_id) : null, snp: snpDe(f.lote.articulo_id), origen_almacen_id: origen.alm, origen_ubicacion_id: origen.ubi, enviado_por: perfil.id })
-      setExito(`Caja ${f.lote.codigo_lote} enviada a cuarentena (ubicacion ${ubiDe(param.ubicacion_id)?.clave || ''}).`); setEnvForm(null); await cargar()
+      const caja = f.caja
+      const cant = Number(caja.cantidad) || 0
+      if (cant <= 0) { setError('La caja no tiene cantidad.'); setProc(false); return }
+      const origen = { alm: caja.almacen_id, ubi: caja.ubicacion_id || null }
+
+      // Existencia de origen: se descuenta solo lo de esta caja
+      const { data: exOrig } = await supabase.from('existencias').select('*')
+        .eq('lote_id', caja.lote_id).eq('almacen_id', origen.alm)
+        .is('ubicacion_id', origen.ubi === null ? null : undefined).maybeSingle()
+      let filaOrigen = exOrig
+      if (!filaOrigen) {
+        const { data: alt } = await supabase.from('existencias').select('*')
+          .eq('lote_id', caja.lote_id).eq('almacen_id', origen.alm)
+        filaOrigen = (alt || []).find(x => (x.ubicacion_id || null) === origen.ubi) || (alt || [])[0]
+      }
+      if (!filaOrigen || Number(filaOrigen.cantidad) < cant) { setError('La existencia en la ubicacion de origen no cubre la cantidad de la caja.'); setProc(false); return }
+
+      // Otras cajas del mismo lote que NO se van a cuarentena
+      const otras = cajas.filter(c => c.lote_id === caja.lote_id && c.id !== caja.id)
+      let loteDestino = caja.lote_id
+      if (otras.length > 0) {
+        // separar la caja retenida en un lote hijo para no bloquear el resto
+        const { data: padre } = await supabase.from('lotes').select('*').eq('id', caja.lote_id).single()
+        const codigo = `${padre.codigo_lote}-Q${String(Date.now()).slice(-4)}`
+        const { data: hijo, error: eH } = await supabase.from('lotes').insert({
+          empresa_id: emp, articulo_id: padre.articulo_id, codigo_lote: codigo, origen: padre.origen,
+          estatus_calidad: 'cuarentena', lote_padre_id: padre.id,
+          fecha: new Date().toISOString().slice(0, 10), creado_por: perfil.id,
+        }).select().single()
+        if (eH) throw eH
+        loteDestino = hijo.id
+        await supabase.from('contenedores').update({ lote_id: hijo.id }).eq('id', caja.id)
+      } else {
+        await supabase.from('lotes').update({ estatus_calidad: 'cuarentena' }).eq('id', caja.lote_id)
+      }
+
+      // Mover el inventario de la caja al almacen virtual de cuarentena
+      const resto = Number(filaOrigen.cantidad) - cant
+      if (resto > 0) await supabase.from('existencias').update({ cantidad: resto }).eq('id', filaOrigen.id)
+      else await supabase.from('existencias').delete().eq('id', filaOrigen.id)
+      await supabase.from('existencias').insert({ lote_id: loteDestino, almacen_id: param.almacen_id, ubicacion_id: param.ubicacion_id, cantidad: cant })
+      await supabase.from('contenedores').update({ almacen_id: param.almacen_id, ubicacion_id: param.ubicacion_id }).eq('id', caja.id)
+
+      await supabase.from('movimientos').insert({
+        empresa_id: emp, articulo_id: caja.articulo_id, lote_id: loteDestino, tipo: 'cuarentena',
+        almacen_origen_id: origen.alm, ubicacion_origen_id: origen.ubi,
+        almacen_destino_id: param.almacen_id, ubicacion_destino_id: param.ubicacion_id,
+        cantidad: cant, motivo: `Cuarentena caja ${caja.folio}: ${f.causa.trim()}`, usuario_id: perfil.id,
+      })
+      await supabase.from('cuarentena_eventos').insert({
+        empresa_id: emp, lote_id: loteDestino, articulo_id: caja.articulo_id, cantidad: cant,
+        contenedor_id: caja.id, contenedor_folio: caja.folio,
+        causa: f.causa.trim(), causa_id: f.causa_id ? Number(f.causa_id) : null,
+        snp: snpDe(caja.articulo_id), origen_almacen_id: origen.alm, origen_ubicacion_id: origen.ubi,
+        enviado_por: perfil.id,
+      })
+      setExito(`Caja ${caja.folio} (${fmt(cant)} pzas) enviada a cuarentena. Regresara a ${almDe(origen.alm)?.clave || ''} ${ubiDe(origen.ubi)?.clave || ''} al liberarse.`)
+      setEnvForm(null); setBuscaCaja(''); await cargar()
     } catch (err) { setError('Error: ' + err.message) }
     setProc(false)
+  }
+
+  // Buscar caja por folio (escaneo o tecleado)
+  const buscarCaja = (valor) => {
+    setError('')
+    const v = (valor || buscaCaja).trim().toLowerCase()
+    if (!v) return
+    const c = cajas.find(x => (x.folio || '').toLowerCase() === v)
+    if (!c) { setError(`No se encontro una caja activa con folio "${valor || buscaCaja}".`); return }
+    const l = lotes.find(x => x.id === c.lote_id)
+    if (l && l.estatus_calidad === 'cuarentena') { setError(`La caja ${c.folio} ya esta en cuarentena.`); return }
+    setEnvForm({ caja: c, causa: '', causa_id: '' })
   }
 
   // ---------- CREAR DISPOSICION (SALIDA) ----------
@@ -233,7 +298,9 @@ export default function Cuarentena() {
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
 
   const enCuarentena = eventos.filter(e => ['en_cuarentena', 'parcial'].includes(e.estatus))
-  const disponibles = lotes.filter(l => ['liberado', 'retenido'].includes(l.estatus_calidad) && totalDe(l.id) > 0)
+  const lotesEnCuarentena = new Set(lotes.filter(l => l.estatus_calidad === 'cuarentena').map(l => l.id))
+  const cajasDisponibles = cajas.filter(c => !lotesEnCuarentena.has(c.lote_id) && Number(c.cantidad) > 0
+    && (!siteEfectivo(perfil, site) || (almacenes.find(a => a.id === c.almacen_id)?.site_id === siteEfectivo(perfil, site))))
   const pendientes = salidas.filter(s => s.estatus === 'pendiente')
   const ubisDelAlm = ubicaciones.filter(u => u.almacen_id === Number(cfgForm.almacen_id))
 
@@ -255,7 +322,7 @@ export default function Cuarentena() {
           <div style={styles.th}><span style={{ flex: 1 }}>Caja / Lote</span><span style={{ flex: 1.4 }}>Articulo</span><span style={{ flex: 1, textAlign: 'right' }}>En cuarentena</span><span style={{ flex: 1, textAlign: 'right' }}>SNP</span><span style={{ flex: 2 }}>Causa</span><span style={{ width: '110px' }}></span></div>
           {enCuarentena.map(ev => { const l = lotes.find(x => x.id === ev.lote_id); const art = articulos.find(a => a.id === ev.articulo_id); return (
             <div key={ev.id} style={styles.tr}>
-              <span style={{ flex: 1, fontWeight: 600 }}>{l?.codigo_lote || ev.lote_id}{ev.estatus === 'parcial' && <span style={styles.pillAmber}> parcial</span>}</span>
+              <span style={{ flex: 1, fontWeight: 600 }}>{ev.contenedor_folio || l?.codigo_lote || ev.lote_id}{ev.estatus === 'parcial' && <span style={styles.pillAmber}> parcial</span>}<div style={{ fontSize: '10.5px', color: '#94a3b8', fontWeight: 400 }}>{ev.contenedor_folio ? `lote ${l?.codigo_lote || ''}` : ''}</div></span>
               <span style={{ flex: 1.4 }}>{art?.codigo_interno} {art?.origen === 'fabricado' && <span style={styles.tagFab}>PT/WIP</span>}</span>
               <span style={{ flex: 1, textAlign: 'right' }}>{fmt(ev.cantidad)}</span>
               <span style={{ flex: 1, textAlign: 'right', color: '#64748b' }}>{ev.snp ? fmt(ev.snp) : '-'}</span>
@@ -268,19 +335,32 @@ export default function Cuarentena() {
       )}
 
       {vista === 'enviar' && (
-        <div style={styles.tabla}>
-          <div style={styles.th}><span style={{ flex: 1 }}>Caja / Lote</span><span style={{ flex: 1.6 }}>Articulo</span><span style={{ flex: 1 }}>Estatus</span><span style={{ flex: 1, textAlign: 'right' }}>Existencia</span><span style={{ width: '160px' }}></span></div>
-          {disponibles.map(l => (
-            <div key={l.id} style={styles.tr}>
-              <span style={{ flex: 1, fontWeight: 600 }}>{l.codigo_lote}</span>
-              <span style={{ flex: 1.6 }}>{l.articulo?.codigo_interno} <span style={{ color: '#94a3b8' }}>- {l.articulo?.descripcion}</span></span>
-              <span style={{ flex: 1 }}>{l.estatus_calidad}</span>
-              <span style={{ flex: 1, textAlign: 'right' }}>{fmt(totalDe(l.id))}</span>
-              <span style={{ width: '160px', textAlign: 'right' }}>{puedeEnviar && <button style={styles.botonAmber} onClick={() => { setError(''); setEnvForm({ lote: l, causa: '', causa_id: '' }) }}>Enviar a cuarentena</button>}</span>
-            </div>
-          ))}
-          {disponibles.length === 0 && <div style={styles.vacio}>Sin cajas con existencia.</div>}
-        </div>
+        <>
+          <div style={styles.buscaBox}>
+            <input style={{ ...styles.input, flex: 1 }} placeholder="Escanea o teclea el folio de la CAJA (ej. CJ-260727-001)"
+              value={buscaCaja} onChange={e => setBuscaCaja(e.target.value)} onKeyDown={e => e.key === 'Enter' && buscarCaja()} />
+            <EscanerCamara title="Escanear caja" onScan={(v) => { setBuscaCaja(v); buscarCaja(v) }} />
+            <button style={styles.botonAmber} onClick={() => buscarCaja()}>Buscar caja</button>
+          </div>
+          <div style={styles.tabla}>
+            <div style={styles.th}><span style={{ flex: 1 }}>Caja</span><span style={{ flex: 1 }}>Lote</span><span style={{ flex: 1.5 }}>Articulo</span><span style={{ flex: 1.1 }}>Ubicacion</span><span style={{ flex: 0.8, textAlign: 'right' }}>Cantidad</span><span style={{ width: '160px' }}></span></div>
+            {cajasDisponibles.map(c => {
+              const l = lotes.find(x => x.id === c.lote_id)
+              const a = articulos.find(x => x.id === c.articulo_id)
+              return (
+                <div key={c.id} style={styles.tr}>
+                  <span style={{ flex: 1, fontWeight: 600 }}>{c.folio}</span>
+                  <span style={{ flex: 1, fontSize: '12.5px' }}>{l?.codigo_lote || '-'}</span>
+                  <span style={{ flex: 1.5, fontSize: '12.5px' }}>{a?.codigo_interno} <span style={{ color: '#94a3b8' }}>{a?.descripcion}</span></span>
+                  <span style={{ flex: 1.1, fontSize: '12px', color: '#64748b' }}>{almDe(c.almacen_id)?.clave} {ubiDe(c.ubicacion_id)?.clave || ''}</span>
+                  <span style={{ flex: 0.8, textAlign: 'right' }}>{fmt(c.cantidad)}</span>
+                  <span style={{ width: '160px', textAlign: 'right' }}>{puedeEnviar && <button style={styles.botonAmber} onClick={() => { setError(''); setEnvForm({ caja: c, causa: '', causa_id: '' }) }}>Enviar a cuarentena</button>}</span>
+                </div>
+              )
+            })}
+            {cajasDisponibles.length === 0 && <div style={styles.vacio}>No hay cajas activas fuera de cuarentena.</div>}
+          </div>
+        </>
       )}
 
       {vista === 'autorizar' && (
@@ -344,8 +424,12 @@ export default function Cuarentena() {
       {/* Modal enviar */}
       {envForm && (
         <div style={styles.overlay}><div style={styles.modal}>
-          <h3 style={styles.h3}>Enviar caja {envForm.lote.codigo_lote} a cuarentena</h3>
-          <p style={styles.sub}>La <b>causa es obligatoria</b>. El material se movera a la ubicacion virtual de cuarentena.</p>
+          <h3 style={styles.h3}>Enviar caja {envForm.caja.folio} a cuarentena</h3>
+          <p style={styles.sub}>
+            {articulos.find(a => a.id === envForm.caja.articulo_id)?.codigo_interno} · lote {lotes.find(l => l.id === envForm.caja.lote_id)?.codigo_lote} · <b>{fmt(envForm.caja.cantidad)} pzas</b><br />
+            Origen: <b>{almDe(envForm.caja.almacen_id)?.clave} {ubiDe(envForm.caja.ubicacion_id)?.clave || ''}</b> (ahi mismo regresara al liberarse).<br />
+            La <b>causa es obligatoria</b>. Solo se retiene esta caja; el resto del lote sigue disponible.
+          </p>
           <label style={styles.lbl}>Causa (catalogo)</label>
           <select style={styles.input} value={envForm.causa_id} onChange={e => { const c = causas.find(x => x.id === Number(e.target.value)); setEnvForm({ ...envForm, causa_id: e.target.value, causa: c ? c.nombre : envForm.causa }) }}>
             <option value="">Otra / escribir</option>
@@ -394,6 +478,7 @@ const styles = {
   th: { display: 'flex', padding: '10px 16px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tr: { display: 'flex', padding: '11px 16px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '13px' },
   vacio: { padding: '14px 16px', color: '#94a3b8', fontSize: '13px' },
+  buscaBox: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' },
   cfg: { backgroundColor: '#fff', border: '1px solid #eef2f7', borderRadius: '8px', padding: '20px', maxWidth: '480px' },
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' },
   botones: { display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px' },
