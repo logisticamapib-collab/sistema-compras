@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 
 export default function DatosEmpresa() {
   const { perfil, cargarPerfil } = useAuth()
-  const [form, setForm] = useState({ nombre: '', rfc: '', direccion: '', telefono: '' })
+  const [form, setForm] = useState({ nombre: '', razon_social: '', rfc: '', direccion: '', ciudad: '', estado: '', cp: '', pais: 'Mexico', telefono: '', email: '', email_remitente: '' })
   const [logoPreview, setLogoPreview] = useState('')
   const [archivoLogo, setArchivoLogo] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -15,9 +15,16 @@ export default function DatosEmpresa() {
     if (perfil?.empresas) {
       setForm({
         nombre: perfil.empresas.nombre || '',
+        razon_social: perfil.empresas.razon_social || '',
         rfc: perfil.empresas.rfc || '',
         direccion: perfil.empresas.direccion || '',
-        telefono: perfil.empresas.telefono || ''
+        ciudad: perfil.empresas.ciudad || '',
+        estado: perfil.empresas.estado || '',
+        cp: perfil.empresas.cp || '',
+        pais: perfil.empresas.pais || 'Mexico',
+        telefono: perfil.empresas.telefono || '',
+        email: perfil.empresas.email || '',
+        email_remitente: perfil.empresas.email_remitente || '',
       })
       setLogoPreview(perfil.empresas.logo_url || '')
     }
@@ -65,9 +72,16 @@ export default function DatosEmpresa() {
       .from('empresas')
       .update({
         nombre: form.nombre,
+        razon_social: form.razon_social || null,
         rfc: form.rfc,
         direccion: form.direccion,
+        ciudad: form.ciudad || null,
+        estado: form.estado || null,
+        cp: form.cp || null,
+        pais: form.pais || null,
         telefono: form.telefono,
+        email: form.email || null,
+        email_remitente: form.email_remitente || null,
         logo_url: logoUrl
       })
       .eq('id', perfil.empresa_id)
@@ -110,9 +124,14 @@ export default function DatosEmpresa() {
           </div>
           <div style={{ flex: 1 }}>
             <div style={styles.campo}>
-              <label style={styles.label}>Nombre / Razon social *</label>
+              <label style={styles.label}>Nombre comercial *</label>
               <input style={styles.input} value={form.nombre}
                 onChange={e => setForm({ ...form, nombre: e.target.value })} />
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Razon social</label>
+              <input style={styles.input} value={form.razon_social}
+                onChange={e => setForm({ ...form, razon_social: e.target.value })} />
             </div>
             <div style={styles.campo}>
               <label style={styles.label}>RFC</label>
@@ -129,10 +148,46 @@ export default function DatosEmpresa() {
             rows={2} placeholder="Calle, numero, colonia, municipio, estado, C.P." />
         </div>
 
-        <div style={styles.campo}>
-          <label style={styles.label}>Telefono</label>
-          <input style={{ ...styles.input, maxWidth: '260px' }} value={form.telefono}
-            onChange={e => setForm({ ...form, telefono: e.target.value })} />
+        <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+          <div style={{ ...styles.campo, flex: 1, minWidth: '180px' }}>
+            <label style={styles.label}>Ciudad / Municipio</label>
+            <input style={styles.input} value={form.ciudad}
+              onChange={e => setForm({ ...form, ciudad: e.target.value })} />
+          </div>
+          <div style={{ ...styles.campo, flex: 1, minWidth: '180px' }}>
+            <label style={styles.label}>Estado</label>
+            <input style={styles.input} value={form.estado}
+              onChange={e => setForm({ ...form, estado: e.target.value })} />
+          </div>
+          <div style={{ ...styles.campo, width: '130px' }}>
+            <label style={styles.label}>C.P.</label>
+            <input style={styles.input} value={form.cp}
+              onChange={e => setForm({ ...form, cp: e.target.value })} />
+          </div>
+          <div style={{ ...styles.campo, flex: 1, minWidth: '150px' }}>
+            <label style={styles.label}>Pais</label>
+            <input style={styles.input} value={form.pais}
+              onChange={e => setForm({ ...form, pais: e.target.value })} />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+          <div style={{ ...styles.campo, flex: 1, minWidth: '220px' }}>
+            <label style={styles.label}>Telefono</label>
+            <input style={styles.input} value={form.telefono}
+              onChange={e => setForm({ ...form, telefono: e.target.value })} />
+          </div>
+          <div style={{ ...styles.campo, flex: 1, minWidth: '240px' }}>
+            <label style={styles.label}>Email de contacto</label>
+            <input style={styles.input} type="email" value={form.email}
+              onChange={e => setForm({ ...form, email: e.target.value })} />
+          </div>
+          <div style={{ ...styles.campo, flex: 1, minWidth: '240px' }}>
+            <label style={styles.label}>Email remitente (notificaciones)</label>
+            <input style={styles.input} type="email" value={form.email_remitente}
+              onChange={e => setForm({ ...form, email_remitente: e.target.value })}
+              placeholder="Desde donde se envian los correos del sistema" />
+          </div>
         </div>
 
         <div style={styles.botones}>
