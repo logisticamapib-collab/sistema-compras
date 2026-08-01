@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 import PortalImpresion from '../../components/PortalImpresion'
 import { imprimirAislado } from '../../lib/impresion'
 
@@ -20,6 +22,7 @@ export default function Embarques() {
   const puedeEmbarcar = tienePermiso('log_embarques', 'crear')
 
   const [vista, setVista] = useState('pendientes')
+  const [site, setSite] = useState('')
   const [clientes, setClientes] = useState([])
   const [articulos, setArticulos] = useState([])
   const [artCliente, setArtCliente] = useState([])
@@ -42,7 +45,7 @@ export default function Embarques() {
   const [surtido, setSurtido] = useState({}) // { [releaseLineaId]: cantidad }
   const [detalle, setDetalle] = useState(null) // embarque para packing list
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
 
   const cargar = async () => {
     setLoading(true)
@@ -56,7 +59,7 @@ export default function Embarques() {
       supabase.from('lotes').select('*'),
       supabase.from('almacenes').select('*'),
       supabase.from('ubicaciones').select('*'),
-      supabase.from('embarques').select('*, cli:clientes(nombre), usuario:usuarios!embarques_creado_por_fkey(nombre)').order('fecha', { ascending: false }).limit(100),
+      (siteEfectivo(perfil, site) ? supabase.from('embarques').select('*, cli:clientes(nombre), usuario:usuarios!embarques_creado_por_fkey(nombre)').eq('site_id', siteEfectivo(perfil, site)).order('fecha', { ascending: false }).limit(100) : supabase.from('embarques').select('*, cli:clientes(nombre), usuario:usuarios!embarques_creado_por_fkey(nombre)').order('fecha', { ascending: false }).limit(100)),
       supabase.from('empresas').select('*').eq('id', perfil.empresa_id).maybeSingle(),
       supabase.from('traspasos').select('*').eq('estatus', 'enviado'),
     ])
@@ -284,6 +287,7 @@ export default function Embarques() {
         <>
           <p style={styles.ayuda}>Solo se puede embarcar producto <b>liberado por Calidad</b>. Los lotes se asignan por <b>FIFO</b> y la entrega se aplica sola al release del cliente.</p>
           <div style={styles.filtros}>
+            <FiltroSite value={site} onChange={setSite} />
             <label style={styles.label}>Cliente *</label>
             <select style={styles.input} value={cliente} onChange={e => { setCliente(e.target.value); setSurtido({}) }}>
               <option value="">Selecciona...</option>

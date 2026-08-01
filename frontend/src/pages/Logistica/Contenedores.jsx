@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 import EscanerCamara from '../../components/EscanerCamara'
 import EtiquetaMaster from '../../components/EtiquetaMaster'
 import PortalImpresion from '../../components/PortalImpresion'
@@ -19,6 +21,7 @@ export default function Contenedores() {
   const puedeArmar = tienePermiso('log_contenedores', 'crear')
 
   const [vista, setVista] = useState('armar')
+  const [site, setSite] = useState('')
   const [contenedores, setContenedores] = useState([])
   const [articulos, setArticulos] = useState([])
   const [lotes, setLotes] = useState([])

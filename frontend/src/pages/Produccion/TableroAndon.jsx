@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 const COLOR = {
   trabajando: { bg: '#16a34a', lbl: 'TRABAJANDO' },
@@ -22,6 +24,7 @@ export default function TableroAndon() {
   const puedeControl = tienePermiso('prod_andon', 'crear')
 
   const [maquinas, setMaquinas] = useState([])
+  const [site, setSite] = useState('')
   const [estados, setEstados] = useState({})
   const [enProceso, setEnProceso] = useState({})
   const [artMap, setArtMap] = useState({})
@@ -43,9 +46,10 @@ export default function TableroAndon() {
   }, [])
 
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     const emp = perfil.empresa_id
     const [{ data: maq }, { data: est }, { data: ots }, { data: arts }, { data: prio }, { data: rl }] = await Promise.all([
-      supabase.from('maquinas').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true).order('clave'),
+      (sid ? supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', emp).eq('activo', true).eq('site_id', sid).order('clave') : supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', emp).eq('activo', true).order('clave')),
       supabase.from('maquina_estado').select('*').eq('empresa_id', emp),
       supabase.from('ordenes_trabajo').select('id, maquina_id, articulo_id, molde_id, estatus, ot_articulos(articulos(codigo_interno, descripcion))').eq('empresa_id', emp).eq('estatus', 'en_proceso'),
       supabase.from('articulos').select('id, codigo_interno, descripcion').eq('empresa_id', emp),

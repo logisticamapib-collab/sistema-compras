@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // Reportes ejecutivos, tres audiencias:
 //  - Director: salud general de la empresa (estrategico)
@@ -27,14 +29,18 @@ export default function ReportesEjecutivos() {
   const emp = perfil.empresa_id
   const [tab, setTab] = useState('director')
   const [periodo, setPeriodo] = useState('mes')
+  const [site, setSite] = useState('')
   const [area, setArea] = useState('produccion')
   const [d, setD] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => { cargar() }, [periodo])
+  useEffect(() => { cargar() }, [periodo, site])
 
+  const TABLAS_CON_SITE = ['ordenes_trabajo', 'ordenes_compra', 'embarques', 'requisiciones', 'maquinas', 'recibos', 'ordenes_maquila', 'consigna_autorizaciones', 'suministros', 'semanas_produccion']
   const cnt = async (tabla, fn) => {
+    const sid = siteEfectivo(perfil, site)
     let q = supabase.from(tabla).select('*', { count: 'exact', head: true }).eq('empresa_id', emp)
+    if (sid && TABLAS_CON_SITE.includes(tabla)) q = q.eq('site_id', sid)
     if (fn) q = fn(q)
     const { count } = await q
     return count || 0
@@ -47,10 +53,12 @@ export default function ReportesEjecutivos() {
       // Produccion del periodo (piezas ok / scrap) via ot_reportes -> ordenes_trabajo
       const { data: rep } = await supabase
         .from('ot_reportes')
-        .select('cantidad_ok, cantidad_scrap, ordenes_trabajo!inner(empresa_id, articulo_id)')
+        .select('cantidad_ok, cantidad_scrap, ordenes_trabajo!inner(empresa_id, articulo_id, site_id)')
         .gte('fecha', desde).lt('fecha', hasta)
         .eq('ordenes_trabajo.empresa_id', emp)
-      const rows = rep || []
+      // (site se aplica abajo con sidRep)
+      const sidRep = siteEfectivo(perfil, site)
+      const rows = (rep || []).filter(r => !sidRep || r.ordenes_trabajo?.site_id === sidRep)
       let ok = 0, scrap = 0
       const porArt = {}
       rows.forEach(r => {
@@ -75,7 +83,10 @@ export default function ReportesEjecutivos() {
       })
 
       // Estado de maquinas ahora
-      const { data: est } = await supabase.from('maquina_estado').select('estado').eq('empresa_id', emp)
+      const sidM = siteEfectivo(perfil, site)
+      let qEst = supabase.from('maquina_estado').select('estado, maquina:maquinas!inner(site_id)').eq('empresa_id', emp)
+      if (sidM) qEst = qEst.eq('maquina.site_id', sidM)
+      const { data: est } = await qEst
       const em = { trabajando: 0, parada: 0, cambio_molde: 0, sin_programa: 0 }
       ;(est || []).forEach(e => { if (em[e.estado] != null) em[e.estado]++ })
       const totMaq = await cnt('maquinas', q => q.eq('activo', true))
@@ -108,7 +119,9 @@ export default function ReportesEjecutivos() {
       const movFuera = await cnt('movimientos', q => q.gte('fecha', desde).lt('fecha', hasta).eq('fuera_flujo', true))
 
       // Compras / subcontrato
-      const { data: ocs } = await supabase.from('ordenes_compra').select('total, tipo, estatus').eq('empresa_id', emp).gte('fecha_emision', desde).lt('fecha_emision', hasta)
+      let qOc = supabase.from('ordenes_compra').select('total, tipo, estatus').eq('empresa_id', emp).gte('fecha_emision', desde).lt('fecha_emision', hasta)
+      if (sidM) qOc = qOc.eq('site_id', sidM)
+      const { data: ocs } = await qOc
       const ocTotal = (ocs || []).reduce((s, o) => s + (Number(o.total) || 0), 0)
       const ocSub = (ocs || []).filter(o => o.tipo === 'subcontrato')
       const ocSubMonto = ocSub.reduce((s, o) => s + (Number(o.total) || 0), 0)
@@ -142,6 +155,7 @@ export default function ReportesEjecutivos() {
               </button>
             ))}
           </div>
+          <FiltroSite value={site} onChange={setSite} />
           <button style={styles.print} onClick={() => window.print()}>Imprimir</button>
         </div>
       </div>

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 
 // Reportes y KPIs de produccion. OEE (Disponibilidad x Rendimiento x Calidad),
@@ -17,6 +19,7 @@ export default function ReportesKPI() {
   const { perfil } = useAuth()
   const [desde, setDesde] = useState(haceDias(30))
   const [hasta, setHasta] = useState(hoy())
+  const [site, setSite] = useState('')
   const [tab, setTab] = useState('oee')
   const [aggCambios, setAggCambios] = useState('dia')
   const [semanaId, setSemanaId] = useState('')
@@ -38,11 +41,12 @@ export default function ReportesKPI() {
   const [omLin, setOmLin] = useState([])
   const [omRec, setOmRec] = useState([])
 
-  useEffect(() => { cargarCat().then(consultar) }, [])
+  useEffect(() => { cargarCat().then(consultar) }, [site])
   const cargarCat = async () => {
     const emp = perfil.empresa_id
+    const sid = siteEfectivo(perfil, site)
     const [mq, ar, ru, cv, ca, pa, se, omd, old, ord] = await Promise.all([
-      supabase.from('maquinas').select('id, clave, nombre').eq('empresa_id', emp),
+      (sid ? supabase.from('maquinas').select('id, clave, nombre').eq('empresa_id', emp).eq('site_id', sid) : supabase.from('maquinas').select('id, clave, nombre').eq('empresa_id', emp)),
       supabase.from('articulos').select('id, codigo_interno, descripcion, pct_scrap_aprobado').eq('empresa_id', emp),
       supabase.from('rutas_fabricacion').select('articulo_id, tipo_operacion, tiempo_estandar_seg'),
       supabase.from('molde_cavidades').select('molde_id, articulo_id, activa').eq('activa', true),
@@ -59,10 +63,11 @@ export default function ReportesKPI() {
     if (se.data && se.data[0]) setSemanaId(String(se.data[0].id))
   }
   const consultar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const emp = perfil.empresa_id
     const [ot, ra, rs, pr, pc] = await Promise.all([
-      supabase.from('ordenes_trabajo').select('*, maq:maquinas(clave), art:articulos(codigo_interno), molde:moldes(clave)').eq('empresa_id', emp).order('fecha_programada', { ascending: false }).limit(1000),
+      (sid ? supabase.from('ordenes_trabajo').select('*, maq:maquinas(clave), art:articulos(codigo_interno), molde:moldes(clave)').eq('empresa_id', emp).eq('site_id', sid) : supabase.from('ordenes_trabajo').select('*, maq:maquinas(clave), art:articulos(codigo_interno), molde:moldes(clave)').eq('empresa_id', emp)).order('fecha_programada', { ascending: false }).limit(1000),
       supabase.from('ot_reporte_articulos').select('*, reporte:ot_reportes(fecha, turno, ot:ordenes_trabajo(maquina_id, molde_id, empresa_id))'),
       supabase.from('ot_reporte_scrap').select('*, causa:causas_scrap(nombre), reporte:ot_reportes(fecha, ot:ordenes_trabajo(maquina_id, empresa_id))'),
       supabase.from('ot_paros').select('*, causa:causas_paro(nombre), ot:ordenes_trabajo(maquina_id, empresa_id)').gte('fecha', desde).lte('fecha', hasta + 'T23:59:59'),
@@ -182,6 +187,7 @@ export default function ReportesKPI() {
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Reportes de produccion / KPIs</h2>
       <div style={styles.filtros} className="no-imprimir">
+        <div style={styles.campo}><label style={styles.lbl}>Site</label><FiltroSite value={site} onChange={setSite} label="" /></div>
         <div style={styles.campo}><label style={styles.lbl}>Desde</label><input type="date" style={styles.input} value={desde} onChange={e => setDesde(e.target.value)} /></div>
         <div style={styles.campo}><label style={styles.lbl}>Hasta</label><input type="date" style={styles.input} value={hasta} onChange={e => setHasta(e.target.value)} /></div>
         <button style={styles.boton} onClick={consultar} disabled={loading}>{loading ? 'Consultando...' : 'Consultar'}</button>

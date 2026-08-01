@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 const hoyISO = () => new Date().toISOString().slice(0, 10)
 const addD = (iso, n) => { const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
@@ -15,6 +17,7 @@ export default function ReportesLogistica() {
   const puedeEditarObj = tienePermiso('log_consultas', 'editar') || tienePermiso('log_consultas', 'crear')
 
   const [tab, setTab] = useState('vueltas')
+  const [site, setSite] = useState('')
   const [desde, setDesde] = useState(addD(hoyISO(), -30))
   const [hasta, setHasta] = useState(hoyISO())
   const [base, setBase] = useState('costo')
@@ -26,7 +29,7 @@ export default function ReportesLogistica() {
   const [entregas, setEntregas] = useState([])
   const [cargando, setCargando] = useState(false)
 
-  useEffect(() => { cargarClientes(); cargar() }, [])
+  useEffect(() => { cargarClientes(); cargar() }, [site])
 
   const cargarClientes = async () => {
     const { data } = await supabase.from('clientes').select('id, nombre').eq('empresa_id', perfil.empresa_id).order('nombre')
@@ -34,14 +37,16 @@ export default function ReportesLogistica() {
   }
 
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setCargando(true)
     const emp = perfil.empresa_id
-    const [{ data: kpi }, { data: obj }, { data: ex }, { data: rl }] = await Promise.all([
+    const [{ data: kpi }, { data: obj }, { data: exRaw }, { data: rl }] = await Promise.all([
       supabase.rpc('kpi_logistica', { p_empresa: emp, p_desde: desde, p_hasta: hasta }),
       supabase.from('kpi_objetivos').select('*').eq('empresa_id', emp),
-      supabase.from('existencias').select('cantidad, almacen_id, almacenes(clave, nombre), lote:lotes(articulo_id, articulos(codigo_interno, descripcion, unidad_medida, es_consigna, categorias(tipo)))'),
+      supabase.from('existencias').select('cantidad, almacen_id, almacenes!inner(clave, nombre, site_id), lote:lotes(articulo_id, articulos(codigo_interno, descripcion, unidad_medida, es_consigna, categorias(tipo)))'),
       supabase.from('release_lineas').select('id, cliente_id, articulo_id, fecha_requerida, cantidad, articulos(codigo_interno), release_entregas(cantidad, fecha_entrega)').eq('vigente', true).gte('fecha_requerida', desde).lte('fecha_requerida', hasta),
     ])
+    const ex = (exRaw || []).filter(x => !sid || x.almacenes?.site_id === sid)
     setRows(kpi || [])
     const om = {}; (obj || []).forEach(o => { om[o.grupo] = o }); setObjetivos(om)
     // Kg por area (MP)
@@ -133,6 +138,7 @@ export default function ReportesLogistica() {
       </div>
 
       <div style={styles.filtros}>
+        <div style={styles.campo}><label style={styles.lbl}>Site</label><FiltroSite value={site} onChange={setSite} label="" /></div>
         <div style={styles.campo}><label style={styles.lbl}>Desde</label><input style={styles.input} type="date" value={desde} onChange={e => setDesde(e.target.value)} /></div>
         <div style={styles.campo}><label style={styles.lbl}>Hasta</label><input style={styles.input} type="date" value={hasta} onChange={e => setHasta(e.target.value)} /></div>
         <div style={styles.campo}><label style={styles.lbl}>Base</label>

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 
 // Bitacora / historial de cambios de las OT: reprogramaciones, arrastres, inicios
@@ -25,20 +27,24 @@ export default function BitacoraOT() {
   const [fOT, setFOT] = useState('')
   const [fDesde, setFDesde] = useState('')
   const [fHasta, setFHasta] = useState('')
+  const [site, setSite] = useState('')
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const [c, o] = await Promise.all([
       supabase.from('programa_cambios').select('*').eq('empresa_id', perfil.empresa_id).order('at', { ascending: false }).limit(1000),
-      supabase.from('ordenes_trabajo').select('id, folio').eq('empresa_id', perfil.empresa_id),
+      (sid ? supabase.from('ordenes_trabajo').select('id, folio, site_id').eq('empresa_id', perfil.empresa_id).eq('site_id', sid) : supabase.from('ordenes_trabajo').select('id, folio, site_id').eq('empresa_id', perfil.empresa_id)),
     ])
     setRows(c.data || []); setOts(o.data || [])
     setLoading(false)
   }
   const folioDe = (id) => ots.find(o => o.id === id)?.folio || id
 
+  const otIds = new Set(ots.map(o => o.id))
   const lista = rows
+    .filter(r => !r.ot_id || otIds.has(r.ot_id))
     .filter(r => !fTipo || r.tipo === fTipo)
     .filter(r => !fOT || (folioDe(r.ot_id) || '').toLowerCase().includes(fOT.toLowerCase()))
     .filter(r => !fDesde || (r.at && r.at.slice(0, 10) >= fDesde))
@@ -75,6 +81,7 @@ export default function BitacoraOT() {
         <input style={S.input} placeholder="Buscar OT (folio)" value={fOT} onChange={e => setFOT(e.target.value)} />
         <label style={S.lbl}>Del:</label><input type="date" style={S.input} value={fDesde} onChange={e => setFDesde(e.target.value)} />
         <label style={S.lbl}>Al:</label><input type="date" style={S.input} value={fHasta} onChange={e => setFHasta(e.target.value)} />
+        <FiltroSite value={site} onChange={setSite} />
         <button style={S.btnSec} onClick={() => { setFTipo(''); setFOT(''); setFDesde(''); setFHasta('') }}>Limpiar</button>
         <span style={{ fontSize: 12, color: '#64748b', marginLeft: 'auto' }}>{lista.length} registro(s)</span>
       </div>

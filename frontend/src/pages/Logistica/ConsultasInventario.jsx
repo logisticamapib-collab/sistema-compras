@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 import { imprimirTablaPDF } from '../../lib/exportar'
 
 // Capa 3 - Consultas de Inventario: reportes combinables y bajos de inventario.
@@ -13,6 +15,7 @@ const NOMBRE_CALIDAD = { retenido: 'Retenido', liberado: 'Liberado', rechazado: 
 export default function ConsultasInventario() {
   const { perfil } = useAuth()
   const [vista, setVista] = useState('existencias')
+  const [site, setSite] = useState('')
   const [articulos, setArticulos] = useState([])
   const [categorias, setCategorias] = useState([])
   const [clientes, setClientes] = useState([])
@@ -34,7 +37,7 @@ export default function ConsultasInventario() {
   const [fCalidad, setFCalidad] = useState('')
   const [expandido, setExpandido] = useState(null)
 
-  useEffect(() => { cargarDatos() }, [])
+  useEffect(() => { cargarDatos() }, [site])
 
   const cargarDatos = async () => {
     setLoading(true)
@@ -50,6 +53,7 @@ export default function ConsultasInventario() {
       supabase.from('proveedores').select('id, nombre').eq('activo', true),
       supabase.from('articulo_proveedor').select('articulo_id, proveedor_id').eq('activo', true),
     ])
+    const _sid = siteEfectivo(perfil, site)
     setArticulos(art.data || [])
     setCategorias(cat.data || [])
     setClientes(cli.data || [])
@@ -57,7 +61,7 @@ export default function ConsultasInventario() {
     setAlmacenes(alm.data || [])
     setUbicaciones(ubi.data || [])
     setLotes(lot.data || [])
-    setExistencias(ex.data || [])
+    setExistencias(((ex.data) || []).filter(x => { if (!_sid) return true; const _a = (al.data || []).find(z => z.id === x.almacen_id); return _a && _a.site_id === _sid }))
     setProveedores(prov.data || [])
     setArtProveedor(ap.data || [])
     setLoading(false)
@@ -154,6 +158,7 @@ export default function ConsultasInventario() {
       </div>
 
       <div style={styles.filtros}>
+        <FiltroSite value={site} onChange={setSite} />
         <input style={{ ...styles.input, flex: 1.3 }} placeholder="Codigo, descripcion o lote..." value={fTexto} onChange={e => setFTexto(e.target.value)} />
         <select style={styles.input} value={fCategoria} onChange={e => setFCategoria(e.target.value)}>
           <option value="">Toda categoria</option>

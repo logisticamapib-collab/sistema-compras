@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 const TIPOS = [
   { value: 'producto_terminado', label: 'Producto Terminado' },
@@ -33,6 +35,7 @@ export default function CorrerMRP() {
 
   const [alcanceTipo, setAlcanceTipo] = useState('todos')
   const [alcanceRef, setAlcanceRef] = useState('')
+  const [site, setSite] = useState('')
 
   useEffect(() => { cargarBase() }, [])
 
@@ -89,6 +92,7 @@ export default function CorrerMRP() {
     const ref = alcanceTipo === 'todos' ? null : (alcanceRef || null)
     if (alcanceTipo !== 'todos' && !ref) { setError('Selecciona la referencia del alcance.'); setCorriendo(false); return }
     const { data, error } = await supabase.rpc('mrp_correr', {
+      p_site_id: siteEfectivo(perfil, site),
       p_empresa_id: perfil.empresa_id,
       p_alcance_tipo: alcanceTipo,
       p_alcance_ref: ref,
@@ -120,6 +124,7 @@ export default function CorrerMRP() {
         <div style={styles.fila}>
           <div style={styles.campo}>
             <label style={styles.label}>Alcance</label>
+            <span style={{ marginRight: 12 }}><FiltroSite value={site} onChange={setSite} label="Site:" todos="Todos los sites" /></span>
             <select style={styles.input} value={alcanceTipo}
               onChange={e => { setAlcanceTipo(e.target.value); setAlcanceRef('') }}>
               <option value="todos">Todos</option>
