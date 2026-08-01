@@ -9,6 +9,7 @@ import NormasEmpaque from './NormasEmpaque'
 import BOM from './BOM'
 import NivelesIngenieria from './NivelesIngenieria'
 import CargaMasiva from './CargaMasiva'
+import AprobacionMaquinaAlterna from './AprobacionMaquinaAlterna'
 
 const secciones = [
   { id: 'articulos', modulo: 'articulos', titulo: 'Articulos' },
@@ -16,6 +17,7 @@ const secciones = [
   { id: 'moldes', modulo: 'ing_moldes', titulo: 'Moldes' },
   { id: 'rutas', modulo: 'ing_rutas', titulo: 'Rutas de Fabricacion' },
   { id: 'bom', modulo: 'ing_bom', titulo: 'BOM (Lista de Materiales)' },
+  { id: 'maq_alterna', modulo: 'ing_maq_alterna', titulo: 'Aprobacion Maquina Alterna' },
   { id: 'niveles', modulo: 'ing_niveles', titulo: 'Niveles de Ingenieria' },
   { id: 'normas_empaque', modulo: 'ing_normas_empaque', titulo: 'Normas de Empaque' },
   { id: 'clientes', modulo: 'ing_clientes', titulo: 'Clientes' },
@@ -51,6 +53,7 @@ export default function GrupoIngenieria() {
         {seccion === 'moldes' && <Moldes />}
         {seccion === 'rutas' && <RutasFabricacion />}
         {seccion === 'bom' && <BOM />}
+        {seccion === 'maq_alterna' && <AprobacionMaquinaAlterna />}
         {seccion === 'niveles' && <NivelesIngenieria />}
         {seccion === 'normas_empaque' && <NormasEmpaque />}
         {seccion === 'clientes' && <Clientes />}

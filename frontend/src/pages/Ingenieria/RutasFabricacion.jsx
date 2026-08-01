@@ -21,6 +21,7 @@ export default function RutasFabricacion() {
   const [sites, setSites] = useState([])
   const [maquinas, setMaquinas] = useState([])
   const [moldes, setMoldes] = useState([])
+  const [cavidades, setCavidades] = useState([])
   const [pasos, setPasos] = useState([])
   const [alternasPorPaso, setAlternasPorPaso] = useState({})
   const [mostrarForm, setMostrarForm] = useState(false)
@@ -38,16 +39,17 @@ export default function RutasFabricacion() {
   useEffect(() => { if (articuloId) cargarRuta() }, [articuloId])
 
   const cargarCatalogos = async () => {
-    const [{ data: a }, { data: s }, { data: m }, { data: mo }] = await Promise.all([
+    const [{ data: a }, { data: s }, { data: m }, { data: mo }, { data: cav }] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion').eq('empresa_id', perfil.empresa_id).eq('origen', 'fabricado').eq('activo', true).order('codigo_interno'),
       supabase.from('sites').select('id, nombre').eq('empresa_id', perfil.empresa_id),
       supabase.from('maquinas').select('id, clave, nombre, tipo, site_id').eq('empresa_id', perfil.empresa_id).eq('activo', true),
       supabase.from('moldes').select('id, clave, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+      supabase.from('molde_cavidades').select('molde_id, articulo_id').eq('activa', true),
     ])
     setArticulos(a || [])
     setSites(s || [])
     setMaquinas(m || [])
-    setMoldes(mo || [])
+    setMoldes(mo || []); setCavidades(cav || [])
   }
 
   const cargarRuta = async () => {
@@ -112,6 +114,15 @@ export default function RutasFabricacion() {
     setError('')
   }
 
+  // Familia del molde: articulos que comparten el molde (molde multicavidad).
+  // Si el molde tiene mas de un articulo, la ruta se captura UNA VEZ y aplica a todos.
+  const familiaDeMolde = (moldeId) => {
+    if (!moldeId) return []
+    return [...new Set(cavidades.filter(c => c.molde_id === Number(moldeId)).map(c => c.articulo_id))]
+  }
+  const familiaActual = familiaDeMolde(nuevoPaso.molde_id)
+  const esFamiliar = familiaActual.length > 1
+
   const guardarPaso = async () => {
     if (!nuevoPaso.tipo_operacion || !nuevoPaso.maquina_principal_id) {
       setError('Tipo de operacion y maquina principal son obligatorios')
@@ -148,14 +159,38 @@ export default function RutasFabricacion() {
     }
 
     const alternasValidas = nuevasAlternas.filter(a => a.maquina_id)
-    if (alternasValidas.length > 0) {
+    const insertarAlternas = async (rid) => {
+      if (alternasValidas.length === 0) return
       await supabase.from('ruta_maquinas_alternas').insert(
         alternasValidas.map(a => ({
-          ruta_id: rutaId,
+          ruta_id: rid,
           maquina_id: parseInt(a.maquina_id),
           aprobada_por_cliente: a.aprobada_por_cliente,
         }))
       )
+    }
+    await insertarAlternas(rutaId)
+
+    // RUTA POR FAMILIA DE MOLDE: si el molde produce varios articulos, la misma ruta
+    // se replica (o actualiza) para los demas articulos de esa familia.
+    const familia = familiaDeMolde(nuevoPaso.molde_id).filter(id => id !== parseInt(articuloId))
+    if (familia.length > 0) {
+      await supabase.from('rutas_fabricacion').update({ aplica_familia: true }).eq('id', rutaId)
+      for (const artId of familia) {
+        const { data: ya } = await supabase.from('rutas_fabricacion').select('id')
+          .eq('articulo_id', artId).eq('tipo_operacion', payload.tipo_operacion).eq('molde_id', payload.molde_id).maybeSingle()
+        let rid
+        if (ya) {
+          await supabase.from('rutas_fabricacion').update({ ...payload, aplica_familia: true }).eq('id', ya.id)
+          rid = ya.id
+          await supabase.from('ruta_maquinas_alternas').delete().eq('ruta_id', rid)
+        } else {
+          const { data: nueva } = await supabase.from('rutas_fabricacion')
+            .insert({ articulo_id: artId, secuencia: 1, aplica_familia: true, ...payload }).select().single()
+          rid = nueva?.id
+        }
+        if (rid) await insertarAlternas(rid)
+      }
     }
 
     setExito(editandoPaso ? `Paso ${editandoPaso.secuencia} actualizado` : 'Paso agregado correctamente')
@@ -286,6 +321,11 @@ export default function RutasFabricacion() {
                     {nuevoPaso.tipo_operacion !== 'ensamble' && (
                       <div style={styles.campo}>
                         <label style={styles.label}>Molde</label>
+                        {esFamiliar && (
+                          <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '8px 10px', marginBottom: '8px', fontSize: '12.5px', color: '#1e40af' }}>
+                            <b>Molde familiar:</b> produce {familiaActual.length} articulos. Esta ruta se guardara <b>una sola vez</b> y aplicara a todos ellos: {familiaActual.map(id => articulos.find(a => a.id === id)?.codigo_interno).filter(Boolean).join(', ')}
+                          </div>
+                        )}
                         <select style={styles.input} value={nuevoPaso.molde_id} onChange={e => setNuevoPaso({ ...nuevoPaso, molde_id: e.target.value })}>
                           <option value="">Selecciona</option>
                           {moldes.map(m => <option key={m.id} value={m.id}>{m.clave} - {m.nombre}</option>)}

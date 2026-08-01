@@ -3,6 +3,12 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
 const DIAS_LBL = ['Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab']
+const COLOR_EST = {
+  trabajando: { c: '#16a34a', l: 'Trabajando' },
+  parada: { c: '#dc2626', l: 'Parada' },
+  cambio_molde: { c: '#d97706', l: 'Cambio de molde' },
+  sin_programa: { c: '#64748b', l: 'Sin programa' },
+}
 const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX', { maximumFractionDigits: 0 })
 const iso = (d) => d.toISOString().slice(0, 10)
 const lunesDe = (d) => { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); x.setHours(0, 0, 0, 0); return x }
@@ -21,6 +27,10 @@ export default function ProgramacionProduccion() {
   const [ots, setOts] = useState([])
   const [avance, setAvance] = useState({})
   const [personal, setPersonal] = useState({})
+  const [estados, setEstados] = useState([])
+  const [rutas, setRutas] = useState([])
+  const [alternas, setAlternas] = useState([])
+  const [solicitudes, setSolicitudes] = useState([])
   const [edit, setEdit] = useState(null)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -37,13 +47,17 @@ export default function ProgramacionProduccion() {
   const cargar = async () => {
     setCargando(true); setError(''); setExito('')
     const emp = perfil.empresa_id
-    const [{ data: maq }, { data: tur }, { data: sem }, { data: rutas }] = await Promise.all([
+    const [{ data: maq }, { data: tur }, { data: sem }, { data: rutas }, { data: est }, { data: alt }, { data: sol }] = await Promise.all([
       supabase.from('maquinas').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true).order('clave'),
       supabase.from('turnos').select('*').eq('empresa_id', emp).eq('activo', true).order('orden'),
       supabase.from('semanas_produccion').select('*').eq('empresa_id', emp).eq('semana_inicio', iso(lunes)).maybeSingle(),
-      supabase.from('rutas_fabricacion').select('articulo_id, personal_requerido').eq('tipo_operacion', 'inyeccion'),
+      supabase.from('rutas_fabricacion').select('id, articulo_id, personal_requerido, maquina_principal_id, molde_id').eq('tipo_operacion', 'inyeccion'),
+      supabase.from('maquina_estado').select('*').eq('empresa_id', emp),
+      supabase.from('ruta_maquinas_alternas').select('*'),
+      supabase.from('solicitudes_maquina_alterna').select('*').eq('empresa_id', emp).eq('estatus', 'pendiente'),
     ])
     setMaquinas(maq || []); setTurnos(tur || []); setSemana(sem || null)
+    setEstados(est || []); setRutas(rutas || []); setAlternas(alt || []); setSolicitudes(sol || [])
     const perMap = {}
     ;(rutas || []).forEach(r => { if (!(r.articulo_id in perMap)) perMap[r.articulo_id] = r.personal_requerido || 0 })
     setPersonal(perMap)
@@ -118,8 +132,29 @@ export default function ProgramacionProduccion() {
 
   const guardarEdit = async () => {
     const o = edit; const orig = o._orig || {}
+    const nuevaMaq = o.maquina_id ? parseInt(o.maquina_id) : null
+    // Cambio de maquina: solo directo si la maquina esta autorizada en la ruta
+    if (nuevaMaq && nuevaMaq !== orig.maquina_id) {
+      const permitidas = maquinasAutorizadas(o)
+      if (!permitidas.has(nuevaMaq)) {
+        if (!o._motivo || !o._motivo.trim()) { setError('Esa maquina no esta dada de alta como alterna aprobada. Escribe el motivo para solicitar la autorizacion a Ingenieria.'); return }
+        const { error: eS } = await supabase.from('solicitudes_maquina_alterna').insert({
+          empresa_id: perfil.empresa_id, ot_id: o.id, articulo_id: o.articulo_id, molde_id: o.molde_id || null,
+          maquina_actual_id: orig.maquina_id || null, maquina_solicitada_id: nuevaMaq,
+          motivo: o._motivo.trim(), solicitado_por: perfil.id,
+        })
+        if (eS) { setError(eS.message); return }
+        await supabase.from('programa_cambios').insert({
+          empresa_id: perfil.empresa_id, semana_id: semana?.id || null, ot_id: o.id, tipo: 'solicitud_maquina_alterna',
+          campo: 'maquina', antes: String(orig.maquina_id ?? '-'), despues: String(nuevaMaq),
+          usuario_id: perfil.id, usuario_nombre: perfil.nombre,
+        })
+        setEdit(null); setExito('Solicitud de maquina alterna enviada a Ingenieria. La OT no se movio hasta que se autorice.')
+        await cargar(); return
+      }
+    }
     const { error } = await supabase.from('ordenes_trabajo').update({
-      maquina_id: o.maquina_id ? parseInt(o.maquina_id) : null, fecha_programada: o.fecha_programada, turno: o.turno,
+      maquina_id: nuevaMaq, fecha_programada: o.fecha_programada, turno: o.turno,
     }).eq('id', o.id)
     if (error) { setError(error.message); return }
     await supabase.from('programa_cambios').insert({
@@ -130,6 +165,38 @@ export default function ProgramacionProduccion() {
     setEdit(null); await cargar()
   }
 
+  // Estado real de la maquina (mismo criterio que Andon/Terminal)
+  const estadoMaq = (maqId) => {
+    const e = estados.find(x => x.maquina_id === maqId)
+    if (e && (e.estado === 'parada' || e.estado === 'cambio_molde')) return e.estado
+    if (ots.some(o => o.maquina_id === maqId && o.estatus === 'en_proceso')) return 'trabajando'
+    return e?.estado || 'sin_programa'
+  }
+  // Una OT implica CAMBIO DE MOLDE si el molde difiere del de la OT anterior en esa maquina
+  const otsMaqOrden = (maqId) => ots.filter(o => o.maquina_id === maqId)
+    .sort((a, b) => String(a.fecha_programada).localeCompare(String(b.fecha_programada))
+      || (turnoOrden[a.turno] || 0) - (turnoOrden[b.turno] || 0) || (a.secuencia || 0) - (b.secuencia || 0))
+  const implicaCambio = (o) => {
+    const lista = otsMaqOrden(o.maquina_id)
+    const i = lista.findIndex(x => x.id === o.id)
+    if (i <= 0) return Number(o.cambio_molde_min) > 0
+    const prev = lista[i - 1]
+    return (prev.molde_id || null) !== (o.molde_id || null)
+  }
+  // Maquinas autorizadas para el articulo de la OT: principal + alternas de su ruta
+  const rutaDe = (artId) => rutas.find(r => r.articulo_id === artId)
+  const maquinasAutorizadas = (o) => {
+    const arts = (o.ot_articulos || []).map(a => a.articulo_id).filter(Boolean)
+    const ids = new Set()
+    const lista = arts.length ? arts : [o.articulo_id]
+    lista.forEach(aid => {
+      const r = rutaDe(aid); if (!r) return
+      if (r.maquina_principal_id) ids.add(r.maquina_principal_id)
+      alternas.filter(x => x.ruta_id === r.id && x.aprobada_por_cliente).forEach(x => ids.add(x.maquina_id))
+    })
+    return ids
+  }
+  const solicitudPendiente = (otId) => solicitudes.find(x => x.ot_id === otId)
   const otsDe = (maqId, dia) => ots
     .filter(o => o.maquina_id === maqId && o.fecha_programada === iso(dia))
     .sort((a, b) => (turnoOrden[a.turno] || 0) - (turnoOrden[b.turno] || 0) || (a.secuencia || 0) - (b.secuencia || 0))
@@ -165,6 +232,17 @@ export default function ProgramacionProduccion() {
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
 
+      <div style={styles.leyenda} className="no-imprimir">
+        {Object.entries(COLOR_EST).map(([k, v]) => (
+          <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+            <span style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: v.c }} /> {v.l}
+          </span>
+        ))}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+          <span style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: '#fffbeb', border: '1px solid #d97706' }} /> OT con cambio de molde
+        </span>
+      </div>
+
       <div style={styles.avisos}>
         <span style={styles.aviso}>OT: <strong>{ots.length}</strong></span>
         <span style={{ ...styles.aviso, color: atrasos ? '#dc2626' : '#64748b' }}>Atrasos: <strong>{atrasos}</strong></span>
@@ -188,20 +266,28 @@ export default function ProgramacionProduccion() {
           <tbody>
             {maquinas.map(m => (
               <tr key={m.id}>
-                <td style={styles.tdMaq}>{m.clave}<br /><span style={{ fontSize: '10px', color: '#94a3b8' }}>{m.nombre}</span></td>
+                <td style={styles.tdMaq}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                    <span style={{ width: '9px', height: '9px', borderRadius: '50%', backgroundColor: COLOR_EST[estadoMaq(m.id)]?.c || '#94a3b8', flex: '0 0 auto' }} />
+                    {m.clave}
+                  </span>
+                  <br /><span style={{ fontSize: '10px', color: '#94a3b8' }}>{m.nombre}</span>
+                  <div style={{ fontSize: '9px', fontWeight: 700, color: COLOR_EST[estadoMaq(m.id)]?.c || '#94a3b8' }}>{COLOR_EST[estadoMaq(m.id)]?.l || ''}</div>
+                </td>
                 {dias.map((d, i) => (
                   <td key={i} style={styles.tdDia}>
                     {otsDe(m.id, d).map(o => {
                       const av = avance[o.id] || { ok: 0, scrap: 0 }
                       const falt = Math.max(Number(o.cantidad_programada) - av.ok, 0)
                       const atras = o.fecha_programada < hoy && o.estatus === 'programada'
+                      const cambia = implicaCambio(o)
                       return (
-                        <button key={o.id} onClick={() => setEdit({ ...o, _orig: { maquina_id: o.maquina_id, fecha_programada: o.fecha_programada, turno: o.turno } })} style={{ ...styles.card, borderLeftColor: atras ? '#dc2626' : Number(o.cambio_molde_min) > 0 ? '#c2410c' : '#7c3aed' }}>
+                        <button key={o.id} onClick={() => setEdit({ ...o, _orig: { maquina_id: o.maquina_id, fecha_programada: o.fecha_programada, turno: o.turno }, _nuevaMaquina: String(o.maquina_id || ''), _motivo: '' })} style={{ ...styles.card, borderLeftColor: atras ? '#dc2626' : cambia ? '#d97706' : COLOR_EST[estadoMaq(o.maquina_id)]?.c || '#7c3aed', backgroundColor: cambia ? '#fffbeb' : '#fff' }}>
                           <div style={styles.cardTop}><span style={styles.turnoBadge}>{o.turno}</span> <strong>#{o.secuencia}</strong> {o.folio}</div>
                           <div style={{ fontWeight: '600', fontSize: '12px' }}>{familia(o)}</div>
                           <div style={{ fontSize: '11px', color: '#64748b' }}>Molde {o.molde_id || '-'} · {fmt(o.cantidad_programada)} pz</div>
                           <div style={{ fontSize: '10px', color: '#94a3b8' }}>OK {fmt(av.ok)} · Falta {fmt(falt)} · Scrap {fmt(av.scrap)}</div>
-                          {Number(o.cambio_molde_min) > 0 && <span style={styles.cambioBadge}>cambio molde {o.cambio_molde_min}m</span>}
+                          {cambia && <span style={styles.cambioBadge}>CAMBIO DE MOLDE{Number(o.cambio_molde_min) > 0 ? ` ${o.cambio_molde_min}m` : ''}</span>}
                           {atras && <span style={styles.atrasoBadge}>ATRASO</span>}
                         </button>
                       )
@@ -219,10 +305,27 @@ export default function ProgramacionProduccion() {
         <div style={styles.modalBg} onClick={() => setEdit(null)}>
           <div style={styles.modal} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 14px', fontSize: '15px' }}>Reprogramar {edit.folio}</h3>
-            <div style={styles.campo}><label style={styles.label}>Maquina</label>
-              <select style={styles.input} value={edit.maquina_id || ''} onChange={e => setEdit({ ...edit, maquina_id: e.target.value })}>
-                {maquinas.map(m => <option key={m.id} value={m.id}>{m.clave} - {m.nombre}</option>)}
-              </select></div>
+            {(() => {
+              const permitidas = maquinasAutorizadas(edit)
+              const nueva = edit.maquina_id ? parseInt(edit.maquina_id) : null
+              const requiereAut = nueva && nueva !== edit._orig?.maquina_id && !permitidas.has(nueva)
+              const pend = solicitudPendiente(edit.id)
+              return (<>
+                <div style={styles.campo}><label style={styles.label}>Maquina</label>
+                  <select style={styles.input} value={edit.maquina_id || ''} onChange={e => setEdit({ ...edit, maquina_id: e.target.value })}>
+                    {maquinas.map(m => <option key={m.id} value={m.id}>{m.clave} - {m.nombre}{permitidas.has(m.id) ? '  (autorizada)' : ''}</option>)}
+                  </select>
+                  <span style={{ fontSize: '11px', color: '#64748b' }}>Autorizadas en la ruta: {[...permitidas].map(id => maquinas.find(m => m.id === id)?.clave).filter(Boolean).join(', ') || 'ninguna'}</span>
+                </div>
+                {pend && <div style={styles.avisoAmbar}>Ya hay una solicitud de maquina alterna <b>pendiente</b> para esta OT.</div>}
+                {requiereAut && (
+                  <div style={styles.avisoAmbar}>
+                    Esa maquina <b>no esta aprobada</b> para el articulo. Al guardar se enviara una <b>solicitud de maquina alterna a Ingenieria</b> y la OT no se movera hasta autorizarse.
+                    <input style={{ ...styles.input, marginTop: '6px' }} placeholder="Motivo del cambio *" value={edit._motivo || ''} onChange={e => setEdit({ ...edit, _motivo: e.target.value })} />
+                  </div>
+                )}
+              </>)
+            })()}
             <div style={styles.campo}><label style={styles.label}>Fecha</label>
               <input style={styles.input} type="date" value={edit.fecha_programada || ''} onChange={e => setEdit({ ...edit, fecha_programada: e.target.value })} /></div>
             <div style={styles.campo}><label style={styles.label}>Turno</label>
@@ -263,6 +366,8 @@ const styles = {
   boton: { padding: '9px 18px', backgroundColor: '#c2410c', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: '500', cursor: 'pointer' },
   botonCerrar: { padding: '9px 18px', backgroundColor: '#fff', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' },
   botonSec: { padding: '9px 18px', backgroundColor: '#e2e8f0', color: '#444', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' },
+  avisoAmbar: { backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', borderRadius: '8px', padding: '9px 11px', fontSize: '12.5px', marginBottom: '10px' },
+  leyenda: { display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '11.5px', color: '#475569', marginBottom: '10px' },
   avisos: { display: 'flex', gap: '18px', flexWrap: 'wrap', padding: '10px 16px', backgroundColor: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '8px', marginBottom: '16px', fontSize: '13px' },
   aviso: { color: '#64748b' },
   grid: { borderCollapse: 'collapse', width: '100%', minWidth: '820px', backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
