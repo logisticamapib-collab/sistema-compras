@@ -47,11 +47,24 @@ export default function TerminalOperador() {
   }
 
   const estadoDe = (maqId) => estados.find(e => e.maquina_id === maqId)
-  const otDe = (maqId) => ots.find(o => o.maquina_id === maqId && o.estatus === 'en_proceso') || ots.find(o => o.maquina_id === maqId)
-  const efectivo = (maqId) => estadoDe(maqId)?.estado || (otDe(maqId) ? 'trabajando' : 'sin_programa')
+  // OT en proceso de la maquina (la que realmente esta corriendo)
+  const otDe = (maqId) => ots.find(o => o.maquina_id === maqId && o.estatus === 'en_proceso')
+  // OT solo programada (aun no iniciada): sirve de referencia, no implica trabajando
+  const otProgDe = (maqId) => ots.find(o => o.maquina_id === maqId && o.estatus === 'programada')
+  // Mismo criterio que el Tablero Andon para que ambos muestren SIEMPRE lo mismo:
+  //  - paro o cambio de molde mandan (son estados declarados por el operador)
+  //  - si hay OT en proceso -> trabajando
+  //  - si no, se respeta el estado declarado; si no hay, sin programa
+  const efectivo = (maqId) => {
+    const e = estadoDe(maqId)
+    if (e && (e.estado === 'parada' || e.estado === 'cambio_molde')) return e.estado
+    if (otDe(maqId)) return 'trabajando'
+    if (e && e.estado === 'trabajando') return 'trabajando'
+    return e?.estado || 'sin_programa'
+  }
 
   const setEstado = async (estado, causaId) => {
-    const ot = maqSel ? otDe(maqSel.id) : null
+    const ot = maqSel ? (otDe(maqSel.id) || otProgDe(maqSel.id)) : null
     await supabase.from('maquina_estado').upsert({
       maquina_id: maqSel.id, empresa_id: perfil.empresa_id, estado, ot_id: ot?.id || null,
       articulo_id: ot?.articulo_id || null, causa_id: causaId || null,
@@ -102,7 +115,7 @@ export default function TerminalOperador() {
 
   const ef = efectivo(maqSel.id)
   const c = COLOR[ef]
-  const ot = otDe(maqSel.id)
+  const ot = otDe(maqSel.id) || otProgDe(maqSel.id)   // muestra la programada si aun no inicia
   const art = ot ? artMap[ot.articulo_id] : null
 
   // Panel de la maquina
