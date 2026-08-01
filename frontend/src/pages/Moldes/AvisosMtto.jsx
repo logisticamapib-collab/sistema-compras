@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // Avisos de mantenimiento: Produccion/Calidad reportan piezas no conformes
 // atribuidas al molde (rebaba, tiro corto...). Registran causa probable
@@ -20,6 +22,7 @@ export default function AvisosMtto() {
   const puedeConvertir = tienePermiso('mol_ordenes', 'crear')
 
   const [avisos, setAvisos] = useState([])
+  const [site, setSite] = useState('')
   const [moldes, setMoldes] = useState([])
   const [defectos, setDefectos] = useState([])
   const [maquinas, setMaquinas] = useState([])
@@ -33,20 +36,21 @@ export default function AvisosMtto() {
   const [exito, setExito] = useState('')
   const [filtro, setFiltro] = useState('abiertos')
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const emp = perfil.empresa_id
     const [a, mo, de, mq, tu, us, ti] = await Promise.all([
       supabase.from('molde_avisos').select('*, molde:moldes(clave), defecto:causas_scrap(clave, nombre), maquina:maquinas(clave)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('moldes').select('id, clave, nombre, shots_acumulados, estado').eq('empresa_id', emp).order('clave'),
       supabase.from('causas_scrap').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true),
-      supabase.from('maquinas').select('id, clave').eq('empresa_id', emp),
+      (sid ? supabase.from('maquinas').select('id, clave, site_id').eq('empresa_id', emp).eq('site_id', sid) : supabase.from('maquinas').select('id, clave, site_id').eq('empresa_id', emp)),
       supabase.from('turnos').select('*').eq('empresa_id', emp),
       supabase.from('usuarios').select('id, nombre, rol').eq('empresa_id', emp),
       supabase.from('mtto_tipos').select('*').eq('empresa_id', emp).eq('activo', true),
     ])
-    setAvisos(a.data || []); setMoldes(mo.data || []); setDefectos(de.data || []); setMaquinas(mq.data || [])
+    setAvisos((a.data || []).filter(x => { if (!sid) return true; const _ids = (mq.data || []).map(z => z.id); return !x.maquina_id || _ids.includes(x.maquina_id) })); setMoldes(mo.data || []); setDefectos(de.data || []); setMaquinas(mq.data || [])
     setTurnos(tu.data || []); setUsuarios(us.data || []); setTipos(ti.data || [])
     setLoading(false)
   }
@@ -112,6 +116,7 @@ export default function AvisosMtto() {
       <div style={styles.container} className="aparecer">
         <button style={styles.volver} onClick={() => setForm(null)}>&larr; Volver</button>
         <h2 style={styles.titulo}>Nuevo aviso de mantenimiento</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
         {error && <p style={styles.error}>{error}</p>}
         <div style={styles.tarjeta}>
           <div style={styles.fila}>

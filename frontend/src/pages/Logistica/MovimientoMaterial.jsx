@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 import { etiquetaRol } from '../../lib/roles'
 import { moverContenedor } from '../../lib/contenedores'
 
@@ -22,6 +24,7 @@ export default function MovimientoMaterial() {
   const puedeForzar = tienePermiso('log_movimiento', 'editar')
 
   const [vista, setVista] = useState('enviar')
+  const [site, setSite] = useState('')
   const [articulos, setArticulos] = useState([])
   const [almacenes, setAlmacenes] = useState([])
   const [ubicaciones, setUbicaciones] = useState([])
@@ -41,13 +44,14 @@ export default function MovimientoMaterial() {
   const [recepcion, setRecepcion] = useState(null) // { traspaso, ubicacion_id }
   const [firma, setFirma] = useState(null)     // { ex, paso, nota }
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
 
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const [a, al, ub, ps, lo, ex, fi, tr, mq, ct] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, flujo_id').eq('empresa_id', perfil.empresa_id),
-      supabase.from('almacenes').select('*'),
+      (sid ? supabase.from('almacenes').select('*').eq('site_id', sid) : supabase.from('almacenes').select('*')),
       supabase.from('ubicaciones').select('*'),
       supabase.from('flujo_pasos').select('*').order('secuencia'),
       supabase.from('lotes').select('*'),
@@ -231,6 +235,7 @@ export default function MovimientoMaterial() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Movimiento de Material</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       <p style={styles.ayuda}>Solo material <b>fabricado con flujo</b> (la MP y comprados se mueven en Traspaso por Escaneo). El sistema indica el <b>siguiente paso</b>: el origen envia y el destino confirma la recepcion; las cajas se reubican al confirmar. Los pasos marcados exigen la firma del rol configurado para poder avanzar.</p>
 
       <div style={styles.tabs}>

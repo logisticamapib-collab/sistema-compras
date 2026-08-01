@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // Ordenes de mantenimiento de molde. Registra causa raiz (maquina/operador/turno/
 // supervisor) para KPIs de danos, cobro al cliente para KPI de facturacion, e
@@ -22,6 +24,7 @@ export default function OrdenesMtto() {
   const puedeEditar = tienePermiso('mol_ordenes', 'editar') || puedeCrear
 
   const [vista, setVista] = useState('lista')
+  const [site, setSite] = useState('')
   const [ordenes, setOrdenes] = useState([])
   const [sel, setSel] = useState(null)
   const [insumos, setInsumos] = useState([])
@@ -46,8 +49,9 @@ export default function OrdenesMtto() {
   const [param, setParam] = useState(null)
   const [firmas, setFirmas] = useState([])
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const emp = perfil.empresa_id
     const [o, mo, ti, cl, mq, tu, us, ar, al, ex, lo] = await Promise.all([
@@ -55,7 +59,7 @@ export default function OrdenesMtto() {
       supabase.from('moldes').select('*').eq('empresa_id', emp).order('clave'),
       supabase.from('mtto_tipos').select('*').eq('empresa_id', emp).eq('activo', true),
       supabase.from('clientes').select('id, nombre').eq('empresa_id', emp),
-      supabase.from('maquinas').select('id, clave, nombre').eq('empresa_id', emp),
+      (sid ? supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', emp).eq('site_id', sid) : supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', emp)),
       supabase.from('turnos').select('*').eq('empresa_id', emp),
       supabase.from('usuarios').select('id, nombre, rol').eq('empresa_id', emp),
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, costo').eq('empresa_id', emp),
@@ -63,7 +67,7 @@ export default function OrdenesMtto() {
       supabase.from('existencias').select('*'),
       supabase.from('lotes').select('id, articulo_id, estatus_calidad, fecha, empresa_id').eq('empresa_id', emp),
     ])
-    setOrdenes(o.data || []); setMoldes(mo.data || []); setTipos(ti.data || []); setClientes(cl.data || [])
+    setOrdenes((o.data || []).filter(x => { if (!sid) return true; const _ids = (mq.data || []).map(z => z.id); return !x.maquina_id || _ids.includes(x.maquina_id) })); setMoldes(mo.data || []); setTipos(ti.data || []); setClientes(cl.data || [])
     setMaquinas(mq.data || []); setTurnos(tu.data || []); setUsuarios(us.data || []); setArticulos(ar.data || [])
     setAlmacenes(al.data || []); setExistencias(ex.data || []); setLotes(lo.data || [])
     const { data: pa } = await supabase.from('mtto_parametros').select('*').eq('empresa_id', emp).maybeSingle()
@@ -251,6 +255,7 @@ export default function OrdenesMtto() {
       <div style={styles.container} className="aparecer">
         <button style={styles.volver} onClick={() => setVista('lista')}>&larr; Volver</button>
         <h2 style={styles.titulo}>Nueva orden de mantenimiento</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
         {error && <p style={styles.error}>{error}</p>}
         <div style={styles.tarjeta}>
           <div style={styles.fila}>

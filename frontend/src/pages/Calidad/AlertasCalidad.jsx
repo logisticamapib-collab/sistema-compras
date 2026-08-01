@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // Alertas de calidad: avisos vigentes que difunde Calidad (defecto detectado en un
 // articulo, atencion especial en piso). Pueden ligarse a una no conformidad.
@@ -12,6 +14,7 @@ export default function AlertasCalidad() {
   const puedeCrear = tienePermiso('cal_alertas', 'crear')
   const puedeEditar = tienePermiso('cal_alertas', 'editar') || puedeCrear
   const [alertas, setAlertas] = useState([])
+  const [site, setSite] = useState('')
   const [articulos, setArticulos] = useState([])
   const [defectos, setDefectos] = useState([])
   const [form, setForm] = useState(null)
@@ -20,16 +23,18 @@ export default function AlertasCalidad() {
   const [exito, setExito] = useState('')
   const [filtro, setFiltro] = useState('vigentes')
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const emp = perfil.empresa_id
     const [a, ar, de] = await Promise.all([
       supabase.from('calidad_alertas').select('*, articulo:articulos(codigo_interno), defecto:causas_scrap(nombre)').eq('empresa_id', emp).order('id', { ascending: false }),
-      supabase.from('articulos').select('id, codigo_interno').eq('empresa_id', emp),
+      supabase.from('articulos').select('id, codigo_interno, site_id').eq('empresa_id', emp),
       supabase.from('causas_scrap').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true),
     ])
-    setAlertas(a.data || []); setArticulos(ar.data || []); setDefectos(de.data || [])
+    const _artOK = (id) => { if (!sid) return true; const x = (ar.data || []).find(z => z.id === id); return !x || x.site_id == null || x.site_id === sid }
+    setAlertas((a.data || []).filter(x => _artOK(x.articulo_id))); setArticulos(ar.data || []); setDefectos(de.data || [])
     setLoading(false)
   }
 
@@ -48,7 +53,8 @@ export default function AlertasCalidad() {
 
   return (
     <div style={styles.container} className="aparecer">
-      <div style={styles.encabezado}><h2 style={styles.titulo}>Alertas de calidad</h2>{puedeCrear && <button style={styles.boton} onClick={abrirNueva}>Nueva alerta</button>}</div>
+      <div style={styles.encabezado}><h2 style={styles.titulo}>Alertas de calidad</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>{puedeCrear && <button style={styles.boton} onClick={abrirNueva}>Nueva alerta</button>}</div>
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
 

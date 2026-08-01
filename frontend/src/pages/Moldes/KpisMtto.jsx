@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // KPIs de mantenimiento de molde: facturacion por trabajos cobrados, danos por
 // maquina/operador/turno/supervisor, mantenimientos diarios, efectividad y reincidencias.
@@ -18,6 +20,7 @@ function agrupar(rows, keyFn, labelFn) {
 export default function KpisMtto() {
   const { perfil } = useAuth()
   const [desde, setDesde] = useState(haceDias(90))
+  const [site, setSite] = useState('')
   const [hasta, setHasta] = useState(hoy())
   const [mtto, setMtto] = useState([])
   const [avisos, setAvisos] = useState([])
@@ -27,11 +30,12 @@ export default function KpisMtto() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => { cargarCat().then(consultar) }, [])
+  useEffect(() => { cargarCat().then(consultar) }, [site])
   const cargarCat = async () => {
+    const sid = siteEfectivo(perfil, site)
     const emp = perfil.empresa_id
     const [mq, tu, us] = await Promise.all([
-      supabase.from('maquinas').select('id, clave').eq('empresa_id', emp),
+      (sid ? supabase.from('maquinas').select('id, clave, site_id').eq('empresa_id', emp).eq('site_id', sid) : supabase.from('maquinas').select('id, clave, site_id').eq('empresa_id', emp)),
       supabase.from('turnos').select('*').eq('empresa_id', emp),
       supabase.from('usuarios').select('id, nombre').eq('empresa_id', emp),
     ])
@@ -83,6 +87,7 @@ export default function KpisMtto() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>KPIs de mantenimiento de molde</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       <div style={styles.filtros}>
         <div style={styles.campo}><label style={styles.lbl}>Desde</label><input type="date" style={styles.input} value={desde} onChange={e => setDesde(e.target.value)} /></div>
         <div style={styles.campo}><label style={styles.lbl}>Hasta</label><input type="date" style={styles.input} value={hasta} onChange={e => setHasta(e.target.value)} /></div>

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 import EscanerCamara from '../../components/EscanerCamara'
 
 // Inventario ciclico por clasificacion ABC.
@@ -32,6 +34,7 @@ export default function InventarioCiclico() {
   const etiquetaRol = (r) => ({ gerente_planta: 'Gerente de Planta', direccion: 'Direccion', gerente_administrativo: 'Gerente Administrativo' }[r] || r || 'segundo autorizador')
 
   const [vista, setVista] = useState('programa')
+  const [site, setSite] = useState('')
   const [arts, setArts] = useState([])
   const [almacenes, setAlmacenes] = useState([])
   const [ubis, setUbis] = useState([])
@@ -59,12 +62,13 @@ export default function InventarioCiclico() {
   const [master, setMaster] = useState(null)   // { tarima, cajas } confirmacion de master
   const [cfg, setCfg] = useState({ dias_a: 30, dias_b: 90, dias_c: 180, tolerancia_pct: 0, requiere_segunda_aut: false, segunda_aut_rol: '' })
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const [a, al, ub, lo, ex, cc, pa, us, cli, ac, bm] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, clasificacion_abc, abc_criterio, ultima_fecha_conteo, costo').eq('empresa_id', emp).eq('activo', true),
-      supabase.from('almacenes').select('*').eq('empresa_id', emp).eq('activo', true).order('clave'),
+      (sid ? supabase.from('almacenes').select('*').eq('empresa_id', emp).eq('activo', true).eq('site_id', sid).order('clave') : supabase.from('almacenes').select('*').eq('empresa_id', emp).eq('activo', true).order('clave')),
       supabase.from('ubicaciones').select('id, clave, almacen_id').eq('activo', true),
       supabase.from('lotes').select('id, codigo_lote, articulo_id').eq('empresa_id', emp),
       supabase.from('existencias').select('*'),
@@ -449,6 +453,7 @@ export default function InventarioCiclico() {
   return (
     <div style={S.c} className="aparecer">
       <h2 style={S.t}>Inventario Ciclico</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       {error && <p style={S.err}>{error}</p>}
       {exito && <p style={S.ok}>{exito}</p>}
       <div style={S.tabs}>

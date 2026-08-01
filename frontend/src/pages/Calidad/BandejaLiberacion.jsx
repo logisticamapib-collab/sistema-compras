@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // Bandeja de liberacion de lotes (Calidad). Lista todo lo RETENIDO con existencia > 0
 // para que Calidad libere o rechace. La accion cambia el estatus del lote (no lo mueve)
@@ -15,6 +17,7 @@ export default function BandejaLiberacion() {
   const puedeLiberar = tienePermiso('cal_bandeja', 'aprobar')
 
   const [articulos, setArticulos] = useState([])
+  const [site, setSite] = useState('')
   const [almacenes, setAlmacenes] = useState([])
   const [ubicaciones, setUbicaciones] = useState([])
   const [lotes, setLotes] = useState([])
@@ -27,13 +30,14 @@ export default function BandejaLiberacion() {
   const [texto, setTexto] = useState('')
   const [accion, setAccion] = useState(null) // { lote, tipo: 'liberado'|'rechazado', nota }
 
-  useEffect(() => { cargarDatos() }, [])
+  useEffect(() => { cargarDatos() }, [site])
 
   const cargarDatos = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const [art, alm, ubi, lot, ex] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, origen, es_consigna').eq('empresa_id', perfil.empresa_id),
-      supabase.from('almacenes').select('id, clave'),
+      supabase.from('almacenes').select('id, clave, site_id'),
       supabase.from('ubicaciones').select('id, clave'),
       supabase.from('lotes').select('*, liberador:usuarios!lotes_liberado_por_fkey(nombre)').order('fecha', { ascending: false }),
       supabase.from('existencias').select('*'),
@@ -41,7 +45,9 @@ export default function BandejaLiberacion() {
     setArticulos(art.data || [])
     setAlmacenes(alm.data || [])
     setUbicaciones(ubi.data || [])
-    setLotes(lot.data || [])
+    const _almIds = (alm.data || []).filter(a => !sid || a.site_id === sid).map(a => a.id)
+    const _lotesSite = sid ? new Set((ex.data || []).filter(e => _almIds.includes(e.almacen_id)).map(e => e.lote_id)) : null
+    setLotes((lot.data || []).filter(l => !_lotesSite || _lotesSite.has(l.id)))
     setExistencias(ex.data || [])
     setLoading(false)
   }
@@ -94,6 +100,7 @@ export default function BandejaLiberacion() {
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Liberacion de Lotes</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
         <span style={{ fontSize: '13px', color: nRetenidos ? '#b45309' : '#16a34a', fontWeight: '600' }}>
           {nRetenidos} lote(s) retenidos por liberar
         </span>

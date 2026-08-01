@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // KPIs de mantenimiento general: tecnicos con mas eventos satisfactorios,
 // tiempo de cierre, costos, por tipo de trabajo y externos.
@@ -18,6 +20,7 @@ function top(rows, keyFn, labelFn, valFn) {
 export default function KpisMantto() {
   const { perfil } = useAuth()
   const [desde, setDesde] = useState(haceDias(90))
+  const [site, setSite] = useState('')
   const [hasta, setHasta] = useState(hoy())
   const [ordenes, setOrdenes] = useState([])
   const [insumos, setInsumos] = useState([])
@@ -25,8 +28,9 @@ export default function KpisMantto() {
   const [proveedores, setProveedores] = useState([])
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => { cargarCat().then(consultar) }, [])
+  useEffect(() => { cargarCat().then(consultar) }, [site])
   const cargarCat = async () => {
+    const sid = siteEfectivo(perfil, site)
     const emp = perfil.empresa_id
     const [us, pr] = await Promise.all([
       supabase.from('usuarios').select('id, nombre').eq('empresa_id', emp),
@@ -36,9 +40,15 @@ export default function KpisMantto() {
   }
   const consultar = async () => {
     setLoading(true)
+    const sid = siteEfectivo(perfil, site)
     const emp = perfil.empresa_id
     const { data: o } = await supabase.from('mtto_gen_ordenes').select('*').eq('empresa_id', emp).gte('created_at', desde + 'T00:00:00').lte('created_at', hasta + 'T23:59:59')
-    const ords = o || []
+    let _maqIds = null
+    if (sid) {
+      const { data: mq } = await supabase.from('maquinas').select('id').eq('empresa_id', emp).eq('site_id', sid)
+      _maqIds = (mq || []).map(x => x.id)
+    }
+    const ords = (o || []).filter(x => !_maqIds || !x.maquina_id || _maqIds.includes(x.maquina_id))
     setOrdenes(ords)
     const ids = ords.map(x => x.id)
     const { data: ins } = ids.length ? await supabase.from('mtto_gen_insumos').select('orden_id, costo_total').in('orden_id', ids) : { data: [] }
@@ -76,6 +86,7 @@ export default function KpisMantto() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>KPIs de mantenimiento</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       <div style={styles.filtros}>
         <div style={styles.campo}><label style={styles.lbl}>Desde</label><input type="date" style={styles.input} value={desde} onChange={e => setDesde(e.target.value)} /></div>
         <div style={styles.campo}><label style={styles.lbl}>Hasta</label><input type="date" style={styles.input} value={hasta} onChange={e => setHasta(e.target.value)} /></div>

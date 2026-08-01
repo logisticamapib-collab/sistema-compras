@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // No conformidades (IATF): registro de NC internas / de cliente / proveedor / auditoria,
 // con disposicion del material, contencion, causa raiz, acciones correctivas/preventivas
@@ -19,6 +21,7 @@ export default function NoConformidades() {
   const puedeEditar = tienePermiso('cal_nc', 'editar') || puedeCrear
 
   const [vista, setVista] = useState('lista')
+  const [site, setSite] = useState('')
   const [ncs, setNcs] = useState([])
   const [sel, setSel] = useState(null)
   const [acciones, setAcciones] = useState([])
@@ -38,21 +41,22 @@ export default function NoConformidades() {
   const [exito, setExito] = useState('')
   const [filtro, setFiltro] = useState('abiertas')
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const emp = perfil.empresa_id
     const [n, ar, de, mq, pv, cl, us, ot] = await Promise.all([
       supabase.from('no_conformidades').select('*, articulo:articulos(codigo_interno), defecto:causas_scrap(nombre), cliente:clientes(nombre), proveedor:proveedores(nombre)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('articulos').select('id, codigo_interno, descripcion').eq('empresa_id', emp),
       supabase.from('causas_scrap').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true),
-      supabase.from('maquinas').select('id, clave').eq('empresa_id', emp),
+      (sid ? supabase.from('maquinas').select('id, clave, site_id').eq('empresa_id', emp).eq('site_id', sid) : supabase.from('maquinas').select('id, clave, site_id').eq('empresa_id', emp)),
       supabase.from('proveedores').select('id, nombre').eq('empresa_id', emp),
       supabase.from('clientes').select('id, nombre').eq('empresa_id', emp),
       supabase.from('usuarios').select('id, nombre, rol').eq('empresa_id', emp),
       supabase.from('ordenes_trabajo').select('id, folio').eq('empresa_id', emp).order('id', { ascending: false }).limit(200),
     ])
-    setNcs(n.data || []); setArticulos(ar.data || []); setDefectos(de.data || []); setMaquinas(mq.data || [])
+    setNcs((n.data || []).filter(x => { if (!sid) return true; const _ids = (mq.data || []).map(z => z.id); return !x.maquina_id || _ids.includes(x.maquina_id) })); setArticulos(ar.data || []); setDefectos(de.data || []); setMaquinas(mq.data || [])
     setProveedores(pv.data || []); setClientes(cl.data || []); setUsuarios(us.data || []); setOts(ot.data || [])
     setLoading(false)
   }
@@ -130,6 +134,7 @@ export default function NoConformidades() {
       <div style={styles.container} className="aparecer">
         <button style={styles.volver} onClick={() => setVista('lista')}>&larr; Volver</button>
         <h2 style={styles.titulo}>Nueva no conformidad</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
         {error && <p style={styles.error}>{error}</p>}
         <div style={styles.tarjeta}>
           <div style={styles.fila}>

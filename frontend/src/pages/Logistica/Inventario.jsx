@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 import { asegurarCajas } from '../../lib/contenedores'
 import { datosEtiqueta } from '../../lib/etiquetas'
 import EtiquetaProducto from '../../components/EtiquetaProducto'
@@ -31,6 +33,7 @@ export default function Inventario() {
   const puedeLiberar = tienePermiso('log_inventario', 'aprobar')
 
   const [vista, setVista] = useState('existencias')
+  const [site, setSite] = useState('')
   const [articulos, setArticulos] = useState([])
   const [almacenes, setAlmacenes] = useState([])
   const [ubicaciones, setUbicaciones] = useState([])
@@ -59,9 +62,10 @@ export default function Inventario() {
   const [preview, setPreview] = useState(null)
   const [procesando, setProcesando] = useState(false)
 
-  useEffect(() => { cargarDatos() }, [])
+  useEffect(() => { cargarDatos() }, [site])
 
   const cargarDatos = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const [art, alm, ubi, ps, lot, ex, mov, ct] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, flujo_id, origen').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
@@ -78,7 +82,7 @@ export default function Inventario() {
     setUbicaciones(ubi.data || [])
     setPasos(ps.data || [])
     setLotes(lot.data || [])
-    setExistencias(ex.data || [])
+    setExistencias(((ex.data) || []).filter(x => { if (!sid) return true; const _a = (alm.data || []).find(z => z.id === x.almacen_id); return _a && _a.site_id === sid }))
     setContenedores(ct.data || [])
     setMovimientos(mov.data || [])
     setLoading(false)
@@ -443,6 +447,7 @@ export default function Inventario() {
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Inventario</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
         {puedeMover && (
           <div style={{ display: 'flex', gap: '10px' }}>
             <label style={{ ...styles.botonSec, cursor: 'pointer' }}>

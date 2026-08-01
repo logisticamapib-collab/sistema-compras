@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // Cuarentena por CAJA (cada caja = su lote). Al ENVIAR se exige CAUSA y el material
 // se mueve a la UBICACION VIRTUAL de cuarentena (configurable por empresa). La SALIDA
@@ -23,6 +25,7 @@ export default function Cuarentena() {
   const puedeConfig = tienePermiso('cal_cuarentena', 'editar')
 
   const [lotes, setLotes] = useState([])
+  const [site, setSite] = useState('')
   const [existencias, setExistencias] = useState([])
   const [eventos, setEventos] = useState([])
   const [salidas, setSalidas] = useState([])
@@ -42,8 +45,9 @@ export default function Cuarentena() {
   const [dispForm, setDispForm] = useState(null)
   const [cfgForm, setCfgForm] = useState({ almacen_id: '', ubicacion_id: '' })
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const [lo, ex, ev, sa, ca, ar, no, al, ub, us, pa] = await Promise.all([
       supabase.from('lotes').select('*, articulo:articulos(codigo_interno, descripcion, origen)').eq('empresa_id', emp).order('id', { ascending: false }),
@@ -58,7 +62,8 @@ export default function Cuarentena() {
       supabase.from('usuarios').select('id, nombre'),
       supabase.from('cuarentena_parametros').select('*').eq('empresa_id', emp).maybeSingle(),
     ])
-    setLotes(lo.data || []); setExistencias(ex.data || []); setEventos(ev.data || []); setSalidas(sa.data || [])
+    const _almOK = (id) => { if (!sid) return true; const a = (al.data || []).find(z => z.id === id); return a && a.site_id === sid }
+    setLotes(lo.data || []); setExistencias((ex.data || []).filter(x => _almOK(x.almacen_id))); setEventos(ev.data || []); setSalidas(sa.data || [])
     setCausas(ca.data || []); setArticulos(ar.data || []); setNormas(no.data || [])
     setAlmacenes(al.data || []); setUbicaciones(ub.data || []); setUsuarios(us.data || [])
     setParam(pa.data || null)
@@ -235,6 +240,7 @@ export default function Cuarentena() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Cuarentena</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       {!param?.ubicacion_id && <p style={styles.warn}>Aun no se configura la ubicacion virtual de cuarentena. Ve a la pestana <b>Configuracion</b>.</p>}
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}

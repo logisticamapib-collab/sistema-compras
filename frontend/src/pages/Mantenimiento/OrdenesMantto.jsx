@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import FiltroSite from '../../components/FiltroSite'
+import { siteEfectivo } from '../../lib/sites'
 
 // Ordenes de mantenimiento general / de maquinas. Cualquier usuario levanta la
 // orden (problema/mejora/reparacion/creacion). Se asigna a un tecnico interno o a
@@ -17,6 +19,7 @@ export default function OrdenesMantto() {
   const puedeGestionar = tienePermiso('man_ordenes', 'editar') || ['admin'].includes(perfil?.rol)
 
   const [vista, setVista] = useState('lista')
+  const [site, setSite] = useState('')
   const [ordenes, setOrdenes] = useState([])
   const [sel, setSel] = useState(null)
   const [insumos, setInsumos] = useState([])
@@ -37,13 +40,14 @@ export default function OrdenesMantto() {
   const [exito, setExito] = useState('')
   const [filtro, setFiltro] = useState('abiertas')
 
-  useEffect(() => { cargar() }, [])
+  useEffect(() => { cargar() }, [site])
   const cargar = async () => {
+    const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const emp = perfil.empresa_id
     const [o, mq, us, pr, ar, al, ex, lo] = await Promise.all([
       supabase.from('mtto_gen_ordenes').select('*, maquina:maquinas(clave)').eq('empresa_id', emp).order('id', { ascending: false }),
-      supabase.from('maquinas').select('id, clave, nombre').eq('empresa_id', emp),
+      (sid ? supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', emp).eq('site_id', sid) : supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', emp)),
       supabase.from('usuarios').select('id, nombre, rol').eq('empresa_id', emp),
       supabase.from('proveedores').select('id, nombre').eq('empresa_id', emp).eq('activo', true),
       supabase.from('articulos').select('id, codigo_interno, descripcion, costo').eq('empresa_id', emp),
@@ -51,7 +55,7 @@ export default function OrdenesMantto() {
       supabase.from('existencias').select('*'),
       supabase.from('lotes').select('id, articulo_id, estatus_calidad, fecha, empresa_id').eq('empresa_id', emp),
     ])
-    setOrdenes(o.data || []); setMaquinas(mq.data || []); setUsuarios(us.data || []); setProveedores(pr.data || [])
+    setOrdenes((o.data || []).filter(x => { if (!sid) return true; const _ids = (mq.data || []).map(z => z.id); return !x.maquina_id || _ids.includes(x.maquina_id) })); setMaquinas(mq.data || []); setUsuarios(us.data || []); setProveedores(pr.data || [])
     setArticulos(ar.data || []); setAlmacenes(al.data || []); setExistencias(ex.data || []); setLotes(lo.data || [])
     setLoading(false)
   }
@@ -167,6 +171,7 @@ export default function OrdenesMantto() {
       <div style={styles.container} className="aparecer">
         <button style={styles.volver} onClick={() => setVista('lista')}>&larr; Volver</button>
         <h2 style={styles.titulo}>Nueva orden de mantenimiento</h2>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
         {error && <p style={styles.error}>{error}</p>}
         <div style={styles.tarjeta}>
           <div style={styles.fila}>
