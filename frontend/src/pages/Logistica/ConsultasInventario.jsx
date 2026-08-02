@@ -172,21 +172,22 @@ export default function ConsultasInventario() {
     { label: 'Estatus', get: r => r.detenido ? 'Detenido' : 'Disponible' },
   ]
 
-  // VISTA POR UBICACION: cada ubicacion con sus lotes-caja
-  const porUbicacion = []
-  filas.forEach(e => {
-    const k = `${e.almacen_id}-${e.ubicacion_id || 0}`
-    let u = porUbicacion.find(x => x.key === k)
-    if (!u) { u = { key: k, almacen_id: e.almacen_id, ubicacion_id: e.ubicacion_id, total: 0, disponible: 0, detenido: 0, filas: [] }; porUbicacion.push(u) }
-    u.total += Number(e.cantidad)
-    if (e._lote.estatus_calidad === 'liberado') u.disponible += Number(e.cantidad)
-    if (ESTADOS_DETENIDO.includes(e._lote.estatus_calidad)) u.detenido += Number(e.cantidad)
-    const cajas = contenedores.filter(c => c.lote_id === e.lote_id && c.almacen_id === e.almacen_id
-      && (c.ubicacion_id || null) === (e.ubicacion_id || null) && c.tipo === 'caja')
-    u.filas.push({ ...e, cajas })
-  })
-  porUbicacion.sort((a, b) => (almDe(a.almacen_id)?.clave || '').localeCompare(almDe(b.almacen_id)?.clave || '')
-    || (ubiDe(a.ubicacion_id)?.clave || '').localeCompare(ubiDe(b.ubicacion_id)?.clave || ''))
+  // VISTA POR UBICACION (plana): almacen > ubicacion, un renglon por lote-caja
+  const filasUbic = [...filasCaja].sort((a, b) =>
+    (almDe(a.almacen_id)?.clave || '').localeCompare(almDe(b.almacen_id)?.clave || '')
+    || (ubiDe(a.ubicacion_id)?.clave || '').localeCompare(ubiDe(b.ubicacion_id)?.clave || '')
+    || (a.art.codigo_interno || '').localeCompare(b.art.codigo_interno || '')
+    || String(a.loteCaja).localeCompare(String(b.loteCaja)))
+  const colsUbic = [
+    { label: 'Almacen', get: r => almDe(r.almacen_id)?.clave || '' },
+    { label: 'Ubicacion', get: r => ubiDe(r.ubicacion_id)?.clave || '' },
+    { label: 'Lote de caja', get: r => r.loteCaja },
+    { label: 'Lote padre', get: r => r.lotePadre },
+    { label: 'Articulo', get: r => r.art.codigo_interno },
+    { label: 'Descripcion', get: r => r.art.descripcion },
+    { label: 'Cantidad', get: r => r.cantidad },
+    { label: 'Estatus', get: r => r.detenido ? 'Detenido' : 'Disponible' },
+  ]
 
   // Bajos de inventario: total por articulo vs stock_minimo (>0)
   const totalesPorArt = {}
@@ -224,9 +225,11 @@ export default function ConsultasInventario() {
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Consultas de Inventario</h2>
         {vista === 'cajas' && filasCaja.length > 0 && <button style={styles.botonSec} onClick={() => exportarExcel('inventario_por_caja', colsCajas, filasCaja)}>Exportar Excel</button>}
-        {['existencias', 'ubicacion'].includes(vista) && filas.length > 0 && <button style={styles.botonSec} onClick={exportar}>Exportar Excel</button>}
+        {vista === 'ubicacion' && filasUbic.length > 0 && <button style={styles.botonSec} onClick={() => exportarExcel('inventario_por_ubicacion', colsUbic, filasUbic)}>Exportar Excel</button>}
+        {vista === 'existencias' && filas.length > 0 && <button style={styles.botonSec} onClick={exportar}>Exportar Excel</button>}
         {vista === 'cajas' && filasCaja.length > 0 && <button style={styles.botonSec} onClick={() => imprimirTablaPDF('Inventario por lote-caja', colsCajas, filasCaja)}>PDF</button>}
-        {['existencias', 'ubicacion'].includes(vista) && filas.length > 0 && <button style={styles.botonSec} onClick={() => imprimirTablaPDF('Inventario', colsInv, filas)}>PDF</button>}
+        {vista === 'ubicacion' && filasUbic.length > 0 && <button style={styles.botonSec} onClick={() => imprimirTablaPDF('Inventario por ubicacion', colsUbic, filasUbic)}>PDF</button>}
+        {vista === 'existencias' && filas.length > 0 && <button style={styles.botonSec} onClick={() => imprimirTablaPDF('Inventario', colsInv, filas)}>PDF</button>}
       </div>
 
       <div style={styles.tabs}>
@@ -404,57 +407,38 @@ export default function ConsultasInventario() {
       {vista === 'ubicacion' && (
         <>
           <div style={styles.resumenTot}>
-            <span>Ubicaciones con material: <b>{porUbicacion.length}</b></span>
-            <span>Total: <b>{fmtNum(totalGeneral)}</b></span>
-            <span style={{ color: '#15803d' }}>Disponible: <b>{fmtNum(totDisponible)}</b></span>
-            <span style={{ color: '#b45309' }}>Detenido: <b>{fmtNum(totDetenido)}</b></span>
+            <span>Renglones: <b>{fmtNum(filasUbic.length)}</b></span>
+            <span>Ubicaciones: <b>{fmtNum(new Set(filasUbic.map(r => `${r.almacen_id}-${r.ubicacion_id || 0}`)).size)}</b></span>
+            <span>Total: <b>{fmtNum(filasUbic.reduce((s2, r) => s2 + r.cantidad, 0))}</b></span>
+            <span style={{ color: '#15803d' }}>Disponible: <b>{fmtNum(filasUbic.filter(r => !r.detenido).reduce((s2, r) => s2 + r.cantidad, 0))}</b></span>
+            <span style={{ color: '#b45309' }}>Detenido: <b>{fmtNum(filasUbic.filter(r => r.detenido).reduce((s2, r) => s2 + r.cantidad, 0))}</b></span>
           </div>
           <div style={styles.tabla}>
             <div style={styles.tablaHeader}>
-              <span style={{ flex: 1.6 }}>Almacen / Ubicacion</span>
-              <span style={{ flex: 0.9, textAlign: 'center' }}>Lotes-caja</span>
-              <span style={{ flex: 1.4, textAlign: 'center' }}>Estatus</span>
-              <span style={{ flex: 1, textAlign: 'right' }}>Total</span>
+              <span style={{ flex: 1 }}>Almacen</span>
+              <span style={{ flex: 1 }}>Ubicacion</span>
+              <span style={{ flex: 1.2 }}>Lote de caja</span>
+              <span style={{ flex: 1.1 }}>Lote padre</span>
+              <span style={{ flex: 1.1 }}>Articulo</span>
+              <span style={{ flex: 1.7 }}>Descripcion</span>
+              <span style={{ flex: 0.8, textAlign: 'right' }}>Cantidad</span>
+              <span style={{ flex: 0.9, textAlign: 'center' }}>Estatus</span>
             </div>
-            {porUbicacion.map(u => {
-              const abierto2 = almAbierto[`U-${u.key}`]
-              return (
-                <div key={u.key}>
-                  <div style={{ ...styles.tablaFila, cursor: 'pointer' }} className="fila-hover"
-                    onClick={() => setAlmAbierto({ ...almAbierto, [`U-${u.key}`]: !abierto2 })}>
-                    <span style={{ flex: 1.6, fontWeight: 600 }}>{abierto2 ? '\u25BC' : '\u25B6'} {almDe(u.almacen_id)?.clave}{u.ubicacion_id ? ` / ${ubiDe(u.ubicacion_id)?.clave}` : ' / (sin ubicacion)'}</span>
-                    <span style={{ flex: 0.9, textAlign: 'center', color: '#64748b' }}>{u.filas.length}</span>
-                    <span style={{ flex: 1.4, textAlign: 'center' }}>
-                      {u.disponible > 0 && <span style={{ ...styles.badge, ...styles.badgeVerde }}>Disp {fmtNum(u.disponible)}</span>}
-                      {u.detenido > 0 && <span style={{ ...styles.badge, ...styles.badgeAmbar, marginLeft: '4px' }}>Detenido {fmtNum(u.detenido)}</span>}
-                    </span>
-                    <span style={{ flex: 1, textAlign: 'right', fontWeight: 700 }}>{fmtNum(u.total)}</span>
-                  </div>
-                  {abierto2 && (
-                    <div style={styles.subTabla}>
-                      {u.filas.map(f => (
-                        <div key={f.id} style={{ padding: '7px 20px 7px 34px', borderBottom: '1px solid #f1f5f9', fontSize: '12.5px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ flex: 1.6 }}><b>{f._art.codigo_interno}</b> <span style={{ color: '#94a3b8' }}>{f._art.descripcion}</span></span>
-                            <span style={{ flex: 1.2, fontWeight: 600 }}>{f._lote.codigo_lote}</span>
-                            <span style={{ flex: 0.8, textAlign: 'right', fontWeight: 600 }}>{fmtNum(f.cantidad)} {f._art.unidad_medida || ''}</span>
-                            <span style={{ flex: 0.8, textAlign: 'center' }}>
-                              <span style={{ ...styles.badge, ...(f._lote.estatus_calidad === 'liberado' ? styles.badgeVerde : f._lote.estatus_calidad === 'rechazado' ? styles.badgeRojo : styles.badgeAmbar) }}>{NOMBRE_CALIDAD[f._lote.estatus_calidad] || f._lote.estatus_calidad}</span>
-                            </span>
-                          </div>
-                          {f.cajas.length > 0 && (
-                            <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
-                              {f.cajas.map(c => <span key={c.id} style={styles.cajaChip}>{c.folio} · {fmtNum(c.cantidad)}</span>)}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-            {porUbicacion.length === 0 && <p style={{ color: '#666', padding: '12px 18px' }}>Sin material con estos filtros.</p>}
+            {filasUbic.map(r => (
+              <div key={`u-${r.key}`} style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
+                <span style={{ flex: 1, fontWeight: 600 }}>{almDe(r.almacen_id)?.clave}</span>
+                <span style={{ flex: 1, color: '#64748b' }}>{ubiDe(r.ubicacion_id)?.clave || '(sin ubicacion)'}</span>
+                <span style={{ flex: 1.2, fontWeight: 600, color: r.loteCaja === '(granel)' ? '#94a3b8' : '#1a1a2e' }}>{r.loteCaja}</span>
+                <span style={{ flex: 1.1, color: '#64748b' }}>{r.lotePadre}</span>
+                <span style={{ flex: 1.1, fontWeight: 600 }}>{r.art.codigo_interno}</span>
+                <span style={{ flex: 1.7, color: '#64748b' }}>{r.art.descripcion}</span>
+                <span style={{ flex: 0.8, textAlign: 'right', fontWeight: 600 }}>{fmtNum(r.cantidad)} {r.art.unidad_medida || ''}</span>
+                <span style={{ flex: 0.9, textAlign: 'center' }}>
+                  <span style={{ ...styles.badge, ...(r.detenido ? styles.badgeAmbar : styles.badgeVerde) }}>{r.detenido ? 'Detenido' : 'Disponible'}</span>
+                </span>
+              </div>
+            ))}
+            {filasUbic.length === 0 && <p style={{ color: '#666', padding: '12px 18px' }}>Sin material con estos filtros.</p>}
           </div>
         </>
       )}
