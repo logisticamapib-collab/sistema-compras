@@ -9,12 +9,14 @@ import TableroAndon from './TableroAndon'
 import Maquila from './Maquila'
 import TerminalOperador from './TerminalOperador'
 import ReportesKPI from './ReportesKPI'
+import OEE from './OEE'
 
 const secciones = [
   { id: 'ordenes', modulo: 'prod_ordenes', titulo: 'Ordenes de Trabajo' },
   { id: 'bitacora', modulo: 'prod_ordenes', titulo: 'Bitacora de OT' },
   { id: 'reporte', modulo: 'prod_reportes', titulo: 'Reporte de Produccion' },
   { id: 'kpis', modulo: 'prod_kpis', titulo: 'Reportes / KPIs' },
+  { id: 'oee', modulo: 'prod_oee', titulo: 'OEE' },
   { id: 'programa', modulo: 'prod_programa', titulo: 'Programacion' },
   { id: 'andon', modulo: 'prod_andon', titulo: 'Tablero Andon' },
   { id: 'terminal', modulo: 'prod_terminal', titulo: 'Terminal de Operador' },
@@ -46,6 +48,7 @@ export default function GrupoProduccion() {
         {seccion === 'bitacora' && <BitacoraOT />}
         {seccion === 'reporte' && <ReporteProduccion />}
         {seccion === 'kpis' && <ReportesKPI />}
+        {seccion === 'oee' && <OEE />}
         {seccion === 'programa' && <ProgramacionProduccion />}
         {seccion === 'andon' && <TableroAndon />}
         {seccion === 'terminal' && <TerminalOperador />}
