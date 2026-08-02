@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
-import { imprimirTablaPDF } from '../../lib/exportar'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 
 // Capa 3 - Consultas de Inventario: reportes combinables y bajos de inventario.
 // Filtros: texto, categoria (tipo de mercancia), origen, cliente, almacen, estatus de calidad.
@@ -139,6 +139,39 @@ export default function ConsultasInventario() {
   })
   grupos.sort((a, b) => a.art.codigo_interno.localeCompare(b.art.codigo_interno))
 
+  // VISTA POR LOTE-CAJA: una fila por caja (o por lote si el material es granel)
+  const filasCaja = []
+  filas.forEach(e => {
+    const raiz = raizDe(e._lote)
+    const detenido = ESTADOS_DETENIDO.includes(e._lote.estatus_calidad)
+    const cajas = contenedores.filter(c => c.lote_id === e.lote_id && c.almacen_id === e.almacen_id
+      && (c.ubicacion_id || null) === (e.ubicacion_id || null) && c.tipo === 'caja')
+    if (cajas.length > 0) {
+      cajas.forEach(c => filasCaja.push({
+        key: `c${c.id}`, art: e._art, loteCaja: c.folio, lotePadre: raiz.codigo_lote,
+        almacen_id: e.almacen_id, ubicacion_id: c.ubicacion_id, cantidad: Number(c.cantidad),
+        detenido, estatusCal: e._lote.estatus_calidad,
+      }))
+    } else {
+      filasCaja.push({
+        key: `e${e.id}`, art: e._art, loteCaja: '(granel)', lotePadre: raiz.codigo_lote,
+        almacen_id: e.almacen_id, ubicacion_id: e.ubicacion_id, cantidad: Number(e.cantidad),
+        detenido, estatusCal: e._lote.estatus_calidad,
+      })
+    }
+  })
+  filasCaja.sort((a, b) => (a.art.codigo_interno || '').localeCompare(b.art.codigo_interno || '')
+    || String(a.loteCaja).localeCompare(String(b.loteCaja)))
+  const colsCajas = [
+    { label: 'Articulo', get: r => r.art.codigo_interno },
+    { label: 'Descripcion', get: r => r.art.descripcion },
+    { label: 'Lote de caja', get: r => r.loteCaja },
+    { label: 'Lote padre', get: r => r.lotePadre },
+    { label: 'Almacen', get: r => almDe(r.almacen_id)?.clave || '' },
+    { label: 'Cantidad', get: r => r.cantidad },
+    { label: 'Estatus', get: r => r.detenido ? 'Detenido' : 'Disponible' },
+  ]
+
   // VISTA POR UBICACION: cada ubicacion con sus lotes-caja
   const porUbicacion = []
   filas.forEach(e => {
@@ -190,12 +223,14 @@ export default function ConsultasInventario() {
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Consultas de Inventario</h2>
+        {vista === 'cajas' && filasCaja.length > 0 && <button style={styles.botonSec} onClick={() => exportarExcel('inventario_por_caja', colsCajas, filasCaja)}>Exportar Excel</button>}
         {['existencias', 'ubicacion'].includes(vista) && filas.length > 0 && <button style={styles.botonSec} onClick={exportar}>Exportar Excel</button>}
+        {vista === 'cajas' && filasCaja.length > 0 && <button style={styles.botonSec} onClick={() => imprimirTablaPDF('Inventario por lote-caja', colsCajas, filasCaja)}>PDF</button>}
         {['existencias', 'ubicacion'].includes(vista) && filas.length > 0 && <button style={styles.botonSec} onClick={() => imprimirTablaPDF('Inventario', colsInv, filas)}>PDF</button>}
       </div>
 
       <div style={styles.tabs}>
-        {[['existencias', 'Existencias'], ['ubicacion', 'Por ubicacion'], ['bajos', `Bajos de inventario${bajos.length ? ` (${bajos.length})` : ''}`]].map(([id, nombre]) => (
+        {[['existencias', 'Existencias'], ['cajas', 'Por lote-caja'], ['ubicacion', 'Por ubicacion'], ['bajos', `Bajos de inventario${bajos.length ? ` (${bajos.length})` : ''}`]].map(([id, nombre]) => (
           <button key={id} style={vista === id ? styles.tabActiva : styles.tab} onClick={() => setVista(id)}>{nombre}</button>
         ))}
       </div>
@@ -330,6 +365,42 @@ export default function ConsultasInventario() {
       )}
 
       {/* ==================== BAJOS ==================== */}
+      {vista === 'cajas' && (
+        <>
+          <div style={styles.resumenTot}>
+            <span>Lotes-caja: <b>{fmtNum(filasCaja.length)}</b></span>
+            <span>Total: <b>{fmtNum(filasCaja.reduce((s, r) => s + r.cantidad, 0))}</b></span>
+            <span style={{ color: '#15803d' }}>Disponible: <b>{fmtNum(filasCaja.filter(r => !r.detenido).reduce((s, r) => s + r.cantidad, 0))}</b></span>
+            <span style={{ color: '#b45309' }}>Detenido: <b>{fmtNum(filasCaja.filter(r => r.detenido).reduce((s, r) => s + r.cantidad, 0))}</b></span>
+          </div>
+          <div style={styles.tabla}>
+            <div style={styles.tablaHeader}>
+              <span style={{ flex: 1.1 }}>Articulo</span>
+              <span style={{ flex: 1.8 }}>Descripcion</span>
+              <span style={{ flex: 1.2 }}>Lote de caja</span>
+              <span style={{ flex: 1.1 }}>Lote padre</span>
+              <span style={{ flex: 1 }}>Almacen</span>
+              <span style={{ flex: 0.8, textAlign: 'right' }}>Cantidad</span>
+              <span style={{ flex: 0.9, textAlign: 'center' }}>Estatus</span>
+            </div>
+            {filasCaja.map(r => (
+              <div key={r.key} style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
+                <span style={{ flex: 1.1, fontWeight: 600 }}>{r.art.codigo_interno}</span>
+                <span style={{ flex: 1.8, color: '#64748b' }}>{r.art.descripcion}</span>
+                <span style={{ flex: 1.2, fontWeight: 600, color: r.loteCaja === '(granel)' ? '#94a3b8' : '#1a1a2e' }}>{r.loteCaja}</span>
+                <span style={{ flex: 1.1, color: '#64748b' }}>{r.lotePadre}</span>
+                <span style={{ flex: 1, color: '#64748b' }}>{almDe(r.almacen_id)?.clave}{r.ubicacion_id ? ` / ${ubiDe(r.ubicacion_id)?.clave}` : ''}</span>
+                <span style={{ flex: 0.8, textAlign: 'right', fontWeight: 600 }}>{fmtNum(r.cantidad)} {r.art.unidad_medida || ''}</span>
+                <span style={{ flex: 0.9, textAlign: 'center' }}>
+                  <span style={{ ...styles.badge, ...(r.detenido ? styles.badgeAmbar : styles.badgeVerde) }}>{r.detenido ? 'Detenido' : 'Disponible'}</span>
+                </span>
+              </div>
+            ))}
+            {filasCaja.length === 0 && <p style={{ color: '#666', padding: '12px 18px' }}>Sin material con estos filtros.</p>}
+          </div>
+        </>
+      )}
+
       {vista === 'ubicacion' && (
         <>
           <div style={styles.resumenTot}>
