@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 
 // Capa 2 - Customer Service: releases de clientes (firme/forecast) cargados via Excel.
@@ -61,6 +62,8 @@ export default function Releases() {
   const [clientes, setClientes] = useState([])
   const [articulosCliente, setArticulosCliente] = useState([])
   const [vigentes, setVigentes] = useState([])
+  const [cavidades, setCavidades] = useState([])
+  const [moldes, setMoldes] = useState([])
   const [entregas, setEntregas] = useState([])
   const [cargas, setCargas] = useState([])
   const [loading, setLoading] = useState(true)
@@ -96,18 +99,21 @@ export default function Releases() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [c, ac, v, en, cg] = await Promise.all([
+    const [c, ac, v, en, cg, cav, mol] = await Promise.all([
       supabase.from('clientes').select('id, clave, nombre').eq('activo', true).order('nombre'),
       supabase.from('articulo_cliente').select('id, articulo_id, cliente_id, codigo_cliente, articulo:articulos(id, codigo_interno, descripcion, unidad_medida)').eq('activo', true),
       supabase.from('release_lineas').select('*').eq('vigente', true).order('fecha_requerida'),
       supabase.from('release_entregas').select('*'),
       supabase.from('releases_cargas').select('*, cliente:clientes(nombre), usuario:usuarios!releases_cargas_cargado_por_fkey(nombre)').order('fecha_carga', { ascending: false }).limit(100),
+      supabase.from('molde_cavidades').select('molde_id, articulo_id').eq('activa', true),
+      supabase.from('moldes').select('id, clave').eq('empresa_id', perfil.empresa_id),
     ])
     setClientes(c.data || [])
     setArticulosCliente(ac.data || [])
     setVigentes(v.data || [])
     setEntregas(en.data || [])
     setCargas(cg.data || [])
+    setCavidades(cav.data || []); setMoldes(mol.data || [])
     setLoading(false)
   }
 
@@ -419,6 +425,21 @@ export default function Releases() {
     setEditForm(null); await cargarDatos()
   }
 
+  // Confirmacion explicita antes de borrar una linea del release
+  const confirmarEliminar = async (l) => {
+    const ok = window.confirm('Estas a punto de borrar esta linea, favor de confirmar, de lo contrario cancelar.')
+    if (!ok) return
+    if (Number(l.entregado || 0) > 0) { alert('La linea tiene entregas registradas; ajusta la cantidad en vez de eliminarla.'); return }
+    const { error } = await supabase.from('release_lineas').update({ vigente: false }).eq('id', l.id)
+    if (error) { alert(error.message); return }
+    await supabase.from('release_cambios').insert({
+      empresa_id: perfil.empresa_id, release_linea_id: l.id, articulo_id: l.articulo_id, cliente_id: l.cliente_id,
+      fecha_requerida: l.fecha_requerida, tipo: 'cancelacion', cantidad_anterior: Number(l.cantidad), cantidad_nueva: 0,
+      delta: -Number(l.cantidad), origen: 'manual', motivo: 'Eliminada desde vista detallada', usuario_id: perfil.id,
+    })
+    await cargarDatos()
+  }
+
   const eliminarLinea = async (l) => {
     if (l.entregado > 0) { alert('La linea tiene entregas; ajusta la cantidad para cerrarla en vez de eliminarla.'); return }
     if (!window.confirm(`Eliminar la linea del ${fmtFecha(l.fecha_requerida)} (${fmtNum(l.cantidad)})?`)) return
@@ -437,6 +458,44 @@ export default function Releases() {
     .filter(v => !filtroCliente || v.cliente_id === Number(filtroCliente))
     .map(v => ({ ...v, entregado: entregadoDe(v.id), estatus: estatusDe(v) }))
     .filter(v => filtroEstatus === 'todas' || v.estatus !== 'cubierta')
+
+  // ---------- Vista plana: una linea por renglon, agrupando familia de molde ----------
+  const moldeDeArticulo = (artId) => cavidades.find(c => c.articulo_id === artId)?.molde_id || null
+  const familiaDe = (moldeId) => moldeId ? [...new Set(cavidades.filter(c => c.molde_id === moldeId).map(c => c.articulo_id))] : []
+  const filasPlanas = lineasFiltradas.map(v => {
+    const info = articulosCliente.find(a => a.articulo_id === v.articulo_id && a.cliente_id === v.cliente_id)
+      || articulosCliente.find(a => a.articulo_id === v.articulo_id)
+    const moldeId = moldeDeArticulo(v.articulo_id)
+    const fam = familiaDe(moldeId)
+    return {
+      ...v,
+      _art: info?.articulo || null,
+      _codigoCliente: v.codigo_cliente || info?.codigo_cliente || '',
+      _molde: moldeId, _moldeClave: moldes.find(m => m.id === moldeId)?.clave || '',
+      _familiar: fam.length > 1,
+      _pendiente: Math.max(0, Number(v.cantidad) - Number(v.entregado || 0)),
+      _cliente: clientes.find(c => c.id === v.cliente_id)?.nombre || '',
+    }
+  }).sort((a, b) => {
+    // los articulos de un mismo molde familiar quedan juntos; dentro, por fecha
+    const ka = a._molde ? `M${a._molde}` : `A${a.articulo_id}`
+    const kb = b._molde ? `M${b._molde}` : `A${b.articulo_id}`
+    if (ka !== kb) return ka.localeCompare(kb)
+    return String(a.fecha_requerida).localeCompare(String(b.fecha_requerida))
+      || (a._art?.codigo_interno || '').localeCompare(b._art?.codigo_interno || '')
+  })
+  const colsPlana = [
+    { label: 'Fecha', get: r => r.fecha_requerida },
+    { label: 'Cliente', get: r => r._cliente },
+    { label: 'Molde', get: r => r._moldeClave },
+    { label: 'Articulo', get: r => r._art?.codigo_interno || '' },
+    { label: 'Descripcion', get: r => r._art?.descripcion || '' },
+    { label: 'Cantidad', get: r => r.cantidad },
+    { label: 'Entregado', get: r => r.entregado || 0 },
+    { label: 'Pendiente', get: r => r._pendiente },
+    { label: 'Tipo', get: r => r.tipo || '' },
+    { label: 'Estatus', get: r => r.estatus || '' },
+  ]
 
   const grupos = []
   lineasFiltradas.forEach(v => {
@@ -512,7 +571,7 @@ export default function Releases() {
       </div>
 
       <div style={styles.tabs}>
-        {[['vigente', 'Release vigente'], ['historial', 'Historial de cargas']].map(([id, nombre]) => (
+        {[['vigente', 'Release vigente'], ['plana', 'Vista detallada'], ['historial', 'Historial de cargas']].map(([id, nombre]) => (
           <button key={id} style={vista === id ? styles.tabActiva : styles.tab} onClick={() => setVista(id)}>{nombre}</button>
         ))}
       </div>
@@ -806,6 +865,81 @@ export default function Releases() {
       )}
 
       {/* ==================== HISTORIAL ==================== */}
+      {vista === 'plana' && (
+        <>
+          <div style={styles.selectorBox}>
+            <label style={{ ...styles.label, marginRight: '8px' }}>Cliente:</label>
+            <select style={{ ...styles.input, marginRight: '12px' }} value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)}>
+              <option value="">Todos</option>
+              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+            <label style={{ ...styles.label, marginRight: '8px' }}>Ver:</label>
+            <select style={{ ...styles.input, marginRight: '12px' }} value={filtroEstatus} onChange={e => setFiltroEstatus(e.target.value)}>
+              <option value="pendientes">Solo pendientes</option>
+              <option value="todas">Todas</option>
+            </select>
+            <span style={{ flex: 1 }} />
+            {filasPlanas.length > 0 && (
+              <>
+                <button style={styles.botonSec} onClick={() => exportarExcel('release_detalle', colsPlana, filasPlanas)}>Excel</button>
+                <button style={{ ...styles.botonSec, marginLeft: '8px' }} onClick={() => imprimirTablaPDF('Release - detalle', colsPlana, filasPlanas)}>PDF</button>
+              </>
+            )}
+          </div>
+
+          {filasPlanas.length === 0 ? (
+            <p style={{ color: '#666', padding: '10px 4px' }}>No hay lineas con este filtro.</p>
+          ) : (
+            <div style={styles.tabla}>
+              <div style={styles.tablaHeader}>
+                <span style={{ flex: 0.9 }}>Fecha</span>
+                <span style={{ flex: 1.2 }}>Cliente</span>
+                <span style={{ flex: 1.2 }}>Articulo</span>
+                <span style={{ flex: 1.8 }}>Descripcion</span>
+                <span style={{ flex: 0.8, textAlign: 'right' }}>Cantidad</span>
+                <span style={{ flex: 0.8, textAlign: 'right' }}>Entregado</span>
+                <span style={{ flex: 0.8, textAlign: 'right' }}>Pendiente</span>
+                <span style={{ flex: 0.7, textAlign: 'center' }}>Tipo</span>
+                <span style={{ flex: 0.9, textAlign: 'center' }}>Estatus</span>
+                <span style={{ width: '150px' }}></span>
+              </div>
+              {filasPlanas.map((r, i) => {
+                const nuevaFamilia = i === 0 || (filasPlanas[i - 1]._molde || `A${filasPlanas[i - 1].articulo_id}`) !== (r._molde || `A${r.articulo_id}`)
+                return (
+                  <div key={r.id}>
+                    {nuevaFamilia && r._familiar && (
+                      <div style={styles.familiaSep}>Molde familiar {r._moldeClave} - articulos que se producen juntos</div>
+                    )}
+                    <div style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
+                      <span style={{ flex: 0.9 }}>{fmtFecha(r.fecha_requerida)}</span>
+                      <span style={{ flex: 1.2, color: '#64748b' }}>{r._cliente}</span>
+                      <span style={{ flex: 1.2, fontWeight: '600' }}>
+                        {r._art?.codigo_interno || r.articulo_id}
+                        {r._familiar && <span style={{ ...styles.badge, ...styles.badgeAzul, marginLeft: '5px' }}>fam</span>}
+                      </span>
+                      <span style={{ flex: 1.8, color: '#64748b' }}>{r._art?.descripcion || ''}</span>
+                      <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600' }}>{fmtNum(r.cantidad)}</span>
+                      <span style={{ flex: 0.8, textAlign: 'right', color: '#16a34a' }}>{fmtNum(r.entregado || 0)}</span>
+                      <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600', color: r._pendiente > 0 ? '#c2410c' : '#94a3b8' }}>{fmtNum(r._pendiente)}</span>
+                      <span style={{ flex: 0.7, textAlign: 'center' }}>
+                        <span style={{ ...styles.badge, ...(r.tipo === 'firme' ? styles.badgeAzul : styles.badgeGris) }}>{r.tipo}</span>
+                      </span>
+                      <span style={{ flex: 0.9, textAlign: 'center' }}>
+                        <span style={{ ...styles.badge, ...(r.estatus === 'cubierta' ? styles.badgeVerde : r.estatus === 'vencida' ? styles.badgeRojo : styles.badgeAmbar) }}>{r.estatus}</span>
+                      </span>
+                      <span style={{ width: '150px', textAlign: 'right', display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                        {puedeEntregar && <button style={styles.botonAccion} onClick={() => setEditForm({ linea: r, cantidad: String(r.cantidad), motivo: '' })}>Editar</button>}
+                        {puedeEntregar && <button style={{ ...styles.botonAccion, color: '#dc2626' }} onClick={() => confirmarEliminar(r)}>Eliminar</button>}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </>
+      )}
+
       {vista === 'historial' && (
         cargas.length === 0 ? (
           <p style={{ color: '#666', padding: '10px 4px' }}>Aun no se ha cargado ningun release.</p>
@@ -896,6 +1030,7 @@ const styles = {
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonSec: { padding: '9px 20px', backgroundColor: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
   botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
+  familiaSep: { padding: '6px 20px', backgroundColor: '#eff6ff', borderTop: '1px solid #bfdbfe', borderBottom: '1px solid #bfdbfe', fontSize: '11.5px', fontWeight: '700', color: '#1e40af', textTransform: 'uppercase', letterSpacing: '0.03em' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '12px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
@@ -905,6 +1040,7 @@ const styles = {
   badgeRojo: { backgroundColor: '#fee2e2', color: '#dc2626' },
   badgeAzul: { backgroundColor: '#dbeafe', color: '#2563eb' },
   badgeGris: { backgroundColor: '#f1f5f9', color: '#64748b' },
+  badgeAmbar: { backgroundColor: '#fef3c7', color: '#b45309' },
   cajaErrores: { backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 16px', color: '#92400e', marginBottom: '12px' },
   cajaHallazgos: { backgroundColor: '#fffbeb', borderTop: '1px solid #fcd34d', borderBottom: '1px solid #fcd34d', padding: '10px 20px', color: '#92400e' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
