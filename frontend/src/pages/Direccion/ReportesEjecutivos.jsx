@@ -15,14 +15,22 @@ const fmt = (n) => (Number(n) || 0).toLocaleString('es-MX')
 const fmtPct = (n) => (n == null || isNaN(n)) ? '-' : (Number(n)).toFixed(1) + '%'
 const fmtDin = (n) => '$' + (Number(n) || 0).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 
-function rango(periodo) {
+function rango(periodo, ini, fin) {
   const hoy = new Date(); const h = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())
+  // Rango personalizado: se toma tal cual lo capturado (hasta = fin + 1 dia, para incluirlo)
+  if (periodo === 'rango' && ini && fin) {
+    const d = new Date(ini + 'T00:00:00')
+    const f = new Date(fin + 'T00:00:00'); f.setDate(f.getDate() + 1)
+    return { desde: d.toISOString(), hasta: f.toISOString(), desdeF: ini }
+  }
   let desde = new Date(h)
   if (periodo === 'semana') { const d = (h.getDay() + 6) % 7; desde.setDate(h.getDate() - d) }
   else if (periodo === 'mes') { desde = new Date(h.getFullYear(), h.getMonth(), 1) }
   const hasta = new Date(h); hasta.setDate(h.getDate() + 1)
   return { desde: desde.toISOString(), hasta: hasta.toISOString(), desdeF: desde.toISOString().slice(0, 10) }
 }
+const hoyISO = () => new Date().toISOString().slice(0, 10)
+const haceDias = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10) }
 
 export default function ReportesEjecutivos() {
   const { perfil } = useAuth()
@@ -30,11 +38,13 @@ export default function ReportesEjecutivos() {
   const [tab, setTab] = useState('director')
   const [periodo, setPeriodo] = useState('mes')
   const [site, setSite] = useState('')
+  const [fIni, setFIni] = useState(haceDias(30))
+  const [fFin, setFFin] = useState(hoyISO())
   const [area, setArea] = useState('produccion')
   const [d, setD] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => { cargar() }, [periodo, site])
+  useEffect(() => { if (periodo !== 'rango' || (fIni && fFin)) cargar() }, [periodo, site, fIni, fFin])
 
   const TABLAS_CON_SITE = ['ordenes_trabajo', 'ordenes_compra', 'embarques', 'requisiciones', 'maquinas', 'recibos', 'ordenes_maquila', 'consigna_autorizaciones', 'suministros', 'semanas_produccion']
   const cnt = async (tabla, fn) => {
@@ -48,7 +58,7 @@ export default function ReportesEjecutivos() {
 
   const cargar = async () => {
     setLoading(true)
-    const { desde, hasta } = rango(periodo)
+    const { desde, hasta } = rango(periodo, fIni, fFin)
     try {
       // Produccion del periodo (piezas ok / scrap) via ot_reportes -> ordenes_trabajo
       const { data: rep } = await supabase
@@ -138,7 +148,11 @@ export default function ReportesEjecutivos() {
     setLoading(false)
   }
 
-  const periodoLbl = periodo === 'hoy' ? 'Hoy' : periodo === 'semana' ? 'Esta semana' : 'Este mes'
+  const fmtDia = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('es-MX') : ''
+  const periodoLbl = periodo === 'hoy' ? 'Hoy'
+    : periodo === 'semana' ? 'Esta semana'
+    : periodo === 'mes' ? 'Este mes'
+    : `${fmtDia(fIni)} al ${fmtDia(fFin)}`
 
   return (
     <div style={styles.container} className="aparecer">
@@ -149,12 +163,20 @@ export default function ReportesEjecutivos() {
         </div>
         <div style={styles.controles}>
           <div style={styles.segment}>
-            {['hoy', 'semana', 'mes'].map(p => (
+            {['hoy', 'semana', 'mes', 'rango'].map(p => (
               <button key={p} onClick={() => setPeriodo(p)} style={{ ...styles.segBtn, ...(periodo === p ? styles.segOn : {}) }}>
-                {p === 'hoy' ? 'Hoy' : p === 'semana' ? 'Semana' : 'Mes'}
+                {p === 'hoy' ? 'Hoy' : p === 'semana' ? 'Semana' : p === 'mes' ? 'Mes' : 'Rango'}
               </button>
             ))}
           </div>
+          {periodo === 'rango' && (
+            <span style={styles.rangoBox}>
+              <label style={styles.rangoLbl}>Del</label>
+              <input type="date" style={styles.fecha} value={fIni} max={fFin} onChange={e => setFIni(e.target.value)} />
+              <label style={styles.rangoLbl}>al</label>
+              <input type="date" style={styles.fecha} value={fFin} min={fIni} max={hoyISO()} onChange={e => setFFin(e.target.value)} />
+            </span>
+          )}
           <FiltroSite value={site} onChange={setSite} />
           <button style={styles.print} onClick={() => window.print()}>Imprimir</button>
         </div>
@@ -294,6 +316,9 @@ const styles = {
   segment: { display: 'inline-flex', backgroundColor: '#f1f5f9', borderRadius: '8px', padding: '3px', gap: '2px', marginBottom: '10px', flexWrap: 'wrap' },
   segBtn: { padding: '7px 14px', border: 'none', backgroundColor: 'transparent', borderRadius: '6px', fontSize: '13px', color: '#475569', cursor: 'pointer' },
   segOn: { backgroundColor: '#fff', color: '#1a1a2e', fontWeight: '600', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
+  rangoBox: { display: 'inline-flex', alignItems: 'center', gap: '6px', marginBottom: '10px' },
+  rangoLbl: { fontSize: '12px', color: '#64748b' },
+  fecha: { padding: '7px 10px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '13px', outline: 'none' },
   print: { padding: '8px 16px', backgroundColor: '#1a1a2e', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' },
   tabs: { display: 'flex', gap: '6px', borderBottom: '2px solid #e2e8f0', marginBottom: '18px', flexWrap: 'wrap' },
   tab: { padding: '10px 18px', border: 'none', backgroundColor: 'transparent', fontSize: '14px', color: '#64748b', cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-2px' },
