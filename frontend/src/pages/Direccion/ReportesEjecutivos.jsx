@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
+import { BarChart, Bar, ComposedChart, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 // Reportes ejecutivos, tres audiencias:
 //  - Director: salud general de la empresa (estrategico)
@@ -40,6 +41,14 @@ export default function ReportesEjecutivos() {
   const [site, setSite] = useState('')
   const [fIni, setFIni] = useState(haceDias(30))
   const [fFin, setFFin] = useState(hoyISO())
+  const [empresa, setEmpresa] = useState(null)
+  const [sitesCat, setSitesCat] = useState([])
+  const [gMode, setGMode] = useState('anio')            // 'anio' | 'rango'
+  const [gAnio, setGAnio] = useState(new Date().getFullYear())
+  const [gDesde, setGDesde] = useState(new Date().getFullYear() - 2)
+  const [gHasta, setGHasta] = useState(new Date().getFullYear())
+  const [serie, setSerie] = useState([])
+  const [cargandoG, setCargandoG] = useState(false)
   const [area, setArea] = useState('produccion')
   const [d, setD] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -54,6 +63,63 @@ export default function ReportesEjecutivos() {
     if (fn) q = fn(q)
     const { count } = await q
     return count || 0
+  }
+
+  useEffect(() => {
+    supabase.from('empresas').select('*').eq('id', emp).maybeSingle().then(({ data }) => setEmpresa(data || null))
+    supabase.from('sites').select('id, nombre, codigo').eq('empresa_id', emp).then(({ data }) => setSitesCat(data || []))
+  }, [])
+
+  // ---------- Serie mensual para las graficas ----------
+  useEffect(() => { cargarSerie() }, [gMode, gAnio, gDesde, gHasta, site])
+  const cargarSerie = async () => {
+    setCargandoG(true)
+    try {
+      const y1 = gMode === 'anio' ? Number(gAnio) : Math.min(Number(gDesde), Number(gHasta))
+      const y2 = gMode === 'anio' ? Number(gAnio) : Math.max(Number(gDesde), Number(gHasta))
+      const ini = `${y1}-01-01`, fin = `${y2 + 1}-01-01`
+      const sid = siteEfectivo(perfil, site)
+
+      const [rep, emb, embL, ocs, mm, ac] = await Promise.all([
+        supabase.from('ot_reportes').select('fecha, cantidad_ok, cantidad_scrap, ordenes_trabajo!inner(empresa_id, site_id)')
+          .eq('ordenes_trabajo.empresa_id', emp).gte('fecha', ini).lt('fecha', fin),
+        supabase.from('embarques').select('id, fecha, site_id').eq('empresa_id', emp).gte('fecha', ini).lt('fecha', fin),
+        supabase.from('embarque_lineas').select('embarque_id, articulo_id, cantidad'),
+        supabase.from('ordenes_compra').select('total, fecha_emision, site_id, estatus').eq('empresa_id', emp).gte('fecha_emision', ini).lt('fecha_emision', fin),
+        supabase.from('molde_mtto').select('monto_cobrado, es_cobrable, created_at').eq('empresa_id', emp).gte('created_at', ini).lt('created_at', fin),
+        supabase.from('articulo_cliente').select('articulo_id, precio').eq('activo', true),
+      ])
+
+      const precio = {}; (ac.data || []).forEach(x => { if (precio[x.articulo_id] == null) precio[x.articulo_id] = Number(x.precio) || 0 })
+      const meses = {}
+      const key = (d) => String(d).slice(0, 7)
+      const bucket = (k) => (meses[k] = meses[k] || { k, produccion: 0, scrap: 0, embPz: 0, embMonto: 0, compras: 0, mttoCobrable: 0 })
+      for (let y = y1; y <= y2; y++) for (let m = 1; m <= 12; m++) bucket(`${y}-${String(m).padStart(2, '0')}`)
+
+      ;(rep.data || []).filter(r => !sid || r.ordenes_trabajo?.site_id === sid).forEach(r => {
+        const b = bucket(key(r.fecha)); b.produccion += Number(r.cantidad_ok) || 0; b.scrap += Number(r.cantidad_scrap) || 0
+      })
+      const embOK = (emb.data || []).filter(e => !sid || e.site_id === sid)
+      const embMap = {}; embOK.forEach(e => { embMap[e.id] = key(e.fecha) })
+      ;(embL.data || []).forEach(l => {
+        const k = embMap[l.embarque_id]; if (!k) return
+        const b = bucket(k); const q = Number(l.cantidad) || 0
+        b.embPz += q; b.embMonto += q * (precio[l.articulo_id] || 0)
+      })
+      ;(ocs.data || []).filter(o => (!sid || o.site_id === sid) && o.estatus !== 'cancelada').forEach(o => {
+        bucket(key(o.fecha_emision)).compras += Number(o.total) || 0
+      })
+      ;(mm.data || []).filter(m => m.es_cobrable).forEach(m => {
+        bucket(key(m.created_at)).mttoCobrable += Number(m.monto_cobrado) || 0
+      })
+
+      const MES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+      setSerie(Object.values(meses).sort((a, b) => a.k.localeCompare(b.k)).map(x => {
+        const [yy, mm2] = x.k.split('-')
+        return { ...x, mes: y1 === y2 ? MES[Number(mm2) - 1] : `${MES[Number(mm2) - 1]} ${yy.slice(2)}` }
+      }))
+    } catch (e) { setSerie([]) }
+    setCargandoG(false)
   }
 
   const cargar = async () => {
@@ -154,8 +220,130 @@ export default function ReportesEjecutivos() {
     : periodo === 'mes' ? 'Este mes'
     : `${fmtDia(fIni)} al ${fmtDia(fFin)}`
 
+
+  // ---------- Bloque de graficas mensuales ----------
+  const anios = []
+  for (let y = new Date().getFullYear(); y >= new Date().getFullYear() - 6; y--) anios.push(y)
+  const tot = (campo) => serie.reduce((a, b) => a + (Number(b[campo]) || 0), 0)
+  const pctScrap = tot('produccion') + tot('scrap') > 0 ? (tot('scrap') / (tot('produccion') + tot('scrap')) * 100) : 0
+
+  const graficas = (
+    <div style={styles.graficas}>
+      <div style={styles.gHead}>
+        <h3 style={styles.gTitulo}>Tendencia mensual</h3>
+        <div style={styles.gFiltros} className="no-imprimir">
+          <div style={styles.segment}>
+            {[['anio', 'Ano actual'], ['rango', 'Rango de anos']].map(([k, l]) => (
+              <button key={k} onClick={() => setGMode(k)} style={{ ...styles.segBtn, ...(gMode === k ? styles.segOn : {}) }}>{l}</button>
+            ))}
+          </div>
+          {gMode === 'anio' ? (
+            <select style={styles.fecha} value={gAnio} onChange={e => setGAnio(Number(e.target.value))}>
+              {anios.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          ) : (
+            <span style={styles.rangoBox}>
+              <label style={styles.rangoLbl}>De</label>
+              <select style={styles.fecha} value={gDesde} onChange={e => setGDesde(Number(e.target.value))}>
+                {anios.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+              <label style={styles.rangoLbl}>a</label>
+              <select style={styles.fecha} value={gHasta} onChange={e => setGHasta(Number(e.target.value))}>
+                {anios.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </span>
+          )}
+        </div>
+        <span style={styles.gPeriodo}>{gMode === 'anio' ? gAnio : `${Math.min(gDesde, gHasta)} - ${Math.max(gDesde, gHasta)}`}</span>
+      </div>
+
+      {cargandoG ? <p style={{ color: '#94a3b8', fontSize: 13 }}>Calculando tendencia...</p> : (
+        <>
+          <div style={styles.gGrid}>
+            <div style={styles.gCard}>
+              <p style={styles.gSub}>Produccion vs Scrap (piezas) · scrap {pctScrap.toFixed(1)}%</p>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={serie}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v) => fmt(v)} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="produccion" name="Produccion OK" fill="#0369a1" />
+                  <Bar dataKey="scrap" name="Scrap" fill="#dc2626" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div style={styles.gCard}>
+              <p style={styles.gSub}>Embarques - piezas y monto</p>
+              <ResponsiveContainer width="100%" height={240}>
+                <ComposedChart data={serie}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="l" tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v, n) => n === 'Monto' ? fmtDin(v) : fmt(v)} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar yAxisId="l" dataKey="embPz" name="Piezas" fill="#0891b2" />
+                  <Line yAxisId="r" type="monotone" dataKey="embMonto" name="Monto" stroke="#15803d" strokeWidth={2} dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div style={{ ...styles.gCard, gridColumn: '1 / -1' }}>
+              <p style={styles.gSub}>Compras y mantenimiento de molde cobrable (monto)</p>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={serie}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v) => fmtDin(v)} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Line type="monotone" dataKey="compras" name="Compras" stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="mttoCobrable" name="Mtto molde cobrable" stroke="#7c3aed" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div style={styles.gTotales}>
+            <span>Produccion: <b>{fmt(tot('produccion'))}</b></span>
+            <span style={{ color: '#dc2626' }}>Scrap: <b>{fmt(tot('scrap'))}</b> ({pctScrap.toFixed(1)}%)</span>
+            <span style={{ color: '#0891b2' }}>Embarcado: <b>{fmt(tot('embPz'))}</b> pz · <b>{fmtDin(tot('embMonto'))}</b></span>
+            <span style={{ color: '#2563eb' }}>Compras: <b>{fmtDin(tot('compras'))}</b></span>
+            <span style={{ color: '#7c3aed' }}>Mtto cobrable: <b>{fmtDin(tot('mttoCobrable'))}</b></span>
+          </div>
+        </>
+      )}
+    </div>
+  )
+
   return (
     <div style={styles.container} className="aparecer">
+      {/* Encabezado que SOLO aparece al imprimir */}
+      <style>{`
+        @media print {
+          @page { size: letter portrait; margin: 12mm; }
+          .solo-imprimir { display: flex !important; }
+          .no-imprimir { display: none !important; }
+        }
+      `}</style>
+      <div style={styles.hojaHead} className="solo-imprimir">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          {empresa?.logo_url && <img src={empresa.logo_url} alt="" style={{ height: '52px', objectFit: 'contain' }} />}
+          <div>
+            <div style={{ fontSize: '17px', fontWeight: 800, color: '#1a1a2e' }}>{empresa?.nombre || 'SYNTIA'}</div>
+            <div style={{ fontSize: '13px', color: '#334155' }}>Reporte Ejecutivo - {tab === 'director' ? 'Direccion' : tab === 'planta' ? 'Gerencia de Planta / Administrativa' : 'Gerencia de Area'}</div>
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', fontSize: '11.5px', color: '#475569', lineHeight: 1.6 }}>
+          <div><b>Site:</b> {siteEfectivo(perfil, site) ? (sitesCat.find(x => x.id === siteEfectivo(perfil, site))?.nombre || '-') : 'Todos los sites'}</div>
+          <div><b>Filtro:</b> {periodo === 'hoy' ? 'Hoy' : periodo === 'semana' ? 'Semana' : periodo === 'mes' ? 'Mes' : 'Rango'} - {periodoLbl}</div>
+          <div><b>Impreso:</b> {new Date().toLocaleString('es-MX')}</div>
+        </div>
+      </div>
+
       <div style={styles.top} className="no-imprimir">
         <div>
           <h2 style={styles.titulo}>Reportes Ejecutivos</h2>
@@ -289,6 +477,8 @@ export default function ReportesEjecutivos() {
           )}
         </>
       )}
+
+      {!loading && !d?.error && graficas}
     </div>
   )
 }
@@ -331,5 +521,15 @@ const styles = {
   cardT: { fontSize: '12.5px', color: '#64748b', margin: '0 0 8px', fontWeight: '500' },
   cardV: { fontSize: '28px', fontWeight: '700', margin: 0, lineHeight: 1 },
   cardSub: { fontSize: '11.5px', color: '#94a3b8', margin: '6px 0 0' },
+  hojaHead: { display: 'none', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #1a1a2e', paddingBottom: '10px', marginBottom: '14px' },
+  graficas: { backgroundColor: '#fff', border: '1px solid #eef2f7', borderRadius: '12px', padding: '16px 18px', marginTop: '18px' },
+  gHead: { display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', marginBottom: '10px' },
+  gTitulo: { fontSize: '15px', fontWeight: 700, color: '#1a1a2e', margin: 0 },
+  gFiltros: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
+  gPeriodo: { marginLeft: 'auto', fontSize: '12px', color: '#64748b', fontWeight: 600 },
+  gGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '16px' },
+  gCard: { border: '1px solid #f1f5f9', borderRadius: '10px', padding: '10px 8px 4px' },
+  gSub: { fontSize: '12.5px', fontWeight: 600, color: '#334155', margin: '0 0 6px 8px' },
+  gTotales: { display: 'flex', gap: '20px', flexWrap: 'wrap', marginTop: '12px', paddingTop: '10px', borderTop: '1px solid #f1f5f9', fontSize: '13px', color: '#334155' },
   err: { color: '#dc2626', fontSize: '13px', padding: '14px' },
 }
