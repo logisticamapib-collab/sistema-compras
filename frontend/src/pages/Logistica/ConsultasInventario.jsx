@@ -36,17 +36,20 @@ export default function ConsultasInventario() {
   const [fAlmacen, setFAlmacen] = useState('')
   const [fCalidad, setFCalidad] = useState('')
   const [expandido, setExpandido] = useState(null)
+  const [almAbierto, setAlmAbierto] = useState({})
+  const [contenedores, setContenedores] = useState([])
 
   useEffect(() => { cargarDatos() }, [site])
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [art, cat, cli, ac, alm, ubi, lot, ex, prov, ap] = await Promise.all([
+    const [art, cat, cli, ac, alm, cont, ubi, lot, ex, prov, ap] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, categoria_id, origen, es_consigna, stock_minimo').eq('empresa_id', perfil.empresa_id).eq('activo', true),
       supabase.from('categorias').select('*'),
       supabase.from('clientes').select('id, nombre').eq('activo', true),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id').eq('activo', true),
       supabase.from('almacenes').select('*'),
+      supabase.from('contenedores').select('id, folio, tipo, lote_id, articulo_id, cantidad, almacen_id, ubicacion_id').eq('empresa_id', perfil.empresa_id).eq('estatus', 'activo'),
       supabase.from('ubicaciones').select('*'),
       supabase.from('lotes').select('id, articulo_id, codigo_lote, estatus_calidad'),
       supabase.from('existencias').select('*'),
@@ -61,6 +64,7 @@ export default function ConsultasInventario() {
     setAlmacenes(alm.data || [])
     setUbicaciones(ubi.data || [])
     setLotes(lot.data || [])
+    setContenedores(cont.data || [])
     setExistencias(((ex.data) || []).filter(x => { if (!_sid) return true; const _a = (al.data || []).find(z => z.id === x.almacen_id); return _a && _a.site_id === _sid }))
     setProveedores(prov.data || [])
     setArtProveedor(ap.data || [])
@@ -106,6 +110,19 @@ export default function ConsultasInventario() {
   })
   grupos.forEach(g => {
     g.filas.sort((a, b) => (almDe(a.almacen_id)?.clave || '').localeCompare(almDe(b.almacen_id)?.clave || ''))
+    // Nivel 2: por ALMACEN  |  Nivel 3: por LOTE con sus CAJAS
+    const porAlm = {}
+    g.filas.forEach(f => {
+      const a = (porAlm[f.almacen_id] = porAlm[f.almacen_id] || { almacen_id: f.almacen_id, total: 0, lotes: {} })
+      a.total += Number(f.cantidad)
+      const l = (a.lotes[f.lote_id] = a.lotes[f.lote_id] || { lote: f._lote, total: 0, ubis: [], cajas: [] })
+      l.total += Number(f.cantidad)
+      l.ubis.push(f.ubicacion_id)
+      l.cajas = contenedores.filter(c => c.lote_id === f.lote_id && c.almacen_id === f.almacen_id && c.tipo === 'caja')
+    })
+    g.almacenes = Object.values(porAlm)
+      .map(a => ({ ...a, lotes: Object.values(a.lotes) }))
+      .sort((x, y) => (almDe(x.almacen_id)?.clave || '').localeCompare(almDe(y.almacen_id)?.clave || ''))
     g.retenido = g.filas.filter(f => f._lote.estatus_calidad === 'retenido').reduce((s, f) => s + Number(f.cantidad), 0)
     g.liberado = g.filas.filter(f => f._lote.estatus_calidad === 'liberado').reduce((s, f) => s + Number(f.cantidad), 0)
     g.rechazado = g.filas.filter(f => f._lote.estatus_calidad === 'rechazado').reduce((s, f) => s + Number(f.cantidad), 0)
@@ -227,22 +244,41 @@ export default function ConsultasInventario() {
                   </div>
                   {abierto && (
                     <div style={styles.subTabla}>
-                      <div style={{ ...styles.tablaHeader, backgroundColor: '#fff' }}>
-                        <span style={{ flex: 1.6 }}>Almacen / Ubicacion</span>
-                        <span style={{ flex: 1.2 }}>Lote</span>
-                        <span style={{ flex: 1, textAlign: 'right' }}>Cantidad</span>
-                        <span style={{ flex: 0.9, textAlign: 'center' }}>Calidad</span>
-                      </div>
-                      {g.filas.map(e => (
-                        <div key={e.id} style={{ ...styles.tablaFila, padding: '8px 20px', fontSize: '13px' }}>
-                          <span style={{ flex: 1.6, fontWeight: '500' }}>{almDe(e.almacen_id)?.clave}{e.ubicacion_id ? ` / ${ubiDe(e.ubicacion_id)?.clave}` : ''}</span>
-                          <span style={{ flex: 1.2, color: '#64748b' }}>{e._lote.codigo_lote}</span>
-                          <span style={{ flex: 1, textAlign: 'right', fontWeight: '600' }}>{fmtNum(e.cantidad)} {e._art.unidad_medida || ''}</span>
-                          <span style={{ flex: 0.9, textAlign: 'center' }}>
-                            <span style={{ ...styles.badge, ...(e._lote.estatus_calidad === 'liberado' ? styles.badgeVerde : e._lote.estatus_calidad === 'rechazado' ? styles.badgeRojo : styles.badgeAmbar) }}>{NOMBRE_CALIDAD[e._lote.estatus_calidad]}</span>
-                          </span>
-                        </div>
-                      ))}
+                      {g.almacenes.map(a => {
+                        const key = `${g.articulo_id}-${a.almacen_id}`
+                        const abiertoAlm = !!almAbierto[key]
+                        return (
+                          <div key={a.almacen_id}>
+                            <div style={{ ...styles.tablaFila, padding: '8px 20px', fontSize: '13px', cursor: 'pointer', backgroundColor: '#f8fafc' }}
+                              onClick={() => setAlmAbierto({ ...almAbierto, [key]: !abiertoAlm })}>
+                              <span style={{ flex: 2.2, fontWeight: 600 }}>{abiertoAlm ? '\u25BC' : '\u25B6'} {almDe(a.almacen_id)?.clave} <span style={{ color: '#94a3b8', fontWeight: 400 }}>{almDe(a.almacen_id)?.nombre}</span></span>
+                              <span style={{ flex: 0.9, textAlign: 'center', color: '#64748b' }}>{a.lotes.length} lote(s)</span>
+                              <span style={{ flex: 1, textAlign: 'right', fontWeight: 700 }}>{fmtNum(a.total)} {g.art.unidad_medida || ''}</span>
+                            </div>
+                            {abiertoAlm && a.lotes.map(l => (
+                              <div key={l.lote.id} style={{ padding: '6px 20px 6px 44px', borderBottom: '1px solid #f1f5f9', fontSize: '12.5px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ flex: 1.4, fontWeight: 600 }}>{l.lote.codigo_lote}</span>
+                                  <span style={{ flex: 1.2, color: '#64748b' }}>{[...new Set(l.ubis.filter(Boolean))].map(u => ubiDe(u)?.clave).filter(Boolean).join(', ') || 'sin ubicacion'}</span>
+                                  <span style={{ flex: 0.8, textAlign: 'right', fontWeight: 600 }}>{fmtNum(l.total)}</span>
+                                  <span style={{ flex: 0.8, textAlign: 'center' }}>
+                                    <span style={{ ...styles.badge, ...(l.lote.estatus_calidad === 'liberado' ? styles.badgeVerde : l.lote.estatus_calidad === 'rechazado' ? styles.badgeRojo : styles.badgeAmbar) }}>{NOMBRE_CALIDAD[l.lote.estatus_calidad] || l.lote.estatus_calidad}</span>
+                                  </span>
+                                </div>
+                                {l.cajas.length > 0 ? (
+                                  <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                                    {l.cajas.map(c => (
+                                      <span key={c.id} style={styles.cajaChip} title={ubiDe(c.ubicacion_id)?.clave || ''}>{c.folio} · {fmtNum(c.cantidad)}</span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div style={{ color: '#94a3b8', fontSize: '11.5px', marginTop: '3px' }}>sin cajas registradas (granel o sin etiquetar)</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -300,6 +336,7 @@ const styles = {
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '11px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
   subTabla: { backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', padding: '2px 0 6px' },
+  cajaChip: { display: 'inline-block', padding: '2px 8px', borderRadius: '5px', backgroundColor: '#eef2ff', color: '#4338ca', fontSize: '11px', fontWeight: 600, border: '1px solid #e0e7ff' },
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '600' },
   badgeVerde: { backgroundColor: '#dcfce7', color: '#16a34a' },
   badgeRojo: { backgroundColor: '#fee2e2', color: '#dc2626' },

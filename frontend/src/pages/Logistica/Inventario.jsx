@@ -41,7 +41,9 @@ export default function Inventario() {
   const [lotes, setLotes] = useState([])
   const [existencias, setExistencias] = useState([])
   const [contenedores, setContenedores] = useState([])
-  const [etq, setEtq] = useState(null)   // { cajas, articulo, lote, empresa }
+  const [etq, setEtq] = useState(null)
+  const [artAbierto, setArtAbierto] = useState({})
+  const [almAbierto2, setAlmAbierto2] = useState({})   // { cajas, articulo, lote, empresa }
   const [movimientos, setMovimientos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -410,6 +412,14 @@ export default function Inventario() {
     g.total += Number(e.cantidad)
     g.filas.push(e)
   })
+  grupos.forEach(g => {
+    const porAlm = {}
+    g.filas.forEach(f => {
+      const a = (porAlm[f.almacen_id] = porAlm[f.almacen_id] || { almacen_id: f.almacen_id, total: 0, filas: [] })
+      a.total += Number(f.cantidad); a.filas.push(f)
+    })
+    g.almacenes = Object.values(porAlm).sort((x, y) => (almDe(x.almacen_id)?.clave || '').localeCompare(almDe(y.almacen_id)?.clave || ''))
+  })
   grupos.sort((a, b) => (artDe(a.articulo_id)?.codigo_interno || '').localeCompare(artDe(b.articulo_id)?.codigo_interno || ''))
 
   const badgeCal = (est) => est === 'liberado' ? styles.badgeVerde : est === 'rechazado' ? styles.badgeRojo : styles.badgeAmbar
@@ -569,12 +579,22 @@ export default function Inventario() {
                 const art = artDe(g.articulo_id)
                 return (
                   <div key={g.articulo_id}>
-                    <div style={{ ...styles.tablaFila, backgroundColor: '#f8fafc', fontWeight: '600' }}>
-                      <span style={{ flex: 2.4 }}>{art?.codigo_interno} <span style={{ color: '#64748b', fontWeight: '400', fontSize: '13px' }}>- {art?.descripcion}</span></span>
-                      <span style={{ flex: 3.7, color: '#64748b', fontSize: '13px', fontWeight: '400' }}>Total: {fmtNum(g.total)} {art?.unidad_medida || 'pzas'}{art?.flujo_id ? '' : ' - (sin flujo asignado)'}</span>
+                    <div style={{ ...styles.tablaFila, backgroundColor: '#f8fafc', fontWeight: '600', cursor: 'pointer' }}
+                      onClick={() => setArtAbierto({ ...artAbierto, [g.articulo_id]: !artAbierto[g.articulo_id] })}>
+                      <span style={{ flex: 2.4 }}>{artAbierto[g.articulo_id] ? '\u25BC' : '\u25B6'} {art?.codigo_interno} <span style={{ color: '#64748b', fontWeight: '400', fontSize: '13px' }}>- {art?.descripcion}</span></span>
+                      <span style={{ flex: 3.7, color: '#64748b', fontSize: '13px', fontWeight: '400' }}>Disponible: <b style={{ color: '#1a1a2e' }}>{fmtNum(g.total)}</b> {art?.unidad_medida || 'pzas'} · {g.almacenes.length} almacen(es){art?.flujo_id ? '' : ' - (sin flujo asignado)'}</span>
                       <span style={{ width: '220px' }}></span>
                     </div>
-                    {g.filas.map(e => {
+                    {artAbierto[g.articulo_id] && g.almacenes.map(a => (
+                      <div key={a.almacen_id}>
+                        <div style={{ ...styles.tablaFila, fontSize: '13px', cursor: 'pointer', backgroundColor: '#fcfdff' }}
+                          onClick={() => setAlmAbierto2({ ...almAbierto2, [`${g.articulo_id}-${a.almacen_id}`]: !almAbierto2[`${g.articulo_id}-${a.almacen_id}`] })}>
+                          <span style={{ flex: 2.4, paddingLeft: '12px', fontWeight: 600 }}>{almAbierto2[`${g.articulo_id}-${a.almacen_id}`] ? '\u25BC' : '\u25B6'} {almDe(a.almacen_id)?.clave} <span style={{ color: '#94a3b8', fontWeight: 400 }}>{almDe(a.almacen_id)?.nombre}</span></span>
+                          <span style={{ flex: 2.4, color: '#64748b' }}>{a.filas.length} lote(s)</span>
+                          <span style={{ flex: 1, textAlign: 'right', fontWeight: 700 }}>{fmtNum(a.total)}</span>
+                          <span style={{ width: '220px' }}></span>
+                        </div>
+                        {almAbierto2[`${g.articulo_id}-${a.almacen_id}`] && a.filas.map(e => {
                       const lote = e._lote
                       const puedeTraspaso = puedeMover && Number(e.cantidad) > 0
                       return (
@@ -609,6 +629,8 @@ export default function Inventario() {
                         </div>
                       )
                     })}
+                      </div>
+                    ))}
                   </div>
                 )
               })}

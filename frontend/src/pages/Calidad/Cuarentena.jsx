@@ -55,7 +55,7 @@ export default function Cuarentena() {
     const [lo, ex, ev, sa, ca, cj, ar, no, al, ub, us, pa] = await Promise.all([
       supabase.from('lotes').select('*, articulo:articulos(codigo_interno, descripcion, origen)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('existencias').select('*'),
-      supabase.from('cuarentena_eventos').select('*, envio:usuarios!cuarentena_eventos_enviado_por_fkey(nombre)').eq('empresa_id', emp).order('id', { ascending: false }),
+      supabase.from('cuarentena_eventos').select('*').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('cuarentena_salidas').select('*').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('causas_scrap').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true),
       supabase.from('contenedores').select('*').eq('empresa_id', emp).eq('estatus', 'activo').eq('tipo', 'caja').order('folio'),
