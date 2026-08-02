@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 
 const DIAS_AVISO_VENCIMIENTO = 30
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function LiberacionesCalidad() {
   const { perfil, tienePermiso } = useAuth()
@@ -222,7 +225,14 @@ export default function LiberacionesCalidad() {
   const BloqueDocumento = ({ tipo, url, nombre, vigencia }) => {
     const vencido = vigencia && vigencia < hoy
     const porVencer = vigencia && !vencido && vigencia <= fechaAviso
-    return (
+    const colsExp = [
+    { label: 'Articulo', get: r => articulos.find(a => a.id === r.articulo_id)?.codigo_interno || '' },
+    { label: 'Documento', get: r => r.nombre || r.tipo || '' },
+    { label: 'Vigencia', get: r => r.vigencia || '' },
+    { label: 'Libero', get: r => r.liberador?.nombre || '' },
+    { label: 'Fecha', get: r => r.created_at ? new Date(r.created_at).toLocaleDateString('es-MX') : '' },
+  ]
+  return (
       <div style={styles.campo}>
         <label style={styles.label}>{tipo === 'PSW' ? 'PSW (Part Submission Warrant)' : 'PPAP (Production Part Approval Process)'}</label>
         {url
@@ -255,6 +265,10 @@ export default function LiberacionesCalidad() {
     <div style={styles.container}>
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Liberacion de Calidad</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('liberaciones_calidad', colsExp, liberaciones)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Liberacion de Calidad', colsExp, liberaciones)}>PDF</button>
+      </div>
       </div>
 
       {error && <p style={styles.error}>{error}</p>}

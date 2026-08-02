@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
@@ -8,6 +9,8 @@ import { siteEfectivo } from '../../lib/sites'
 // articulo, atencion especial en piso). Pueden ligarse a una no conformidad.
 const fFecha = (f) => f ? new Date(f).toLocaleDateString('es-MX') : '-'
 const SEV = ['menor', 'mayor', 'critica']
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function AlertasCalidad() {
   const { perfil, tienePermiso } = useAuth()
@@ -49,12 +52,22 @@ export default function AlertasCalidad() {
   const toggleVigente = async (a) => { await supabase.from('calidad_alertas').update({ vigente: !a.vigente }).eq('id', a.id); cargar() }
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
+  const colsExp = [
+    { label: 'Folio', get: r => r.folio || '' }, { label: 'Titulo', get: r => r.titulo || '' },
+    { label: 'Articulo', get: r => r.articulo?.codigo_interno || '' }, { label: 'Defecto', get: r => r.defecto?.nombre || '' },
+    { label: 'Severidad', get: r => r.severidad || '' }, { label: 'Area', get: r => r.area || '' },
+    { label: 'Vigente', get: r => r.vigente ? 'Si' : 'No' }, { label: 'Vence', get: r => r.vence || '' },
+  ]
   const lista = alertas.filter(a => filtro === 'vigentes' ? a.vigente : filtro === 'historial' ? !a.vigente : true)
 
   return (
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}><h2 style={styles.titulo}>Alertas de calidad</h2>
-      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>{puedeCrear && <button style={styles.boton} onClick={abrirNueva}>Nueva alerta</button>}</div>
+      <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('alertas_calidad', colsExp, lista)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Alertas de Calidad', colsExp, lista)}>PDF</button>
+      </div>{puedeCrear && <button style={styles.boton} onClick={abrirNueva}>Nueva alerta</button>}</div>
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
 

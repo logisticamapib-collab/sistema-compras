@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 
 // Requisitos de calidad por articulo-proveedor (los administra Calidad/SQA).
@@ -8,6 +9,8 @@ import { useAuth } from '../../context/AuthContext'
 
 const fmtFecha = (f) => f ? new Date(f + 'T00:00:00').toLocaleDateString('es-MX') : '-'
 const hoy = () => new Date().toISOString().split('T')[0]
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function RequisitosProveedor() {
   const { perfil, tienePermiso } = useAuth()
@@ -84,6 +87,13 @@ export default function RequisitosProveedor() {
     return { txt: `Vigente a ${fmtFecha(rel.ppap_vigencia)}`, color: '#16a34a' }
   }
 
+  const colsExp = [
+    { label: 'Articulo', get: r => r._art?.codigo_interno || '' },
+    { label: 'Proveedor', get: r => r._prov?.nombre || '' },
+    { label: 'Requisito', get: r => r.requisito || r.tipo || '' },
+    { label: 'Estatus', get: r => r.estatus || '' },
+    { label: 'Vigencia', get: r => r.vigencia || '' },
+  ]
   const filas = rels.map(r => ({ ...r, _art: artDe(r.articulo_id), _prov: provDe(r.proveedor_id) }))
     .filter(r => r._art && r._prov)
     .filter(r => {
@@ -99,6 +109,10 @@ export default function RequisitosProveedor() {
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Requisitos de Proveedor</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('requisitos_proveedor', colsExp, filas)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Requisitos de Proveedor', colsExp, filas)}>PDF</button>
+      </div>
       </div>
       <div style={styles.tabs}>
         {[['requisitos', 'Requisitos por articulo-proveedor'], ['desviaciones', `Desviaciones PPAP${desviaciones.filter(d => d.activo && d.vigente_hasta >= hoy()).length ? ` (${desviaciones.filter(d => d.activo && d.vigente_hasta >= hoy()).length})` : ''}`]].map(([id, n]) => (

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
@@ -14,6 +15,8 @@ const SEV = ['menor', 'mayor', 'critica']
 const DISPOS = [['pendiente', 'Pendiente'], ['retrabajo', 'Retrabajo'], ['scrap', 'Scrap'], ['uso_como_esta', 'Uso como esta'], ['devolucion', 'Devolucion'], ['clasificar', 'Clasificar/seleccionar']]
 const ESTS = [['abierta', 'Abierta'], ['en_analisis', 'En analisis'], ['contenida', 'Contenida'], ['en_accion', 'En accion'], ['cerrada', 'Cerrada']]
 const TIPO_ACC = [['contencion', 'Contencion'], ['correctiva', 'Correctiva'], ['preventiva', 'Preventiva']]
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function NoConformidades() {
   const { perfil, tienePermiso } = useAuth()
@@ -219,10 +222,21 @@ export default function NoConformidades() {
     )
   }
 
+  const colsExp = [
+    { label: 'Folio', get: r => r.folio }, { label: 'Fecha', get: r => r.fecha },
+    { label: 'Articulo', get: r => r.articulo?.codigo_interno || '' }, { label: 'Defecto', get: r => r.defecto?.nombre || '' },
+    { label: 'Cantidad', get: r => r.cantidad_afectada }, { label: 'Severidad', get: r => r.severidad || '' },
+    { label: 'Disposicion', get: r => r.disposicion || '' }, { label: 'Estatus', get: r => r.estatus || '' },
+    { label: 'Cliente', get: r => r.cliente?.nombre || '' }, { label: 'Proveedor', get: r => r.proveedor?.nombre || '' },
+  ]
   const lista = ncs.filter(o => filtro === 'todas' ? true : filtro === 'abiertas' ? o.estatus !== 'cerrada' && o.estatus !== 'cancelada' : o.estatus === 'cerrada')
   return (
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}><h2 style={styles.titulo}>No conformidades</h2>{puedeCrear && <button style={styles.boton} onClick={abrirNueva}>Nueva NC</button>}</div>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('no_conformidades', colsExp, lista)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('No Conformidades', colsExp, lista)}>PDF</button>
+      </div>
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
       <div style={styles.tabs}>{[['abiertas', 'Abiertas'], ['cerradas', 'Cerradas'], ['todas', 'Todas']].map(([id, n]) => <button key={id} style={filtro === id ? styles.tabAct : styles.tab} onClick={() => setFiltro(id)}>{n}</button>)}</div>

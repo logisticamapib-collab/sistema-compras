@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
@@ -17,6 +18,8 @@ const fmt = (n) => (Number(n) || 0).toLocaleString('es-MX')
 const fFecha = (f) => f ? new Date(f).toLocaleDateString('es-MX') : '-'
 const esRolCalidad = (r) => ['gerente_calidad', 'admin'].includes(r)
 const esRolPlanta = (r) => ['gerente_planta', 'admin'].includes(r)
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function Cuarentena() {
   const { perfil, tienePermiso } = useAuth()
@@ -297,6 +300,34 @@ export default function Cuarentena() {
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
 
+  const colsCuar = [
+    { label: 'Caja', get: r => r.contenedor_folio || '' },
+    { label: 'Lote', get: r => lotes.find(x => x.id === r.lote_id)?.codigo_lote || '' },
+    { label: 'Articulo', get: r => articulos.find(a => a.id === r.articulo_id)?.codigo_interno || '' },
+    { label: 'Cantidad', get: r => r.cantidad }, { label: 'SNP', get: r => r.snp || '' },
+    { label: 'Causa', get: r => r.causa || '' }, { label: 'Estatus', get: r => r.estatus },
+    { label: 'Enviado', get: r => r.enviado_at ? new Date(r.enviado_at).toLocaleString('es-MX') : '' },
+    { label: 'Envio', get: r => nombreUsr(r.enviado_por) },
+  ]
+  const colsSal = [
+    { label: 'Caja', get: r => lotes.find(x => x.id === r.lote_id)?.codigo_lote || '' },
+    { label: 'Disposicion', get: r => r.disposicion }, { label: 'Cantidad', get: r => r.cantidad },
+    { label: 'Nota', get: r => r.nota || '' }, { label: 'Estatus', get: r => r.estatus },
+    { label: 'Firma Calidad', get: r => nombreUsr(r.auth_calidad_por) },
+    { label: 'Firma Planta', get: r => r.requiere_planta ? nombreUsr(r.auth_planta_por) : '' },
+    { label: 'Aplicado', get: r => r.aplicado_at ? new Date(r.aplicado_at).toLocaleString('es-MX') : '' },
+  ]
+  const expCfg = {
+    cuarentena: { n: 'cuarentena_actual', t: 'Material en Cuarentena', cols: colsCuar, filas: () => enCuarentena },
+    enviar: { n: 'cajas_disponibles', t: 'Cajas disponibles', cols: [
+      { label: 'Caja', get: c => c.folio }, { label: 'Lote', get: c => lotes.find(x => x.id === c.lote_id)?.codigo_lote || '' },
+      { label: 'Articulo', get: c => articulos.find(a => a.id === c.articulo_id)?.codigo_interno || '' },
+      { label: 'Almacen', get: c => almDe(c.almacen_id)?.clave || '' }, { label: 'Ubicacion', get: c => ubiDe(c.ubicacion_id)?.clave || '' },
+      { label: 'Cantidad', get: c => c.cantidad },
+    ], filas: () => cajasDisponibles },
+    autorizar: { n: 'disposiciones_pendientes', t: 'Disposiciones por autorizar', cols: colsSal, filas: () => pendientes },
+    historial: { n: 'historial_cuarentena', t: 'Historial de Cuarentena', cols: colsSal, filas: () => salidas.filter(x => x.estatus === 'aplicada') },
+  }
   const enCuarentena = eventos.filter(e => ['en_cuarentena', 'parcial'].includes(e.estatus))
   const lotesEnCuarentena = new Set(lotes.filter(l => l.estatus_calidad === 'cuarentena').map(l => l.id))
   const cajasDisponibles = cajas.filter(c => !lotesEnCuarentena.has(c.lote_id) && Number(c.cantidad) > 0
@@ -316,6 +347,13 @@ export default function Cuarentena() {
           <button key={id} style={vista === id ? styles.tabAct : styles.tab} onClick={() => { setError(''); setExito(''); setVista(id) }}>{n}</button>
         ))}
       </div>
+
+      {expCfg[vista] && (
+        <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+          <button style={EXP_BTN} onClick={() => exportarExcel(expCfg[vista].n, expCfg[vista].cols, expCfg[vista].filas())}>Excel</button>
+          <button style={EXP_BTN} onClick={() => imprimirTablaPDF(expCfg[vista].t, expCfg[vista].cols, expCfg[vista].filas())}>PDF</button>
+        </div>
+      )}
 
       {vista === 'cuarentena' && (
         <div style={styles.tabla}>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
@@ -11,6 +12,8 @@ import { siteEfectivo } from '../../lib/sites'
 const fmtNum = (n) => (Number(n) || 0).toLocaleString('es-MX')
 const fmtFecha = (f) => f ? new Date(f).toLocaleDateString('es-MX') : '-'
 const NOMBRE_ORIGEN = { inicial: 'Inicial', produccion: 'Produccion', compra: 'Compra', ajuste: 'Ajuste' }
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function BandejaLiberacion() {
   const { perfil, tienePermiso } = useAuth()
@@ -80,6 +83,11 @@ export default function BandejaLiberacion() {
   }
 
   // Lotes con existencia > 0, filtrados por estatus y texto
+  const colsExp = [
+    { label: 'Lote', get: r => r.codigo_lote }, { label: 'Articulo', get: r => articulos.find(a => a.id === r.articulo_id)?.codigo_interno || '' },
+    { label: 'Fecha', get: r => r.fecha || '' }, { label: 'Origen', get: r => r.origen || '' },
+    { label: 'Calidad', get: r => r.estatus_calidad || '' }, { label: 'Libero', get: r => r.liberador?.nombre || '' },
+  ]
   const lista = lotes
     .map(l => ({ ...l, _art: artDe(l.articulo_id), _total: totalDe(l.id) }))
     .filter(l => l._art && l._total > 0)
@@ -100,6 +108,10 @@ export default function BandejaLiberacion() {
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Liberacion de Lotes</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('liberacion_lotes', colsExp, lista)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Liberacion de Lotes', colsExp, lista)}>PDF</button>
+      </div>
       <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
         <span style={{ fontSize: '13px', color: nRetenidos ? '#b45309' : '#16a34a', fontWeight: '600' }}>
           {nRetenidos} lote(s) retenidos por liberar

@@ -24,6 +24,10 @@ const NOMBRE_CALIDAD = { retenido: 'Retenido', liberado: 'Liberado', rechazado: 
 const NOMBRE_MOV = {
   entrada_inicial: 'Entrada inicial', ajuste_positivo: 'Ajuste (+)', ajuste_negativo: 'Ajuste (-)',
   traspaso: 'Traspaso', liberacion_calidad: 'Liberacion calidad', rechazo_calidad: 'Rechazo calidad',
+  consumo_produccion: 'Consumo produccion', entrada_produccion: 'Entrada produccion',
+  salida_embarque: 'Salida embarque', salida_maquila: 'Salida maquila', entrada_maquila: 'Entrada maquila',
+  consumo_maquila: 'Consumo maquila', cuarentena: 'Cuarentena', scrap: 'Scrap', retrabajo: 'Retrabajo',
+  surtido_produccion: 'Surtido a produccion', retorno_suministro: 'Retorno de suministro',
 }
 
 export default function Inventario() {
@@ -719,10 +723,12 @@ export default function Inventario() {
                     <div key={m.id} style={{ ...styles.tablaFila, fontSize: '13px' }} className="fila-hover">
                       <span style={{ flex: 1.3, color: '#64748b' }}>{fmtFechaHora(m.fecha)}</span>
                       <span style={{ flex: 1.2 }}>
-                        <span style={{ ...styles.badge, ...(m.fuera_flujo ? styles.badgeRojo : styles.badgeGris) }}>{NOMBRE_MOV[m.tipo]}</span>
+                        <span style={{ ...styles.badge, ...(m.fuera_flujo ? styles.badgeRojo : styles.badgeGris) }}>{NOMBRE_MOV[m.tipo] || (m.tipo || '').replace(/_/g, ' ')}</span>
                       </span>
                       <span style={{ flex: 1.8 }}>{a2?.codigo_interno} <span style={{ color: '#94a3b8' }}>/ {loteDe(m.lote_id)?.codigo_lote}</span></span>
-                      <span style={{ flex: 1.6, color: '#64748b' }}>{oa || '-'} &rarr; {da || '-'}</span>
+                      <span style={{ flex: 1.6, color: '#64748b' }}>
+                        {oa ? `${oa}${m.ubicacion_origen_id ? ' / ' + (ubiDe(m.ubicacion_origen_id)?.clave || '') : ''}` : '-'} &rarr; {da ? `${da}${m.ubicacion_destino_id ? ' / ' + (ubiDe(m.ubicacion_destino_id)?.clave || '') : ''}` : '-'}
+                      </span>
                       <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600' }}>{fmtNum(m.cantidad)}</span>
                       {esKardex && <span style={{ flex: 0.8, textAlign: 'right', fontWeight: '600', color: '#2563eb' }}>{fmtNum(m._saldo)}</span>}
                       <span style={{ flex: 1.3, color: '#64748b', fontSize: '12px' }}>{m.usuario?.nombre}{m.motivo ? ` - ${m.motivo}` : ''}{m.justificacion ? ` - ${m.justificacion}` : ''}</span>

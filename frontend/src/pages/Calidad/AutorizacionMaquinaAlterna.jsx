@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 
 // Ultimo eslabon del cambio de maquina: Ingenieria ya valido y adjunto el PPAP o la
@@ -8,6 +9,8 @@ import { useAuth } from '../../context/AuthContext'
 
 const fFecha = (t) => t ? new Date(t).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '-'
 const fDia = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('es-MX') : '-'
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function AutorizacionMaquinaAlterna() {
   const { perfil, tienePermiso } = useAuth()
@@ -80,11 +83,27 @@ export default function AutorizacionMaquinaAlterna() {
   }
 
   if (loading) return <p style={{ padding: 28, color: '#666' }}>Cargando...</p>
+  const colsExp = [
+    { label: 'OT', get: r => otDe(r.ot_id)?.folio || r.ot_id },
+    { label: 'Articulo', get: r => artDe(r.articulo_id)?.codigo_interno || '' },
+    { label: 'Maquina actual', get: r => maqDe(r.maquina_actual_id)?.clave || '' },
+    { label: 'Maquina solicitada', get: r => maqDe(r.maquina_solicitada_id)?.clave || '' },
+    { label: 'Motivo', get: r => r.motivo || '' },
+    { label: 'Documento', get: r => r.doc_tipo || '' },
+    { label: 'Vigencia doc', get: r => r.doc_vigencia || '' },
+    { label: 'Estatus', get: r => r.estatus },
+    { label: 'Ingenieria', get: r => usrDe(r.aut_ing_por) },
+    { label: 'Calidad', get: r => usrDe(r.aut_cal_por) },
+  ]
   const pend = sols.filter(x => x.estatus === 'pendiente_calidad')
 
   return (
     <div style={S.c} className="aparecer">
       <h2 style={S.t}>Autorizacion de Maquina Alterna</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('autorizacion_maquina_alterna', colsExp, sols)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Autorizacion de Maquina Alterna', colsExp, sols)}>PDF</button>
+      </div>
       <p style={S.sub}>Ingenieria ya valido el cambio y adjunto el <b>PPAP</b> o la <b>Desviacion</b>. Calidad revisa el documento y libera; hasta entonces la OT no se mueve.</p>
       {error && <p style={S.err}>{error}</p>}
       {exito && <p style={S.ok}>{exito}</p>}
