@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
 
@@ -12,6 +13,8 @@ const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX')
 const hoy = () => new Date().toISOString().split('T')[0]
 const fFecha = (f) => f ? new Date(f + 'T00:00:00').toLocaleDateString('es-MX') : '-'
 const addDias = (fecha, d) => { const x = new Date(fecha + 'T00:00:00'); x.setDate(x.getDate() + Number(d)); return x.toISOString().split('T')[0] }
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function CalendarioMtto() {
   const { perfil, tienePermiso } = useAuth()
@@ -69,6 +72,15 @@ export default function CalendarioMtto() {
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
 
   const evaluados = moldes.map(m => ({ m, ev: evaluar(m) }))
+  const colsExp = [
+    { label: 'Molde', get: x => x.m.clave }, { label: 'Nombre', get: x => x.m.nombre },
+    { label: 'Shots acumulados', get: x => x.m.shots_acumulados },
+    { label: 'Alerta min', get: x => x.m.shots_alerta_min },
+    { label: 'Ultimo mtto', get: x => x.m.fecha_ultimo_mtto || '' },
+    { label: 'Periodicidad (dias)', get: x => x.m.periodicidad_mtto_dias || '' },
+    { label: 'Estado', get: x => (x.m.estado || '').replace(/_/g, ' ') },
+    { label: 'Situacion', get: x => x.ev?.motivo || x.ev?.nivel || '' },
+  ]
   const vencidos = evaluados.filter(x => (x.ev.dueShots || x.ev.dueCal) && !x.ev.tieneOrden)
   const resto = evaluados.filter(x => !((x.ev.dueShots || x.ev.dueCal) && !x.ev.tieneOrden))
 
@@ -95,6 +107,10 @@ export default function CalendarioMtto() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Calendario / Programa de mantenimiento</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('calendario_mtto', colsExp, evaluados)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Calendario de Mantenimiento de Moldes', colsExp, evaluados)}>PDF</button>
+      </div>
       <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       <p style={styles.sub}>Preventivo automatico por <b>shots</b> (&ge; alerta) y por <b>periodicidad</b> (dias desde el ultimo mtto, se define en cada molde). Genera la orden con un clic; queda programada hasta que se inicia.</p>
       {error && <p style={styles.error}>{error}</p>}

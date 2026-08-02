@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
 
@@ -17,6 +18,8 @@ const CAUSAS = [
   { v: 'reparacion_previa_inefectiva', l: 'Reparacion previa inefectiva (reincidencia)' },
   { v: 'otro', l: 'Otro' },
 ]
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function OrdenesMtto() {
   const { perfil, tienePermiso } = useAuth()
@@ -368,11 +371,28 @@ export default function OrdenesMtto() {
   }
 
   // ---------- LISTA (historico) ----------
+  const colsExp = [
+    { label: 'Folio', get: o => o.folio }, { label: 'Molde', get: o => o.molde?.clave || '' },
+    { label: 'Tipo', get: o => o.tipo?.nombre || '' }, { label: 'Causa', get: o => o.causa || '' },
+    { label: 'Origen', get: o => o.motivo_origen || '' }, { label: 'Cliente', get: o => o.cliente?.nombre || '' },
+    { label: 'Maquina', get: o => o.maquina?.clave || '' },
+    { label: 'Cobrable', get: o => o.es_cobrable ? 'Si' : 'No' }, { label: 'Monto', get: o => o.monto_cobrado ?? '' },
+    { label: 'Externo', get: o => o.es_externo ? 'Si' : 'No' }, { label: 'Costo externo', get: o => o.costo_externo ?? '' },
+    { label: 'Shots al abrir', get: o => o.shots_al_abrir ?? '' }, { label: 'Reintentos', get: o => o.reintentos ?? 0 },
+    { label: 'Inicio', get: o => o.fecha_inicio ? new Date(o.fecha_inicio).toLocaleString('es-MX') : '' },
+    { label: 'Fin', get: o => o.fecha_fin ? new Date(o.fecha_fin).toLocaleString('es-MX') : '' },
+    { label: 'Try-out efectivo', get: o => o.tryout_efectiva == null ? '' : (o.tryout_efectiva ? 'Si' : 'No') },
+    { label: 'Estatus', get: o => o.estatus },
+  ]
   const lista = ordenes.filter(o => filtro === 'todas' ? true : filtro === 'abiertas' ? ['programada', 'en_proceso', 'tryout'].includes(o.estatus) : o.estatus === 'cerrada')
   return (
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Ordenes de mantenimiento de molde</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('ordenes_mtto_molde', colsExp, lista)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Ordenes de Mantenimiento de Molde', colsExp, lista)}>PDF</button>
+      </div>
         {puedeCrear && <button style={styles.boton} onClick={abrirNueva}>Nueva orden</button>}
       </div>
       {error && <p style={styles.error}>{error}</p>}

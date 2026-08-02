@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
 
@@ -99,8 +100,8 @@ export default function OrdenesMantto() {
     setError(''); setProc(true)
     try {
       const patch = asig.modo === 'externo'
-        ? { es_externo: true, proveedor_id: asig.proveedor_id ? Number(asig.proveedor_id) : null, costo_externo: asig.costo_externo !== '' ? Number(asig.costo_externo) : null, asignado_a: null, estatus: 'asignada' }
-        : { es_externo: false, asignado_a: asig.asignado_a || null, proveedor_id: null, estatus: 'asignada' }
+        ? { es_externo: true, proveedor_id: asig.proveedor_id ? Number(asig.proveedor_id) : null, costo_externo: asig.costo_externo !== '' ? Number(asig.costo_externo) : null, asignado_a: null, estatus: 'asignada', fecha_asignacion: sel?.fecha_asignacion || new Date().toISOString() }
+        : { es_externo: false, asignado_a: asig.asignado_a || null, proveedor_id: null, estatus: 'asignada', fecha_asignacion: sel?.fecha_asignacion || new Date().toISOString() }
       await supabase.from('mtto_gen_ordenes').update(patch).eq('id', sel.id)
       setExito('Orden asignada.'); await cargar(); await abrirDetalle(sel)
     } catch (err) { setError('Error: ' + err.message) }
@@ -263,29 +264,89 @@ export default function OrdenesMantto() {
     )
   }
 
+  // ---- Tiempos de atencion ----
+  const HORA = 3600000
+  const dur = (desde, hasta) => {
+    if (!desde) return null
+    const fin = hasta ? new Date(hasta) : new Date()
+    const ms = fin - new Date(desde)
+    return ms >= 0 ? ms : null
+  }
+  const fmtDur = (ms) => {
+    if (ms == null) return '-'
+    const h = ms / HORA
+    if (h < 1) return `${Math.round(ms / 60000)} min`
+    if (h < 48) return `${h.toFixed(1)} h`
+    return `${(h / 24).toFixed(1)} d`
+  }
+  const fmtFH = (t) => t ? new Date(t).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' }) : '-'
+  const cierreDe = (o) => o.fecha_cierre || o.fecha_fin || o.conforme_at || null
+  const tRespuesta = (o) => dur(o.created_at, o.fecha_asignacion)      // apertura -> asignacion (o en curso)
+  const tEjecucion = (o) => o.fecha_asignacion ? dur(o.fecha_asignacion, cierreDe(o)) : null
+  const tTotal = (o) => dur(o.created_at, cierreDe(o))
+
+  const colsExp = [
+    { label: 'Folio', get: o => o.folio },
+    { label: 'Titulo', get: o => o.titulo },
+    { label: 'Objeto', get: o => o.objeto === 'maquina' ? (o.maquina?.clave || '') : 'general' },
+    { label: 'Tipo', get: o => o.tipo_trabajo || '' },
+    { label: 'Prioridad', get: o => o.prioridad || '' },
+    { label: 'Realiza', get: o => o.es_externo ? `ext: ${provDe(o.proveedor_id)}` : (o.asignado_a ? usrDe(o.asignado_a) : '') },
+    { label: 'Levantada', get: o => fmtFH(o.created_at) },
+    { label: 'Asignada', get: o => fmtFH(o.fecha_asignacion) },
+    { label: 'Cierre', get: o => fmtFH(cierreDe(o)) },
+    { label: 'Apertura->Asignacion', get: o => fmtDur(tRespuesta(o)) + (o.fecha_asignacion ? '' : ' (sin asignar)') },
+    { label: 'Asignacion->Cierre', get: o => fmtDur(tEjecucion(o)) + (o.fecha_asignacion && !cierreDe(o) ? ' (en curso)' : '') },
+    { label: 'Tiempo total', get: o => fmtDur(tTotal(o)) + (cierreDe(o) ? '' : ' (abierta)') },
+    { label: 'Estatus', get: o => (o.estatus || '').replace(/_/g, ' ') },
+  ]
+
   const lista = ordenes.filter(o => filtro === 'todas' ? true : filtro === 'abiertas' ? !['cerrada', 'cancelada'].includes(o.estatus) : o.estatus === 'cerrada')
   return (
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}><h2 style={styles.titulo}>Ordenes de mantenimiento</h2>{puedeCrear && <button style={styles.boton} onClick={abrirNueva}>Levantar orden</button>}</div>
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
-      <div style={styles.tabs}>{[['abiertas', 'Abiertas'], ['cerradas', 'Cerradas'], ['todas', 'Todas']].map(([id, n]) => <button key={id} style={filtro === id ? styles.tabAct : styles.tab} onClick={() => setFiltro(id)}>{n}</button>)}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <div style={styles.tabs}>{[['abiertas', 'Abiertas'], ['cerradas', 'Cerradas'], ['todas', 'Todas']].map(([id, n]) => <button key={id} style={filtro === id ? styles.tabAct : styles.tab} onClick={() => setFiltro(id)}>{n}</button>)}</div>
+        <span style={{ flex: 1 }} />
+        {lista.length > 0 && <>
+          <button style={styles.botonAccion} onClick={() => exportarExcel('ordenes_mantenimiento', colsExp, lista)}>Excel</button>
+          <button style={styles.botonAccion} onClick={() => imprimirTablaPDF('Ordenes de Mantenimiento', colsExp, lista)}>PDF</button>
+        </>}
+      </div>
       <div style={styles.tabla}>
-        <div style={styles.th}><span style={{ flex: 1 }}>Folio</span><span style={{ flex: 2 }}>Titulo</span><span style={{ flex: 1 }}>Objeto</span><span style={{ flex: 1 }}>Tipo</span><span style={{ flex: 0.8 }}>Prioridad</span><span style={{ flex: 1 }}>Realiza</span><span style={{ flex: 1 }}>Estatus</span><span style={{ width: '70px' }}></span></div>
+        <div style={styles.th}>
+          <span style={{ flex: 1 }}>Folio</span><span style={{ flex: 1.8 }}>Titulo</span>
+          <span style={{ flex: 0.9 }}>Objeto</span><span style={{ flex: 0.8 }}>Prioridad</span>
+          <span style={{ flex: 1 }}>Realiza</span>
+          <span style={{ flex: 1.1 }}>Levantada</span><span style={{ flex: 1.1 }}>Asignada</span>
+          <span style={{ flex: 0.9, textAlign: 'right' }}>Resp.</span>
+          <span style={{ flex: 0.9, textAlign: 'right' }}>Ejec.</span>
+          <span style={{ flex: 0.9, textAlign: 'right' }}>Total</span>
+          <span style={{ flex: 0.9 }}>Estatus</span><span style={{ width: '70px' }}></span>
+        </div>
         {lista.map(o => (
           <div key={o.id} style={styles.tr}>
             <span style={{ flex: 1, fontWeight: 600 }}>{o.folio}</span>
-            <span style={{ flex: 2 }}>{o.titulo}</span>
-            <span style={{ flex: 1, color: '#64748b' }}>{o.objeto === 'maquina' ? o.maquina?.clave : 'general'}</span>
-            <span style={{ flex: 1, color: '#64748b', fontSize: '12px' }}>{o.tipo_trabajo}</span>
+            <span style={{ flex: 1.8 }}>{o.titulo}<div style={{ fontSize: '11px', color: '#94a3b8' }}>{o.tipo_trabajo}</div></span>
+            <span style={{ flex: 0.9, color: '#64748b' }}>{o.objeto === 'maquina' ? o.maquina?.clave : 'general'}</span>
             <span style={{ flex: 0.8 }}><span style={prioBadge(o.prioridad)}>{o.prioridad}</span></span>
             <span style={{ flex: 1, fontSize: '12px', color: '#475569' }}>{o.es_externo ? `ext: ${provDe(o.proveedor_id)}` : (o.asignado_a ? usrDe(o.asignado_a) : '-')}</span>
-            <span style={{ flex: 1 }}><span style={badge(o.estatus)}>{o.estatus.replace(/_/g, ' ')}</span></span>
+            <span style={{ flex: 1.1, fontSize: '11.5px', color: '#64748b' }}>{fmtFH(o.created_at)}</span>
+            <span style={{ flex: 1.1, fontSize: '11.5px', color: o.fecha_asignacion ? '#64748b' : '#dc2626' }}>{o.fecha_asignacion ? fmtFH(o.fecha_asignacion) : 'sin asignar'}</span>
+            <span style={{ flex: 0.9, textAlign: 'right', fontSize: '12px', fontWeight: 600, color: o.fecha_asignacion ? '#334155' : '#dc2626' }} title={o.fecha_asignacion ? 'Apertura a asignacion' : 'Tiempo abierta sin asignar'}>{fmtDur(tRespuesta(o))}</span>
+            <span style={{ flex: 0.9, textAlign: 'right', fontSize: '12px', color: '#334155' }} title="Asignacion a cierre">{fmtDur(tEjecucion(o))}{o.fecha_asignacion && !cierreDe(o) ? '*' : ''}</span>
+            <span style={{ flex: 0.9, textAlign: 'right', fontSize: '12px', fontWeight: 700, color: cierreDe(o) ? '#15803d' : '#b45309' }} title="Tiempo total">{fmtDur(tTotal(o))}</span>
+            <span style={{ flex: 0.9 }}><span style={badge(o.estatus)}>{o.estatus.replace(/_/g, ' ')}</span></span>
             <span style={{ width: '70px', textAlign: 'right' }}><button style={styles.botonAccion} onClick={() => abrirDetalle(o)}>Abrir</button></span>
           </div>
         ))}
         {lista.length === 0 && <div style={styles.vacio}>Sin ordenes.</div>}
       </div>
+      <p style={{ fontSize: '11.5px', color: '#94a3b8', marginTop: '8px' }}>
+        <b>Resp.</b> = tiempo de apertura a asignacion (en rojo si aun no se asigna, contando desde que se levanto) · <b>Ejec.</b> = de la asignacion al cierre (* = en curso) · <b>Total</b> = de la apertura al cierre (ambar si sigue abierta).
+      </p>
     </div>
   )
 }

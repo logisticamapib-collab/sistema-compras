@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
 
@@ -16,6 +17,8 @@ function agrupar(rows, keyFn, labelFn) {
   for (const r of rows) { const k = keyFn(r); if (k == null || k === '') continue; const g = m.get(k) || { k, label: labelFn(r, k), n: 0 }; g.n += 1; m.set(k, g) }
   return [...m.values()].sort((a, b) => b.n - a.n)
 }
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function KpisMtto() {
   const { perfil } = useAuth()
@@ -71,6 +74,17 @@ export default function KpisMtto() {
   const danosSupervisor = agrupar(mtto.filter(m => m.supervisor_id), m => m.supervisor_id, (m, k) => usrDe(k))
   const porDia = agrupar(mtto, m => dia(m.fecha_inicio || m.created_at), (m, k) => k).sort((a, b) => String(a.k).localeCompare(String(b.k)))
 
+  // Export consolidado de todos los cortes de KPI
+  const colsExp = [
+    { label: 'Indicador', get: r => r.grupo }, { label: 'Concepto', get: r => r.label }, { label: 'Cantidad', get: r => r.n },
+  ]
+  const filasExp = [
+    ...danosMaquina.map(r => ({ grupo: 'Danos por maquina', ...r })),
+    ...danosTurno.map(r => ({ grupo: 'Danos por turno', ...r })),
+    ...danosSupervisor.map(r => ({ grupo: 'Danos por supervisor', ...r })),
+    ...porDia.map(r => ({ grupo: 'Ordenes por dia', label: r.k, n: r.n })),
+  ]
+
   const Tabla = ({ titulo, rows, col }) => (
     <div style={{ flex: 1, minWidth: '260px' }}>
       <p style={styles.tsub}>{titulo}</p>
@@ -87,6 +101,10 @@ export default function KpisMtto() {
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>KPIs de mantenimiento de molde</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '8px 0 0' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('kpis_mtto_molde', colsExp, filasExp)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('KPIs de Mantenimiento de Molde', colsExp, filasExp)}>PDF</button>
+      </div>
       <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       <div style={styles.filtros}>
         <div style={styles.campo}><label style={styles.lbl}>Desde</label><input type="date" style={styles.input} value={desde} onChange={e => setDesde(e.target.value)} /></div>

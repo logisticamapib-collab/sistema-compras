@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
 
@@ -15,6 +16,8 @@ const CAUSAS = [
   { v: 'reparacion_previa_inefectiva', l: 'Reparacion previa inefectiva' },
   { v: 'otro', l: 'Otro' },
 ]
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function AvisosMtto() {
   const { perfil, tienePermiso } = useAuth()
@@ -137,11 +140,22 @@ export default function AvisosMtto() {
     )
   }
 
+  const colsExp = [
+    { label: 'Folio', get: a => a.folio }, { label: 'Fecha', get: a => a.fecha || '' },
+    { label: 'Molde', get: a => a.molde?.clave || '' }, { label: 'Maquina', get: a => a.maquina?.clave || '' },
+    { label: 'Area', get: a => a.area_reporta || '' }, { label: 'Defecto', get: a => a.defecto?.nombre || '' },
+    { label: 'Descripcion', get: a => a.descripcion || '' }, { label: 'Causa probable', get: a => a.causa_probable || '' },
+    { label: 'Estatus', get: a => a.estatus || '' },
+  ]
   const lista = avisos.filter(a => filtro === 'todos' ? true : filtro === 'abiertos' ? ['abierto', 'en_atencion'].includes(a.estatus) : a.estatus === filtro)
   return (
     <div style={styles.container} className="aparecer">
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Avisos de mantenimiento de molde</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('avisos_molde', colsExp, lista)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Avisos de Mantenimiento de Molde', colsExp, lista)}>PDF</button>
+      </div>
         {puedeCrear && <button style={styles.boton} onClick={abrirNuevo}>Nuevo aviso</button>}
       </div>
       {error && <p style={styles.error}>{error}</p>}

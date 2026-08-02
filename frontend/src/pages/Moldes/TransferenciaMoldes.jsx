@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
 
@@ -12,6 +13,8 @@ import { siteEfectivo } from '../../lib/sites'
 
 const fFecha = (f) => f ? new Date(f).toLocaleDateString('es-MX') : '-'
 const EST = { pendiente_tryout: { l: 'Pendiente try-out', c: '#b45309' }, completada: { l: 'Completada', c: '#16a34a' }, cancelada: { l: 'Cancelada', c: '#dc2626' } }
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function TransferenciaMoldes() {
   const { perfil, tienePermiso } = useAuth()
@@ -124,12 +127,29 @@ export default function TransferenciaMoldes() {
     setProc(false)
   }
 
+  const colsExp = [
+    { label: 'Molde', get: t => t.molde?.clave || t.molde_id },
+    { label: 'Site origen', get: t => siteNom(t.site_origen_id) },
+    { label: 'Site destino', get: t => siteNom(t.site_destino_id) },
+    { label: 'Maquina origen', get: t => maqNom(t.maquina_origen_id) },
+    { label: 'Maquina destino', get: t => maqNom(t.maquina_destino_id) },
+    { label: 'Motivo', get: t => t.motivo || '' },
+    { label: 'Cliente notificado', get: t => t.cliente_notificado ? 'Si' : 'No' },
+    { label: 'Fecha notificacion', get: t => t.fecha_notificacion || '' },
+    { label: 'Referencia', get: t => t.referencia_notificacion || '' },
+    { label: 'Try-out ligado', get: t => t.tryout_mtto_id || '' },
+    { label: 'Estatus', get: t => t.estatus },
+  ]
   if (loading) return <p style={{ padding: 28, color: '#666' }}>Cargando...</p>
   const pendientes = transfs.filter(t => t.estatus === 'pendiente_tryout')
 
   return (
     <div style={S.c} className="aparecer">
       <h2 style={S.t}>Transferencia de Moldes entre Sites</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('transferencias_molde', colsExp, transfs)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Transferencias de Molde entre Sites', colsExp, transfs)}>PDF</button>
+      </div>
       <p style={S.sub}>Por PPAP el molde corre en una maquina y ubicacion definidas. Transferirlo exige <b>notificar al cliente</b> y una <b>nueva validacion / try-out</b> antes de volver a producir.</p>
       <div style={{ marginBottom: 12 }}><FiltroSite value={site} onChange={setSite} /></div>
       {error && <p style={S.err}>{error}</p>}

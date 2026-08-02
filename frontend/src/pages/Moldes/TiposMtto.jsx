@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 
 // Catalogo de tipos de mantenimiento (define si reinicia el contador de shots)
 // y parametros del try-out (que firmas se exigen para liberar una reparacion).
@@ -9,6 +10,8 @@ const CLASES = [
   { v: 'preventivo_calendario', l: 'Preventivo por calendario' },
   { v: 'correctivo', l: 'Correctivo' },
 ]
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function TiposMtto() {
   const { perfil, tienePermiso } = useAuth()
@@ -51,9 +54,17 @@ export default function TiposMtto() {
   }
 
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
+  const colsExp = [
+    { label: 'Nombre', get: t => t.nombre }, { label: 'Clase', get: t => t.clase || '' },
+    { label: 'Reinicia contador', get: t => t.reinicia_contador ? 'Si' : 'No' },
+  ]
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Tipos y parametros de mantenimiento</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('tipos_mtto', colsExp, tipos)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Tipos de Mantenimiento', colsExp, tipos)}>PDF</button>
+      </div>
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
 

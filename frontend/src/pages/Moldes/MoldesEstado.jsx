@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import FiltroSite from '../../components/FiltroSite'
 import { siteEfectivo } from '../../lib/sites'
 
@@ -9,6 +10,8 @@ import { siteEfectivo } from '../../lib/sites'
 // (p.ej. fuera_servicio) y se ve el conteo de shots vs alerta.
 const fmt = (n) => Number(n ?? 0).toLocaleString('es-MX')
 const ESTADOS = ['disponible', 'en_produccion', 'en_reparacion', 'en_mantenimiento', 'en_maquila', 'fuera_servicio']
+
+const EXP_BTN = { padding: '8px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }
 
 export default function MoldesEstado() {
   const { perfil, tienePermiso } = useAuth()
@@ -38,9 +41,22 @@ export default function MoldesEstado() {
 
   const alertaShots = (m) => m.shots_alerta_max && Number(m.shots_acumulados) >= Number(m.shots_alerta_max)
 
+  const colsExp = [
+    { label: 'Clave', get: m => m.clave }, { label: 'Nombre', get: m => m.nombre },
+    { label: 'Cavidades', get: m => m.num_cavidades }, { label: 'Shots acumulados', get: m => m.shots_acumulados },
+    { label: 'Alerta min', get: m => m.shots_alerta_min }, { label: 'Alerta max', get: m => m.shots_alerta_max },
+    { label: 'Estado', get: m => (m.estado || '').replace(/_/g, ' ') },
+    { label: 'Ultimo mtto', get: m => m.fecha_ultimo_mtto || '' },
+    { label: 'Ubicacion', get: m => m.ubicacion_fisica || '' },
+    { label: 'Pendiente try-out', get: m => m.pendiente_tryout ? 'Si' : 'No' },
+  ]
   return (
     <div style={styles.container} className="aparecer">
       <h2 style={styles.titulo}>Moldes y estado</h2>
+      <div style={{ display: 'flex', gap: '8px', margin: '0 0 12px' }} className="no-imprimir">
+        <button style={EXP_BTN} onClick={() => exportarExcel('moldes_estado', colsExp, moldes)}>Excel</button>
+        <button style={EXP_BTN} onClick={() => imprimirTablaPDF('Moldes y Estado', colsExp, moldes)}>PDF</button>
+      </div>
       <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       <p style={styles.sub}>Disponibilidad y conteo de shots. Un molde en reparacion o mantenimiento <b>no puede programarse</b> en OT.</p>
       {error && <p style={styles.error}>{error}</p>}
