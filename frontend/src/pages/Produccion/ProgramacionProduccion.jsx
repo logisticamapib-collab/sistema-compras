@@ -14,6 +14,15 @@ const iso = (d) => d.toISOString().slice(0, 10)
 const lunesDe = (d) => { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); x.setHours(0, 0, 0, 0); return x }
 const addDias = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x }
 const ddmm = (s) => { const p = String(s).split('-'); return `${p[2]}/${p[1]}` }
+// Paleta para distinguir una OT de la siguiente en la linea de tiempo.
+// El color no dice el estado: eso lo dice el borde superior de la barra.
+const PALETA = [
+  { bg: '#c7d2fe', fg: '#312e81' }, { bg: '#bfdbfe', fg: '#1e3a8a' },
+  { bg: '#a7f3d0', fg: '#065f46' }, { bg: '#fde68a', fg: '#78350f' },
+  { bg: '#fbcfe8', fg: '#831843' }, { bg: '#ddd6fe', fg: '#4c1d95' },
+  { bg: '#bae6fd', fg: '#0c4a6e' }, { bg: '#d9f99d', fg: '#365314' },
+]
+
 const RIESGO = {
   vencido: { txt: 'Compromiso vencido', bg: '#7f1d1d', fg: '#fff' },
   atrasada: { txt: 'Atrasada', bg: '#fee2e2', fg: '#b91c1c' },
@@ -54,6 +63,8 @@ export default function ProgramacionProduccion() {
   const [riesgos, setRiesgos] = useState([])
   const [riesgosCargando, setRiesgosCargando] = useState(false)
   const [verRiesgos, setVerRiesgos] = useState(false)
+  const [vista, setVista] = useState('tablero')
+  const [ventanas, setVentanas] = useState([])
 
   const lunes = ref
   const domingo = addDias(lunes, 6)
@@ -254,13 +265,17 @@ export default function ProgramacionProduccion() {
         p_desde: iso(lunes), p_hasta: iso(domingo), p_excluir_ot: null,
       }).then(r => ({ maquina: m, filas: r.data || [], error: r.error }))
     ))
+    const { data: ven } = await supabase.rpc('ventanas_habiles', {
+      p_empresa_id: perfil.empresa_id, p_desde: iso(lunes), p_hasta: iso(addDias(lunes, 6)),
+    })
+    setVentanas(ven || [])
     setPlanCargando(false)
     const conError = res.find(r => r.error)
     if (conError) { setError('No se pudo calcular el plan: ' + conError.error.message); return }
     setPlan(res.filter(r => r.filas.length > 0))
   }
 
-  useEffect(() => { if (verPlan && maquinas.length) cargarPlan() }, [verPlan, maquinas, ref])
+  useEffect(() => { if ((verPlan || vista === 'linea') && maquinas.length) cargarPlan() }, [verPlan, vista, maquinas, ref])
 
   // Revisa si el destino elegido en el modal esta ocupado, y de ser asi
   // cuanto habria que recortar la OT que estorba.
@@ -664,6 +679,12 @@ export default function ProgramacionProduccion() {
       )}
       {exito && <p style={styles.exito}>{exito}</p>}
 
+      <div style={styles.vistaSel} className="no-imprimir">
+        <button style={vista === 'tablero' ? styles.vistaAct : styles.vistaBtn} onClick={() => setVista('tablero')}>Tablero por dia</button>
+        <button style={vista === 'linea' ? styles.vistaAct : styles.vistaBtn} onClick={() => setVista('linea')}>Linea de tiempo</button>
+        {vista === 'linea' && planCargando && <span style={{ fontSize: '12px', color: '#64748b' }}>Calculando...</span>}
+      </div>
+
       <div style={styles.leyenda} className="no-imprimir">
         {Object.entries(COLOR_EST).map(([k, v]) => (
           <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
@@ -682,7 +703,109 @@ export default function ProgramacionProduccion() {
         <span style={{ ...styles.aviso, color: maquinasSinPrograma.length ? '#2563eb' : '#64748b' }}>Maquinas sin programa: <strong>{maquinasSinPrograma.length}</strong></span>
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
+      {vista === 'linea' && (
+        <div style={styles.gWrap}>
+          {(() => {
+            // Eje de reloj: lunes 00:00 a lunes siguiente 00:00. Cada OT se
+            // dibuja como una barra entre su inicio y su fin reales, asi se
+            // ve de un golpe cuantos turnos ocupa y donde empuja a la que sigue.
+            const t0 = new Date(lunes); t0.setHours(0, 0, 0, 0)
+            const t1 = addDias(t0, 7)
+            const span = t1 - t0
+            const pct = (ts) => Math.max(0, Math.min(100, ((new Date(ts) - t0) / span) * 100))
+            const ahora = new Date()
+            const hoyDentro = ahora >= t0 && ahora <= t1
+
+            return (
+              <>
+                {/* encabezado de dias con marcas de turno */}
+                <div style={styles.gFila}>
+                  <div style={styles.gEtiq} />
+                  <div style={styles.gEje}>
+                    {Array.from({ length: 7 }, (_, i) => (
+                      <div key={i} style={styles.gDia}>
+                        <div style={styles.gDiaLbl}>{DIAS_LBL[i] || 'Dom'} {ddmm(iso(addDias(t0, i)))}</div>
+                        <div style={styles.gTurnos}>
+                          {turnos.map(t => (
+                            <span key={t.id} style={styles.gTurnoLbl}>{t.clave}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {maquinas.map(m => {
+                  const filas = (plan.find(p => p.maquina.id === m.id)?.filas) || []
+                  return (
+                    <div key={m.id} style={styles.gFila}>
+                      <div style={styles.gEtiq}>
+                        <div style={{ fontWeight: 600, fontSize: '12px' }}>{m.clave}</div>
+                        <div style={{ fontSize: '10.5px', color: '#94a3b8' }}>{filas.length} OT</div>
+                      </div>
+                      <div style={styles.gPista}>
+                        {/* turnos habiles en blanco sobre el fondo gris de no laborable */}
+                        {ventanas.map((v, i) => (
+                          <div key={'v' + i} style={{
+                            ...styles.gVentana,
+                            left: pct(v.inicio) + '%',
+                            width: Math.max(pct(v.fin) - pct(v.inicio), 0) + '%',
+                          }} />
+                        ))}
+                        {/* separadores de dia */}
+                        {Array.from({ length: 6 }, (_, i) => (
+                          <div key={'d' + i} style={{ ...styles.gSepDia, left: ((i + 1) / 7) * 100 + '%' }} />
+                        ))}
+                        {/* barras de OT */}
+                        {filas.map((r, idx) => {
+                          if (!r.inicio || !r.fin) return null
+                          const izq = pct(r.inicio)
+                          const anc = Math.max(pct(r.fin) - izq, 0.4)
+                          const base = PALETA[idx % PALETA.length]
+                          const borde = !r.cabe || r.atrasada ? '#b91c1c' : r.empujada ? '#d97706' : '#15803d'
+                          const setupPct = Number(r.total_min) > 0
+                            ? ((Number(r.setup_min || 0) + Number(r.purga_min || 0)) / Number(r.total_min)) * 100 : 0
+                          const ot = ots.find(o => o.id === r.ot_id)
+                          return (
+                            <button
+                              key={r.ot_id}
+                              title={`${r.folio} · ${r.articulo_codigo}\n${fechaHora(r.inicio)} → ${fechaHora(r.fin)}\n${Number(r.cantidad).toLocaleString('es-MX')} pz · ${Math.round(Number(r.total_min) / 60)} h\nOcupa: ${r.turnos_ocupados || '-'}${r.empujada ? `\nEmpujada ${Math.round(Number(r.empuje_min) / 60)} h` : ''}`}
+                              onClick={() => { if (!ot) return; setChequeo(null); setEdit({ ...ot, _orig: { maquina_id: ot.maquina_id, fecha_programada: ot.fecha_programada, turno: ot.turno }, _motivo: '' }) }}
+                              style={{ ...styles.gBarra, left: izq + '%', width: anc + '%', background: base.bg, borderTopColor: borde }}>
+                              {setupPct > 0 && (
+                                <span style={{ ...styles.gSetup, width: Math.min(setupPct, 100) + '%' }} />
+                              )}
+                              <span style={{ ...styles.gBarraTxt, color: base.fg }}>{r.folio}</span>
+                            </button>
+                          )
+                        })}
+                        {hoyDentro && <div style={{ ...styles.gAhora, left: pct(ahora) + '%' }} />}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                <div style={styles.gLeyenda}>
+                  <span><span style={{ ...styles.gChip, background: '#fff', border: '1px solid #cbd5e1' }} /> turno habil</span>
+                  <span><span style={{ ...styles.gChip, background: '#f1f5f9' }} /> no laborable</span>
+                  <span><span style={{ ...styles.gChip, background: 'repeating-linear-gradient(45deg,#94a3b8,#94a3b8 3px,transparent 3px,transparent 6px)' }} /> cambio de molde y purga</span>
+                  <span><span style={{ ...styles.gChip, borderTop: '3px solid #15803d', background: '#e2e8f0' }} /> a tiempo</span>
+                  <span><span style={{ ...styles.gChip, borderTop: '3px solid #d97706', background: '#e2e8f0' }} /> empujada</span>
+                  <span><span style={{ ...styles.gChip, borderTop: '3px solid #b91c1c', background: '#e2e8f0' }} /> atrasada o no alcanza</span>
+                  <span><span style={{ ...styles.gChip, background: '#dc2626', width: '2px' }} /> ahora</span>
+                </div>
+                {!planCargando && plan.length === 0 && (
+                  <p style={{ fontSize: '13px', color: '#64748b', padding: '10px 4px', margin: 0 }}>
+                    No hay OT programadas esta semana, o falta capturar el tiempo estandar en las rutas.
+                  </p>
+                )}
+              </>
+            )
+          })()}
+        </div>
+      )}
+
+      <div style={{ overflowX: 'auto', display: vista === 'tablero' ? 'block' : 'none' }}>
         <table style={styles.grid}>
           <thead>
             <tr>
@@ -815,6 +938,28 @@ export default function ProgramacionProduccion() {
 }
 
 const styles = {
+  vistaSel: { display: 'flex', gap: '8px', alignItems: 'center', margin: '0 0 10px' },
+  vistaBtn: { padding: '7px 14px', background: '#fff', color: '#444', border: '1px solid #ddd', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' },
+  vistaAct: { padding: '7px 14px', background: '#7c3aed', color: '#fff', border: '1px solid #7c3aed', borderRadius: '7px', fontSize: '13px', cursor: 'pointer', fontWeight: 500 },
+
+  gWrap: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '10px 12px', marginBottom: '14px', overflowX: 'auto' },
+  gFila: { display: 'flex', alignItems: 'stretch', minWidth: '900px' },
+  gEtiq: { width: '110px', flex: '0 0 110px', padding: '6px 8px', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  gEje: { flex: 1, display: 'flex' },
+  gDia: { flex: 1, borderLeft: '1px solid #e2e8f0', padding: '4px 0 2px' },
+  gDiaLbl: { fontSize: '10.5px', fontWeight: 600, color: '#334155', textAlign: 'center' },
+  gTurnos: { display: 'flex' },
+  gTurnoLbl: { flex: 1, fontSize: '9px', color: '#94a3b8', textAlign: 'center' },
+  gPista: { flex: 1, position: 'relative', height: '34px', background: '#f1f5f9', borderLeft: '1px solid #e2e8f0', borderBottom: '1px solid #f1f5f9', margin: '3px 0' },
+  gVentana: { position: 'absolute', top: 0, bottom: 0, background: '#fff' },
+  gSepDia: { position: 'absolute', top: 0, bottom: 0, width: '1px', background: '#e2e8f0' },
+  gBarra: { position: 'absolute', top: '4px', bottom: '4px', borderRadius: '4px', border: '1px solid rgba(0,0,0,0.12)', borderTopWidth: '3px', borderTopStyle: 'solid', padding: 0, cursor: 'pointer', overflow: 'hidden', display: 'flex', alignItems: 'center' },
+  gSetup: { position: 'absolute', left: 0, top: 0, bottom: 0, background: 'repeating-linear-gradient(45deg,rgba(100,116,139,0.55),rgba(100,116,139,0.55) 3px,transparent 3px,transparent 6px)' },
+  gBarraTxt: { position: 'relative', fontSize: '9.5px', fontWeight: 700, padding: '0 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  gAhora: { position: 'absolute', top: '-2px', bottom: '-2px', width: '2px', background: '#dc2626' },
+  gLeyenda: { display: 'flex', gap: '14px', flexWrap: 'wrap', fontSize: '11px', color: '#64748b', padding: '10px 4px 2px', borderTop: '1px solid #f1f5f9', marginTop: '6px' },
+  gChip: { display: 'inline-block', width: '12px', height: '12px', borderRadius: '3px', marginRight: '4px', verticalAlign: 'middle' },
+
   riesgoCard: { border: '1px solid #fecaca', background: '#fffbfb', borderRadius: '9px', padding: '10px 12px', marginBottom: '8px' },
   riesgoTag: { fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', marginRight: '7px' },
   opcGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' },
