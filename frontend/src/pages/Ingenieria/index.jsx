@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext'
 import Articulos from '../Articulos/index'
 import Maquinas from './Maquinas'
 import Moldes from './Moldes'
+import Colores from './Colores'
 import RutasFabricacion from './RutasFabricacion'
 import Clientes from './Clientes'
 import NormasEmpaque from './NormasEmpaque'
@@ -15,6 +16,7 @@ const secciones = [
   { id: 'articulos', modulo: 'articulos', titulo: 'Articulos' },
   { id: 'maquinas', modulo: 'ing_maquinas', titulo: 'Maquinas' },
   { id: 'moldes', modulo: 'ing_moldes', titulo: 'Moldes' },
+  { id: 'colores', modulo: 'ing_colores', titulo: 'Colores' },
   { id: 'rutas', modulo: 'ing_rutas', titulo: 'Rutas de Fabricacion' },
   { id: 'bom', modulo: 'ing_bom', titulo: 'BOM (Lista de Materiales)' },
   { id: 'maq_alterna', modulo: 'ing_maq_alterna', titulo: 'Aprobacion Maquina Alterna' },
@@ -51,6 +53,7 @@ export default function GrupoIngenieria() {
         {seccion === 'articulos' && <Articulos />}
         {seccion === 'maquinas' && <Maquinas />}
         {seccion === 'moldes' && <Moldes />}
+        {seccion === 'colores' && <Colores />}
         {seccion === 'rutas' && <RutasFabricacion />}
         {seccion === 'bom' && <BOM />}
         {seccion === 'maq_alterna' && <AprobacionMaquinaAlterna />}

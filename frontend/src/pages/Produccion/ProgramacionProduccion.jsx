@@ -36,6 +36,9 @@ export default function ProgramacionProduccion() {
   const [exito, setExito] = useState('')
   const [cargando, setCargando] = useState(false)
   const [arrastreForm, setArrastreForm] = useState(null)
+  const [seqMaquina, setSeqMaquina] = useState('')
+  const [seq, setSeq] = useState(null)
+  const [seqCargando, setSeqCargando] = useState(false)
 
   const lunes = ref
   const domingo = addDias(lunes, 6)
@@ -209,6 +212,44 @@ export default function ProgramacionProduccion() {
   const personalDia = (dia) => otsDe0(dia).reduce((s, o) => s + (personal[o.articulo_id] || 0), 0)
   function otsDe0(dia) { return ots.filter(o => o.fecha_programada === iso(dia)) }
 
+  // ---------- Secuencia sugerida por color ----------
+  // Agrupa por molde para no cambiar de molde de mas y dentro de cada campana
+  // corre los colores de claro a oscuro, porque regresar a un claro exige
+  // mucha mas purga. Muestra los dos escenarios para poder comparar.
+  const calcularSecuencia = async (maquinaId) => {
+    if (!maquinaId) { setSeq(null); return }
+    setSeqCargando(true); setError('')
+    const { data, error: e } = await supabase.rpc('secuencia_sugerida', {
+      p_empresa_id: perfil.empresa_id, p_maquina_id: Number(maquinaId),
+      p_desde: iso(lunes), p_hasta: iso(domingo),
+    })
+    setSeqCargando(false)
+    if (e) { setError('No se pudo calcular la secuencia: ' + e.message); return }
+    const filas = data || []
+    const actual = filas.filter(r => r.escenario === 'actual')
+    const sugerido = filas.filter(r => r.escenario === 'sugerido')
+    const tot = (rs) => rs.reduce((a, r) => ({
+      min: a.min + (Number(r.min_purga) || 0) + (Number(r.min_molde) || 0),
+      kg: a.kg + (Number(r.kg_purga) || 0),
+    }), { min: 0, kg: 0 })
+    setSeq({ actual, sugerido, totActual: tot(actual), totSugerido: tot(sugerido) })
+  }
+
+  const aplicarSecuencia = async () => {
+    if (!seq?.sugerido?.length) return
+    if (!confirm(`Se va a renumerar la secuencia de ${seq.sugerido.length} OT en esta maquina. Confirma para aplicar.`)) return
+    setSeqCargando(true); setError('')
+    for (const r of seq.sugerido) {
+      const { error: e } = await supabase.from('ordenes_trabajo')
+        .update({ secuencia: Number(r.posicion) }).eq('id', r.ot_id)
+      if (e) { setSeqCargando(false); setError('No se pudo aplicar: ' + e.message); return }
+    }
+    setSeqCargando(false)
+    setExito('Secuencia aplicada')
+    setSeq(null); setSeqMaquina('')
+    cargar()
+  }
+
   return (
     <div>
       <div style={styles.barra}>
@@ -225,11 +266,94 @@ export default function ProgramacionProduccion() {
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           {puedeProgramar && semana?.estatus !== 'cerrada' && <button style={styles.boton} disabled={cargando} onClick={iniciarProgramar}>{cargando ? '...' : 'Programar semana'}</button>}
+          {puedeProgramar && <button style={styles.botonSec} onClick={() => { setSeq(null); setSeqMaquina(seqMaquina ? '' : 'abrir') }}>{seqMaquina ? 'Cerrar secuencia' : 'Secuencia por color'}</button>}
           {puedeCerrar && semana && semana.estatus !== 'cerrada' && <button style={styles.botonCerrar} onClick={cerrarSemana}>Cerrar semana</button>}
         </div>
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
+
+      {/* ---------- Secuencia sugerida por color ---------- */}
+      {seqMaquina !== '' && (
+        <div style={styles.seqPanel}>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#1a1a2e' }}>Secuencia por color</span>
+            <select style={styles.seqSel} value={seqMaquina === 'abrir' ? '' : seqMaquina}
+              onChange={e => { setSeqMaquina(e.target.value || 'abrir'); calcularSecuencia(e.target.value) }}>
+              <option value="">Elige la maquina...</option>
+              {maquinas.map(m => <option key={m.id} value={m.id}>{m.clave} - {m.nombre}</option>)}
+            </select>
+            {seqCargando && <span style={{ fontSize: '12.5px', color: '#64748b' }}>Calculando...</span>}
+          </div>
+          <p style={styles.seqAyuda}>
+            Se agrupan las OT por molde para no cambiar de molde de mas, y dentro de cada molde los colores
+            corren de claro a oscuro. Regresar a un color mas claro exige mucha mas purga, por eso se marca
+            en rojo cuando pasa.
+          </p>
+
+          {seq && seq.actual.length === 0 && (
+            <p style={styles.seqVacio}>Esta maquina no tiene OT programadas en la semana.</p>
+          )}
+
+          {seq && seq.actual.length > 0 && (
+            <>
+              <div style={styles.seqCols}>
+                {[['Orden actual', seq.actual, seq.totActual], ['Orden sugerido', seq.sugerido, seq.totSugerido]].map(([tit, filas, tot], idx) => (
+                  <div key={tit} style={{ ...styles.seqCol, borderColor: idx === 1 ? '#86efac' : '#e2e8f0' }}>
+                    <div style={styles.seqColTit}>
+                      <span>{tit}</span>
+                      <span style={{ fontWeight: 700, color: idx === 1 ? '#15803d' : '#334155' }}>
+                        {tot.min.toLocaleString('es-MX', { maximumFractionDigits: 0 })} min &middot; {tot.kg.toLocaleString('es-MX', { maximumFractionDigits: 1 })} kg
+                      </span>
+                    </div>
+                    {filas.map(r => (
+                      <div key={r.escenario + r.ot_id} style={styles.seqFila}>
+                        <span style={styles.seqPos}>{r.posicion}</span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#1a1a2e' }}>
+                            {r.ot_folio} &middot; {r.articulo_codigo}
+                          </div>
+                          <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                            {r.molde_clave || 'sin molde'} &middot; {r.color_clave || 'sin color'} &middot; {ddmm(r.fecha_programada)}
+                          </div>
+                        </span>
+                        <span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {r.cambio_molde && <span style={styles.seqTagMolde}>molde</span>}
+                          {Number(r.min_purga) > 0 && (
+                            <span style={r.es_retroceso ? styles.seqTagRojo : styles.seqTagAmbar}>
+                              {Number(r.min_purga).toLocaleString('es-MX', { maximumFractionDigits: 0 })} min
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              {(() => {
+                const ahorroMin = seq.totActual.min - seq.totSugerido.min
+                const ahorroKg = seq.totActual.kg - seq.totSugerido.kg
+                if (ahorroMin <= 0.5 && ahorroKg <= 0.1) {
+                  return <p style={styles.seqOk}>La secuencia actual ya es la mejor: no hay purga que ahorrar.</p>
+                }
+                return (
+                  <div style={styles.seqAhorro}>
+                    <span>
+                      Reordenar ahorra <b>{ahorroMin.toLocaleString('es-MX', { maximumFractionDigits: 0 })} min</b> de
+                      purga y <b>{ahorroKg.toLocaleString('es-MX', { maximumFractionDigits: 1 })} kg</b> de material.
+                    </span>
+                    {puedeProgramar && semana?.estatus !== 'cerrada' && (
+                      <button style={styles.boton} disabled={seqCargando} onClick={aplicarSecuencia}>
+                        Aplicar orden sugerido
+                      </button>
+                    )}
+                  </div>
+                )
+              })()}
+            </>
+          )}
+        </div>
+      )}
       {exito && <p style={styles.exito}>{exito}</p>}
 
       <div style={styles.leyenda} className="no-imprimir">
@@ -361,6 +485,20 @@ export default function ProgramacionProduccion() {
 }
 
 const styles = {
+  seqPanel: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px 16px', margin: '0 0 14px' },
+  seqSel: { padding: '7px 10px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '13px', outline: 'none', background: '#fff', minWidth: '220px' },
+  seqAyuda: { fontSize: '12px', color: '#64748b', lineHeight: 1.55, margin: '8px 0 12px' },
+  seqVacio: { fontSize: '13px', color: '#64748b', margin: 0 },
+  seqCols: { display: 'flex', gap: '14px', flexWrap: 'wrap' },
+  seqCol: { flex: 1, minWidth: '300px', border: '1px solid', borderRadius: '9px', padding: '10px 12px' },
+  seqColTit: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12.5px', color: '#475569', paddingBottom: '8px', borderBottom: '1px solid #f1f5f9', marginBottom: '4px' },
+  seqFila: { display: 'flex', gap: '9px', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #f8fafc' },
+  seqPos: { width: '22px', height: '22px', borderRadius: '6px', background: '#f1f5f9', color: '#475569', fontSize: '11.5px', fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  seqTagMolde: { fontSize: '10.5px', fontWeight: 600, padding: '2px 7px', borderRadius: '20px', background: '#e0e7ff', color: '#4338ca', marginLeft: '5px' },
+  seqTagAmbar: { fontSize: '10.5px', fontWeight: 600, padding: '2px 7px', borderRadius: '20px', background: '#fef3c7', color: '#b45309', marginLeft: '5px' },
+  seqTagRojo: { fontSize: '10.5px', fontWeight: 600, padding: '2px 7px', borderRadius: '20px', background: '#fee2e2', color: '#b91c1c', marginLeft: '5px' },
+  seqAhorro: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginTop: '12px', padding: '10px 14px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '9px', fontSize: '13px', color: '#15803d' },
+  seqOk: { marginTop: '12px', padding: '10px 14px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '9px', fontSize: '13px', color: '#475569' },
   barra: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' },
   navBtn: { padding: '7px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' },
   boton: { padding: '9px 18px', backgroundColor: '#c2410c', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: '500', cursor: 'pointer' },

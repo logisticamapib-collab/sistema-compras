@@ -51,7 +51,7 @@ export default function Contenedores() {
     setLoading(true)
     const [c, a, lo, al, ub, cav, n, ac, cli, emp, ce, bm] = await Promise.all([
       supabase.from('contenedores').select('*').eq('empresa_id', perfil.empresa_id).in('estatus', ['activo']).order('folio'),
-      supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, origen, es_consigna'),
+      supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, origen, es_consigna, color_id'),
       supabase.from('lotes').select('id, codigo_lote, articulo_id, estatus_calidad'),
       supabase.from('almacenes').select('*'),
       supabase.from('ubicaciones').select('*'),
@@ -91,8 +91,8 @@ export default function Contenedores() {
     if (caja.padre_id) { setError(`La caja ${caja.folio} ya pertenece a otra tarima`); return }
     if (seleccion.length > 0) {
       const base = seleccion[0]
-      if (!agrupables(base.articulo_id, caja.articulo_id, cavidades)) {
-        setError(`La caja ${caja.folio} es de otro articulo y no comparte molde con las ya agregadas`); return
+      if (!agrupables(base.articulo_id, caja.articulo_id, cavidades, articulos)) {
+        setError(`La caja ${caja.folio} no es del mismo articulo ni co-producto del mismo disparo (mismo molde y mismo color) que las ya agregadas`); return
       }
       if (caja.almacen_id !== base.almacen_id || (caja.ubicacion_id || null) !== (base.ubicacion_id || null)) {
         setError(`La caja ${caja.folio} esta en otra ubicacion (${almDe(caja.almacen_id)?.clave}). Todas deben estar en el mismo lugar`); return

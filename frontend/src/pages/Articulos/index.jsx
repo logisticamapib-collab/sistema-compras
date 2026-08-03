@@ -28,7 +28,7 @@ const formVacio = {
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
-  clasificacion_abc: '', abc_criterio: 'manual',
+  clasificacion_abc: '', abc_criterio: 'manual', color_id: '',
 }
 
 export default function Articulos() {
@@ -59,6 +59,7 @@ export default function Articulos() {
     minimo_compra: 1, tiempo_entrega_dias: '', tiempo_trayecto_dias: ''
   })
   const [formCliente, setFormCliente] = useState({ cliente_id: '', codigo_cliente: '', precio: '' })
+  const [colores, setColores] = useState([])
   const [form, setForm] = useState(formVacio)
 
   const puedeCrear = tienePermiso('articulos', 'crear')
@@ -70,15 +71,17 @@ export default function Articulos() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }] = await Promise.all([
+    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }, { data: cols }] = await Promise.all([
       supabase.from('articulos').select('*, categorias(nombre), sites(nombre, codigo)').eq('empresa_id', perfil.empresa_id).order('codigo_interno'),
       supabase.from('categorias').select('*').eq('empresa_id', perfil.empresa_id),
       supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
       supabase.from('clientes').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
       supabase.from('sites').select('id, nombre').eq('empresa_id', perfil.empresa_id),
       supabase.from('articulo_sites_destino').select('articulo_id, site_id'),
+      supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
     ])
     setArticulos(a || [])
+    setColores(cols || [])
     setCategorias(c || [])
     setProveedores(p || [])
     setClientes(cl || [])
@@ -138,6 +141,7 @@ export default function Articulos() {
       pct_molido_max: articulo.pct_molido_max ?? 0,
       site_id: articulo.site_id?.toString() || '',
       clasificacion_abc: articulo.clasificacion_abc || '',
+      color_id: articulo.color_id?.toString() || '',
       abc_criterio: articulo.abc_criterio || 'manual',
       sites_destino: (destinos || []).map(d => d.site_id.toString()),
     })
@@ -193,6 +197,7 @@ export default function Articulos() {
       pct_molido_max: esFabricado && form.admite_molido ? (parseFloat(form.pct_molido_max) || 0) : 0,
       site_id: form.site_id ? parseInt(form.site_id) : null,
       clasificacion_abc: form.clasificacion_abc || null,
+      color_id: form.color_id ? parseInt(form.color_id) : null,
       abc_criterio: form.abc_criterio || 'manual',
     }
 
@@ -526,6 +531,18 @@ export default function Articulos() {
                   <label style={styles.label}>Tiempo de transito (dias)</label>
                   <input style={styles.input} type="number" min="0" value={form.tiempo_transito_dias}
                     onChange={e => setForm({ ...form, tiempo_transito_dias: e.target.value })} placeholder="0" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Color</label>
+                  <select style={styles.input} value={form.color_id}
+                    onChange={e => setForm({ ...form, color_id: e.target.value })}>
+                    <option value="">Sin color / no aplica</option>
+                    {colores.map(c => <option key={c.id} value={c.id}>{c.clave} - {c.nombre}</option>)}
+                  </select>
+                  <span style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.4 }}>
+                    Si dos articulos comparten molde pero tienen distinto color, el sistema los corre por
+                    separado con purga entre ellos, no como co-productos del mismo disparo.
+                  </span>
                 </div>
                 <div style={styles.campo}>
                   <label style={styles.label}>Clasificacion ABC (inv. ciclico)</label>

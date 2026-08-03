@@ -22,6 +22,7 @@ export default function Moldes() {
   const [moldeCavidades, setMoldeCavidades] = useState(null)
   const [form, setForm] = useState(formVacio)
   const [error, setError] = useState('')
+  const [colores, setColores] = useState([])
   const [exito, setExito] = useState('')
 
   const puedeCrear = tienePermiso('ing_moldes', 'crear')
@@ -31,13 +32,14 @@ export default function Moldes() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: m }, { data: a }, st, mq] = await Promise.all([
+    const [{ data: m }, { data: a }, st, mq, cols] = await Promise.all([
       supabase.from('moldes').select('*, site:sites(nombre), maq:maquinas(clave)').eq('empresa_id', perfil.empresa_id).order('clave'),
       supabase.from('sites').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id).order('nombre'),
       supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
-      supabase.from('articulos').select('id, codigo_interno, descripcion').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
+      supabase.from('articulos').select('id, codigo_interno, descripcion, color_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
+      supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
     ])
-    setSites(st.data || []); setMaquinas(mq.data || [])
+    setSites(st.data || []); setMaquinas(mq.data || []); setColores(cols.data || [])
     setMoldes(m || [])
     setArticulos(a || [])
     setLoading(false)
@@ -113,17 +115,60 @@ export default function Moldes() {
     setMoldeCavidades({ molde, cavidades: data || [] })
   }
 
-  const actualizarCavidad = (numeroCavidad, articuloId) => {
+  // Una cavidad fisica produce siempre la misma geometria, pero el codigo de
+  // articulo cambia con el color. Por eso una cavidad puede tener varias
+  // filas: una por cada color que se corre en ese molde.
+  const actualizarCavidad = (key, articuloId) => {
     setMoldeCavidades(prev => ({
       ...prev,
-      cavidades: prev.cavidades.map(c => c.numero_cavidad === numeroCavidad ? { ...c, articulo_id: articuloId ? parseInt(articuloId) : null } : c)
+      cavidades: prev.cavidades.map(c => (c._key || c.id) === key
+        ? { ...c, articulo_id: articuloId ? parseInt(articuloId) : null } : c)
+    }))
+  }
+
+  const agregarVariante = (numeroCavidad) => {
+    setMoldeCavidades(prev => ({
+      ...prev,
+      cavidades: [...prev.cavidades, {
+        _key: `n${Date.now()}${Math.random()}`, _nuevo: true,
+        molde_id: prev.molde.id, numero_cavidad: numeroCavidad, articulo_id: null, activa: true,
+      }],
+    }))
+  }
+
+  const quitarVariante = (key) => {
+    setMoldeCavidades(prev => ({
+      ...prev,
+      cavidades: prev.cavidades
+        .filter(c => !((c._key || c.id) === key && c._nuevo))
+        .map(c => (c._key || c.id) === key ? { ...c, _borrar: true } : c),
     }))
   }
 
   const guardarCavidades = async () => {
-    setLoading(true)
-    for (const c of moldeCavidades.cavidades) {
-      await supabase.from('molde_cavidades').update({ articulo_id: c.articulo_id }).eq('id', c.id)
+    setLoading(true); setError('')
+    try {
+      for (const c of moldeCavidades.cavidades) {
+        if (c._borrar && c.id) {
+          const { error: e } = await supabase.from('molde_cavidades').delete().eq('id', c.id)
+          if (e) throw e
+        } else if (c._nuevo) {
+          if (!c.articulo_id) continue
+          const { error: e } = await supabase.from('molde_cavidades')
+            .insert({ molde_id: c.molde_id, numero_cavidad: c.numero_cavidad, articulo_id: c.articulo_id, activa: true })
+          if (e) throw e
+        } else if (c.id) {
+          const { error: e } = await supabase.from('molde_cavidades')
+            .update({ articulo_id: c.articulo_id }).eq('id', c.id)
+          if (e) throw e
+        }
+      }
+    } catch (err) {
+      setLoading(false)
+      setError(err.message?.includes('duplicate') || err.message?.includes('unq')
+        ? 'Ese articulo ya esta asignado a esa cavidad. Cada color debe capturarse una sola vez por cavidad.'
+        : 'No se pudo guardar: ' + err.message)
+      return
     }
     setLoading(false)
     setExito('Cavidades actualizadas correctamente')
@@ -136,26 +181,61 @@ export default function Moldes() {
       <div style={styles.container}>
         <button style={styles.botonVolver} onClick={() => setMoldeCavidades(null)}>&larr; Volver a moldes</button>
         <h2 style={styles.titulo}>Cavidades: {moldeCavidades.molde.clave}</h2>
-        <p style={{ fontSize: '13px', color: '#666', marginBottom: '20px' }}>
-          Asigna que articulo produce cada cavidad. Si todas las cavidades hacen el mismo articulo, selecciona el mismo en todas.
-          Si el molde produce piezas espejo (ej. izquierda/derecha), asigna el articulo correspondiente a cada cavidad.
+        <p style={{ fontSize: '13px', color: '#666', marginBottom: '6px', lineHeight: 1.55 }}>
+          Asigna que articulo produce cada cavidad. Si el molde produce piezas espejo (izquierda / derecha),
+          asigna el articulo que corresponde a cada cavidad.
+        </p>
+        <p style={{ fontSize: '13px', color: '#666', marginBottom: '20px', lineHeight: 1.55 }}>
+          <b>Variantes de color:</b> si la misma cavidad corre el mismo componente en varios colores, agrega
+          una linea por color. Los articulos del <b>mismo color</b> salen juntos en un disparo; los de
+          <b> distinto color</b> se corren por separado, con purga entre uno y otro.
         </p>
         <div style={styles.tabla}>
           <div style={styles.tablaHeader}>
             <span style={{ flex: 1 }}>Cavidad</span>
             <span style={{ flex: 3 }}>Articulo que produce</span>
+            <span style={{ width: '90px' }}></span>
           </div>
-          {moldeCavidades.cavidades.map(c => (
-            <div key={c.id} style={styles.tablaFila} className="fila-hover">
-              <span style={{ flex: 1, fontWeight: '600' }}>#{c.numero_cavidad}</span>
-              <span style={{ flex: 3 }}>
-                <select style={styles.input} value={c.articulo_id || ''} onChange={e => actualizarCavidad(c.numero_cavidad, e.target.value)}>
-                  <option value="">Sin asignar</option>
-                  {articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>)}
-                </select>
-              </span>
-            </div>
-          ))}
+          {[...new Set(moldeCavidades.cavidades.map(c => c.numero_cavidad))].sort((a, b) => a - b).map(num => {
+            const filas = moldeCavidades.cavidades.filter(c => c.numero_cavidad === num && !c._borrar)
+            return (
+              <div key={num} style={{ borderBottom: '1px solid #f1f5f9', padding: '4px 0' }}>
+                {filas.map((c, i) => {
+                  const key = c._key || c.id
+                  const art = articulos.find(x => x.id === c.articulo_id)
+                  const col = colores.find(x => x.id === art?.color_id)
+                  return (
+                    <div key={key} style={{ ...styles.tablaFila, borderBottom: 'none' }}>
+                      <span style={{ flex: 1, fontWeight: '600' }}>{i === 0 ? `#${num}` : ''}</span>
+                      <span style={{ flex: 3, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <select style={{ ...styles.input, flex: 1 }} value={c.articulo_id || ''}
+                          onChange={e => actualizarCavidad(key, e.target.value)}>
+                          <option value="">Sin asignar</option>
+                          {articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>)}
+                        </select>
+                        {col && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', color: '#475569', whiteSpace: 'nowrap' }}>
+                            <span style={{ width: '14px', height: '14px', borderRadius: '4px', border: '1px solid #cbd5e1', background: col.hex || '#fff' }} />
+                            {col.clave}
+                          </span>
+                        )}
+                      </span>
+                      <span style={{ width: '90px', textAlign: 'right' }}>
+                        {filas.length > 1 && (
+                          <button style={styles.botonAccion} onClick={() => quitarVariante(key)}>Quitar</button>
+                        )}
+                      </span>
+                    </div>
+                  )
+                })}
+                <div style={{ padding: '2px 0 6px 12px' }}>
+                  <button style={{ ...styles.botonAccion, fontSize: '11.5px' }} onClick={() => agregarVariante(num)}>
+                    + Variante de color en la cavidad #{num}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
         </div>
         <div style={styles.botones}>
           <button style={styles.boton} onClick={guardarCavidades} disabled={loading}>{loading ? 'Guardando...' : 'Guardar cavidades'}</button>

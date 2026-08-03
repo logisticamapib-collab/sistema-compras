@@ -350,7 +350,7 @@ export default function RutasFabricacion() {
                         <label style={styles.label}>Molde</label>
                         {esFamiliar && (
                           <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '8px 10px', marginBottom: '8px', fontSize: '12.5px', color: '#1e40af' }}>
-                            <b>Molde familiar:</b> produce {familiaActual.length} articulos. Esta ruta se guardara <b>una sola vez</b> y aplicara a todos ellos: {familiaActual.map(id => articulos.find(a => a.id === id)?.codigo_interno).filter(Boolean).join(', ')}
+                            <b>Molde con varios articulos:</b> {familiaActual.length} codigos (co-productos del mismo disparo y/o variantes de color). El ciclo es el mismo para todos, asi que esta ruta se guardara <b>una sola vez</b> y aplicara a todos ellos: {familiaActual.map(id => articulos.find(a => a.id === id)?.codigo_interno).filter(Boolean).join(', ')}
                           </div>
                         )}
                         <select style={styles.input} value={nuevoPaso.molde_id} onChange={e => setNuevoPaso({ ...nuevoPaso, molde_id: e.target.value })}>

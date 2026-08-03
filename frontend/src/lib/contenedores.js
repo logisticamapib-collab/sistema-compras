@@ -37,13 +37,20 @@ export async function crearCajas(supabase, {
 }
 
 // Dos articulos son agrupables en la misma tarima si son el mismo articulo
-// o si comparten molde (izquierda y derecha de un molde familiar).
-export function agrupables(articuloA, articuloB, cavidades = []) {
+// o si son co-productos del mismo disparo (izquierda y derecha de un molde
+// familiar). Las variantes de COLOR comparten molde pero se corren por
+// separado y son piezas distintas, asi que no se mezclan en la misma tarima.
+// articulos: catalogo [{ id, color_id }] para poder comparar el color; si no
+// se pasa, se conserva el comportamiento anterior (solo por molde).
+export function agrupables(articuloA, articuloB, cavidades = [], articulos = null) {
   if (!articuloA || !articuloB) return false
   if (articuloA === articuloB) return true
   const moldesA = cavidades.filter(c => c.articulo_id === articuloA).map(c => c.molde_id)
   const moldesB = cavidades.filter(c => c.articulo_id === articuloB).map(c => c.molde_id)
-  return moldesA.some(m => moldesB.includes(m))
+  if (!moldesA.some(m => moldesB.includes(m))) return false
+  if (!articulos) return true
+  const col = (id) => { const a = articulos.find(x => x.id === Number(id)); return a && a.color_id != null ? a.color_id : null }
+  return col(articuloA) === col(articuloB)
 }
 
 // Cajas activas de un contenedor tarima

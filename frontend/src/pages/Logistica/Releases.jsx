@@ -101,7 +101,7 @@ export default function Releases() {
     setLoading(true)
     const [c, ac, v, en, cg, cav, mol] = await Promise.all([
       supabase.from('clientes').select('id, clave, nombre').eq('activo', true).order('nombre'),
-      supabase.from('articulo_cliente').select('id, articulo_id, cliente_id, codigo_cliente, articulo:articulos(id, codigo_interno, descripcion, unidad_medida)').eq('activo', true),
+      supabase.from('articulo_cliente').select('id, articulo_id, cliente_id, codigo_cliente, articulo:articulos(id, codigo_interno, descripcion, unidad_medida, color_id)').eq('activo', true),
       supabase.from('release_lineas').select('*').eq('vigente', true).order('fecha_requerida'),
       supabase.from('release_entregas').select('*'),
       supabase.from('releases_cargas').select('*, cliente:clientes(nombre), usuario:usuarios!releases_cargas_cargado_por_fkey(nombre)').order('fecha_carga', { ascending: false }).limit(100),
@@ -461,12 +461,22 @@ export default function Releases() {
 
   // ---------- Vista plana: una linea por renglon, agrupando familia de molde ----------
   const moldeDeArticulo = (artId) => cavidades.find(c => c.articulo_id === artId)?.molde_id || null
-  const familiaDe = (moldeId) => moldeId ? [...new Set(cavidades.filter(c => c.molde_id === moldeId).map(c => c.articulo_id))] : []
+  // Solo son "familia" los que salen del MISMO disparo: mismo molde y mismo
+  // color. Las variantes de color del molde se corren por separado.
+  const colorDeArt = (artId) => {
+    const a = articulosCliente.find(x => x.articulo_id === Number(artId))?.articulo
+    return a && a.color_id != null ? a.color_id : null
+  }
+  const familiaDe = (moldeId, artRef) => moldeId
+    ? [...new Set(cavidades
+        .filter(c => c.molde_id === moldeId && colorDeArt(c.articulo_id) === colorDeArt(artRef))
+        .map(c => c.articulo_id))]
+    : []
   const filasPlanas = lineasFiltradas.map(v => {
     const info = articulosCliente.find(a => a.articulo_id === v.articulo_id && a.cliente_id === v.cliente_id)
       || articulosCliente.find(a => a.articulo_id === v.articulo_id)
     const moldeId = moldeDeArticulo(v.articulo_id)
-    const fam = familiaDe(moldeId)
+    const fam = familiaDe(moldeId, v.articulo_id)
     return {
       ...v,
       _art: info?.articulo || null,

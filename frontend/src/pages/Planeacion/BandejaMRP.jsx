@@ -17,6 +17,8 @@ export default function BandejaMRP() {
   const [clientes, setClientes] = useState([])
   const [prefCliente, setPrefCliente] = useState({}) // articulo_id -> cliente_id
   const [cavidades, setCavidades] = useState([])     // molde_cavidades (activa)
+  const [artColor, setArtColor] = useState({})       // articulo_id -> color_id
+  const [colores, setColores] = useState([])
   const [normas, setNormas] = useState([])           // normas_empaque oficiales
   const [moldes, setMoldes] = useState([])
   const [bom, setBom] = useState([])
@@ -32,14 +34,19 @@ export default function BandejaMRP() {
 
   const cargarBase = async () => {
     const emp = perfil.empresa_id
-    const [{ data: cli }, { data: ac }, { data: mc }, { data: ne }, { data: mo }, { data: bm }] = await Promise.all([
+    const [{ data: cli }, { data: ac }, { data: mc }, { data: ne }, { data: mo }, { data: bm }, { data: arc }, { data: cols }] = await Promise.all([
       supabase.from('clientes').select('id, nombre').eq('empresa_id', emp).order('nombre'),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id'),
       supabase.from('molde_cavidades').select('molde_id, articulo_id, activa').eq('activa', true),
       supabase.from('normas_empaque').select('id, articulo_id, piezas_por_empaque, activa, tipo').eq('activa', true).eq('tipo', 'oficial'),
       supabase.from('moldes').select('id, clave, nombre').eq('empresa_id', emp),
       supabase.from('bom').select('*'),
+      supabase.from('articulos').select('id, color_id').eq('empresa_id', emp),
+      supabase.from('colores').select('*').eq('empresa_id', emp).eq('activo', true),
     ])
+    const mapCol = {}
+    ;(arc || []).forEach(r => { mapCol[r.id] = r.color_id ?? null })
+    setArtColor(mapCol); setColores(cols || [])
     setClientes(cli || [])
     const pref = {}
     ;(ac || []).forEach(r => { if (!pref[r.articulo_id]) pref[r.articulo_id] = r.cliente_id })
@@ -77,9 +84,15 @@ export default function BandejaMRP() {
   // ---- Helpers de molde / cavidades / empaque ----
   const moldeDeArticulo = (artId) => cavidades.find(c => c.articulo_id === artId)?.molde_id || null
   const cavDe = (artId) => cavidades.filter(c => c.articulo_id === artId).length
-  const familiaDeMolde = (moldeId) => {
+  // Color del articulo. Los co-productos de un disparo comparten molde Y color;
+  // las variantes de color del mismo molde son corridas separadas.
+  const colorArt = (artId) => artColor[artId] ?? null
+  const colorClave = (cid) => colores.find(c => c.id === cid)?.clave || null
+  const familiaDeMolde = (moldeId, colorRef) => {
     const porArt = {}
-    cavidades.filter(c => c.molde_id === moldeId).forEach(c => { porArt[c.articulo_id] = (porArt[c.articulo_id] || 0) + 1 })
+    cavidades
+      .filter(c => c.molde_id === moldeId && colorArt(c.articulo_id) === (colorRef ?? null))
+      .forEach(c => { porArt[c.articulo_id] = (porArt[c.articulo_id] || 0) + 1 })
     return Object.keys(porArt).map(id => ({ articulo_id: Number(id), cavidades: porArt[id] }))
   }
   const normaDe = (artId) => normas.find(n => n.articulo_id === artId)
@@ -107,8 +120,11 @@ export default function BandejaMRP() {
     for (const o of fab) {
       const mid = moldeDeArticulo(o.articulo_id)
       if (!mid) { sinMolde.push(o); continue }
-      if (!porMolde.has(mid)) porMolde.set(mid, new Map())
-      const m = porMolde.get(mid)
+      // La llave incluye el color: dos colores del mismo molde NO son
+      // co-productos, se corren en OT separadas con purga entre ellas.
+      const k = `${mid}::${colorArt(o.articulo_id) ?? 'sin'}`
+      if (!porMolde.has(k)) porMolde.set(k, new Map())
+      const m = porMolde.get(k)
       const cur = m.get(o.articulo_id) || { articulo_id: o.articulo_id, rows: [], net: 0 }
       cur.rows.push(o); cur.net += parseFloat(cant[o.id]) || Number(o.orden_planeada) || 0
       m.set(o.articulo_id, cur)
@@ -116,7 +132,8 @@ export default function BandejaMRP() {
     const gruposCompartidos = []
     const individuales = [...sinMolde]
     const advertencias = []
-    for (const [mid, m] of porMolde) {
+    for (const [k, m] of porMolde) {
+      const mid = Number(String(k).split('::')[0])
       const arts = [...m.values()]
       if (arts.length >= 2) {
         const items = arts.map(a => {
@@ -134,7 +151,7 @@ export default function BandejaMRP() {
         gruposCompartidos.push({ moldeId: mid, S, items: conQty, principal, rows: arts.flatMap(a => a.rows) })
       } else {
         individuales.push(...arts.flatMap(a => a.rows))
-        if (familiaDeMolde(mid).length >= 2) advertencias.push({ articulo_id: arts[0].articulo_id, moldeId: mid })
+        if (familiaDeMolde(mid, colorArt(arts[0].articulo_id)).length >= 2) advertencias.push({ articulo_id: arts[0].articulo_id, moldeId: mid })
       }
     }
     return { gruposCompartidos, individuales, advertencias, gruposMaquila, advMaquila }
