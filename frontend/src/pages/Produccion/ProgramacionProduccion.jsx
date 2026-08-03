@@ -14,6 +14,13 @@ const iso = (d) => d.toISOString().slice(0, 10)
 const lunesDe = (d) => { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); x.setHours(0, 0, 0, 0); return x }
 const addDias = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x }
 const ddmm = (s) => { const p = String(s).split('-'); return `${p[2]}/${p[1]}` }
+const RIESGO = {
+  vencido: { txt: 'Compromiso vencido', bg: '#7f1d1d', fg: '#fff' },
+  atrasada: { txt: 'Atrasada', bg: '#fee2e2', fg: '#b91c1c' },
+  no_cabe: { txt: 'No alcanza a terminar', bg: '#fee2e2', fg: '#b91c1c' },
+  tarde_vs_cliente: { txt: 'Termina despues del compromiso', bg: '#ffedd5', fg: '#c2410c' },
+  empujada: { txt: 'Empujada', bg: '#fef3c7', fg: '#b45309' },
+}
 const fechaHora = (ts) => ts ? new Date(ts).toLocaleString('es-MX', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'
 
 export default function ProgramacionProduccion() {
@@ -44,6 +51,9 @@ export default function ProgramacionProduccion() {
   const [planCargando, setPlanCargando] = useState(false)
   const [verPlan, setVerPlan] = useState(false)
   const [chequeo, setChequeo] = useState(null)
+  const [riesgos, setRiesgos] = useState([])
+  const [riesgosCargando, setRiesgosCargando] = useState(false)
+  const [verRiesgos, setVerRiesgos] = useState(false)
 
   const lunes = ref
   const domingo = addDias(lunes, 6)
@@ -264,6 +274,65 @@ export default function ProgramacionProduccion() {
     setChequeo(data && data[0] ? data[0] : null)
   }
 
+  // ---------- Riesgos y opciones de recuperacion ----------
+  // Solo se reportan las OT en riesgo: atrasadas, empujadas, que no alcanzan
+  // a terminar, o que terminan despues del compromiso con el cliente. Para
+  // cada una se calculan las salidas con numeros para poder decidir.
+  const cargarRiesgos = async () => {
+    setRiesgosCargando(true)
+    const res = await Promise.all(maquinas.map(m =>
+      supabase.rpc('opciones_recuperacion', {
+        p_empresa_id: perfil.empresa_id, p_maquina_id: m.id,
+        p_desde: iso(lunes), p_hasta: iso(domingo),
+      }).then(r => ({ maquina: m, filas: r.data || [], error: r.error }))
+    ))
+    setRiesgosCargando(false)
+    const conError = res.find(r => r.error)
+    if (conError) { setError('No se pudieron calcular los riesgos: ' + conError.error.message); return }
+    setRiesgos(res.filter(r => r.filas.length > 0))
+  }
+
+  useEffect(() => { if (verRiesgos && maquinas.length) cargarRiesgos() }, [verRiesgos, maquinas, ref])
+
+  // Opcion A: recortar la OT a lo que realmente alcanza antes del compromiso
+  const aplicarReducir = async (r) => {
+    if (r.cant_que_cabe == null) return
+    if (!confirm(`Se va a reducir la ${r.folio} de ${Number(r.cantidad).toLocaleString('es-MX')} a ${Number(r.cant_que_cabe).toLocaleString('es-MX')} piezas. Quedarias corto ${Number(r.faltante_release || 0).toLocaleString('es-MX')} pz contra el release. Confirma para aplicar.`)) return
+    setCargando(true); setError('')
+    const { error: e } = await supabase.from('ordenes_trabajo')
+      .update({ cantidad_programada: Number(r.cant_que_cabe) }).eq('id', r.ot_id)
+    if (e) { setError('No se pudo reducir: ' + e.message); setCargando(false); return }
+    await supabase.from('programa_cambios').insert({
+      empresa_id: perfil.empresa_id, semana_id: semana?.id || null, ot_id: r.ot_id,
+      tipo: 'reprogramacion', campo: 'cantidad',
+      antes: String(r.cantidad), despues: String(r.cant_que_cabe),
+      usuario_id: perfil.id, usuario_nombre: perfil.nombre,
+    })
+    setExito(`${r.folio} reducida a ${Number(r.cant_que_cabe).toLocaleString('es-MX')} pz`)
+    setCargando(false); await cargar(); cargarRiesgos(); if (verPlan) cargarPlan()
+  }
+
+  // Opcion C: diferir a la siguiente semana la OT de compromiso mas lejano
+  const aplicarDiferir = async (r) => {
+    if (!r.mover_id) return
+    const destino = iso(addDias(lunes, 7))
+    if (!confirm(`Se va a mover la ${r.mover_folio} a la semana del ${ddmm(destino)} para liberar capacidad. Su compromiso es ${r.mover_compromiso || 'sin fecha firme'}. Confirma para aplicar.`)) return
+    setCargando(true); setError('')
+    const { data: prev } = await supabase.from('ordenes_trabajo')
+      .select('fecha_programada').eq('id', r.mover_id).maybeSingle()
+    const { error: e } = await supabase.from('ordenes_trabajo')
+      .update({ fecha_programada: destino }).eq('id', r.mover_id)
+    if (e) { setError('No se pudo mover: ' + e.message); setCargando(false); return }
+    await supabase.from('programa_cambios').insert({
+      empresa_id: perfil.empresa_id, semana_id: semana?.id || null, ot_id: r.mover_id,
+      tipo: 'reprogramacion', campo: 'fecha',
+      antes: prev?.fecha_programada || null, despues: destino,
+      usuario_id: perfil.id, usuario_nombre: perfil.nombre,
+    })
+    setExito(`${r.mover_folio} movida a la semana del ${ddmm(destino)}`)
+    setCargando(false); await cargar(); cargarRiesgos(); if (verPlan) cargarPlan()
+  }
+
   // ---------- Secuencia sugerida por color ----------
   // Agrupa por molde para no cambiar de molde de mas y dentro de cada campana
   // corre los colores de claro a oscuro, porque regresar a un claro exige
@@ -319,12 +388,136 @@ export default function ProgramacionProduccion() {
         <div style={{ display: 'flex', gap: '10px' }}>
           {puedeProgramar && semana?.estatus !== 'cerrada' && <button style={styles.boton} disabled={cargando} onClick={iniciarProgramar}>{cargando ? '...' : 'Programar semana'}</button>}
           <button style={styles.botonSec} onClick={() => setVerPlan(v => !v)}>{verPlan ? 'Cerrar carga' : 'Carga y capacidad'}</button>
+          <button style={styles.botonSec} onClick={() => setVerRiesgos(v => !v)}>{verRiesgos ? 'Cerrar riesgos' : 'Riesgos y recuperacion'}</button>
           {puedeProgramar && <button style={styles.botonSec} onClick={() => { setSeq(null); setSeqMaquina(seqMaquina ? '' : 'abrir') }}>{seqMaquina ? 'Cerrar secuencia' : 'Secuencia por color'}</button>}
           {puedeCerrar && semana && semana.estatus !== 'cerrada' && <button style={styles.botonCerrar} onClick={cerrarSemana}>Cerrar semana</button>}
         </div>
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
+
+      {/* ---------- Riesgos y opciones de recuperacion ---------- */}
+      {verRiesgos && (
+        <div style={styles.seqPanel}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#1a1a2e' }}>Riesgos y opciones de recuperacion</span>
+            {riesgosCargando && <span style={{ fontSize: '12.5px', color: '#64748b' }}>Calculando...</span>}
+          </div>
+          <p style={styles.seqAyuda}>
+            Solo aparecen las OT en riesgo. El compromiso sale del pedido <b>firme</b> vigente con saldo
+            pendiente, descontando lo ya entregado. Las opciones traen numeros para poder decidir, no solo
+            avisos; aplicar cualquiera queda registrado en la bitacora de la OT.
+          </p>
+
+          {!riesgosCargando && riesgos.length === 0 && (
+            <p style={{ ...styles.seqVacio, color: '#15803d' }}>
+              Ninguna OT en riesgo esta semana: todas arrancan a tiempo y terminan dentro de su compromiso.
+            </p>
+          )}
+
+          {riesgos.map(({ maquina, filas }) => (
+            <div key={maquina.id} style={styles.planMaq}>
+              <div style={styles.planMaqTop}>
+                <span style={{ fontWeight: 600, fontSize: '13px' }}>{maquina.clave} &middot; {maquina.nombre}</span>
+                <span style={{ fontSize: '12px', color: '#b91c1c' }}>{filas.length} OT en riesgo</span>
+              </div>
+              {filas.map(r => {
+                const et = RIESGO[r.riesgo] || { txt: r.riesgo, bg: '#f1f5f9', fg: '#475569' }
+                return (
+                  <div key={r.ot_id} style={styles.riesgoCard}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: '#1a1a2e' }}>
+                        <span style={{ ...styles.riesgoTag, background: et.bg, color: et.fg }}>{et.txt}</span>
+                        {r.folio} &middot; {r.articulo_codigo}
+                      </span>
+                      <span style={{ fontSize: '12px', color: '#b91c1c' }}>
+                        {Number(r.horas_desfase) > 0 ? `${Number(r.horas_desfase).toLocaleString('es-MX', { maximumFractionDigits: 1 })} h de desfase` : ''}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '11.5px', color: '#64748b', margin: '4px 0 8px' }}>
+                      Plan {fechaHora(r.inicio)} &rarr; {fechaHora(r.fin)} &middot; {Number(r.cantidad).toLocaleString('es-MX')} pz
+                      {r.fecha_compromiso
+                        ? ` · compromiso ${ddmm(r.fecha_compromiso)}${r.cliente ? ' para ' + r.cliente : ''}${r.saldo_release != null ? ` (saldo ${Number(r.saldo_release).toLocaleString('es-MX')} pz)` : ''}`
+                        : ' · sin pedido firme pendiente'}
+                    </div>
+
+                    <div style={styles.opcGrid}>
+                      {/* A) reducir cantidad */}
+                      <div style={styles.opc}>
+                        <div style={styles.opcTit}>Reducir la cantidad</div>
+                        {r.cant_que_cabe == null ? (
+                          <div style={styles.opcNo}>No aplica: el compromiso ya vencio.</div>
+                        ) : (
+                          <>
+                            <div style={styles.opcVal}>{Number(r.cant_que_cabe).toLocaleString('es-MX')} pz</div>
+                            <div style={styles.opcPie}>
+                              es lo que alcanza antes del compromiso; quedarias corto{' '}
+                              <b>{Number(r.faltante_release || 0).toLocaleString('es-MX')} pz</b>
+                            </div>
+                            {puedeProgramar && Number(r.cant_que_cabe) > 0 && Number(r.cant_que_cabe) < Number(r.cantidad) && (
+                              <button style={styles.opcBtn} onClick={() => aplicarReducir(r)}>Aplicar</button>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* B) tiempo extra */}
+                      <div style={styles.opc}>
+                        <div style={styles.opcTit}>Meter tiempo extra</div>
+                        {Number(r.horas_extra) > 0 ? (
+                          <>
+                            <div style={styles.opcVal}>{Number(r.horas_extra).toLocaleString('es-MX', { maximumFractionDigits: 1 })} h</div>
+                            <div style={styles.opcPie}>
+                              costo aproximado <b>${Number(r.costo_extra || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> con las tarifas de la maquina
+                            </div>
+                          </>
+                        ) : <div style={styles.opcNo}>No hace falta tiempo extra.</div>}
+                      </div>
+
+                      {/* C) diferir otra OT */}
+                      <div style={styles.opc}>
+                        <div style={styles.opcTit}>Diferir otra OT</div>
+                        {r.mover_folio ? (
+                          <>
+                            <div style={styles.opcVal}>{r.mover_folio}</div>
+                            <div style={styles.opcPie}>
+                              es la de compromiso mas lejano{r.mover_compromiso ? ` (${ddmm(r.mover_compromiso)})` : ''}
+                            </div>
+                            {puedeProgramar && semana?.estatus !== 'cerrada' && (
+                              <button style={styles.opcBtn} onClick={() => aplicarDiferir(r)}>Mover a la otra semana</button>
+                            )}
+                          </>
+                        ) : <div style={styles.opcNo}>No hay otra OT que se pueda diferir.</div>}
+                      </div>
+
+                      {/* D) maquina alterna */}
+                      <div style={styles.opc}>
+                        <div style={styles.opcTit}>Maquina alterna</div>
+                        {r.alterna_clave ? (
+                          <>
+                            <div style={styles.opcVal}>{r.alterna_clave}</div>
+                            <div style={styles.opcPie}>
+                              {r.alterna_aprobada ? 'aprobada por el cliente' : 'autorizada en la ruta, sin aprobacion del cliente'}
+                            </div>
+                            {puedeProgramar && (
+                              <button style={styles.opcBtn} onClick={() => {
+                                const ot = ots.find(o => o.id === r.ot_id)
+                                if (!ot) { setError('Abre la OT desde el tablero para cambiarla de maquina'); return }
+                                setChequeo(null)
+                                setEdit({ ...ot, maquina_id: String(r.alterna_id), _orig: { maquina_id: ot.maquina_id, fecha_programada: ot.fecha_programada, turno: ot.turno }, _motivo: '' })
+                              }}>Cambiar de maquina</button>
+                            )}
+                          </>
+                        ) : <div style={styles.opcNo}>No hay maquina alterna autorizada en la ruta.</div>}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ---------- Carga y capacidad ---------- */}
       {verPlan && (
@@ -622,6 +815,15 @@ export default function ProgramacionProduccion() {
 }
 
 const styles = {
+  riesgoCard: { border: '1px solid #fecaca', background: '#fffbfb', borderRadius: '9px', padding: '10px 12px', marginBottom: '8px' },
+  riesgoTag: { fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', marginRight: '7px' },
+  opcGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' },
+  opc: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '3px' },
+  opcTit: { fontSize: '10.5px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.03em', fontWeight: 600 },
+  opcVal: { fontSize: '15px', fontWeight: 700, color: '#1a1a2e' },
+  opcPie: { fontSize: '11px', color: '#64748b', lineHeight: 1.4 },
+  opcNo: { fontSize: '11.5px', color: '#94a3b8', lineHeight: 1.4, marginTop: '2px' },
+  opcBtn: { marginTop: '6px', padding: '5px 10px', background: '#fff', color: '#b91c1c', border: '1px solid #fca5a5', borderRadius: '6px', fontSize: '11.5px', cursor: 'pointer', alignSelf: 'flex-start' },
   avisoRojo: { background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', color: '#b91c1c', marginTop: '10px', lineHeight: 1.5 },
   avisoVerde: { background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '9px 12px', fontSize: '12.5px', color: '#15803d', marginTop: '10px' },
   planMaq: { border: '1px solid #e2e8f0', borderRadius: '9px', padding: '10px 12px', marginTop: '10px' },
