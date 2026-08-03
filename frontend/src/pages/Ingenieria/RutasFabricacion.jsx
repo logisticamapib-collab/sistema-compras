@@ -171,27 +171,11 @@ export default function RutasFabricacion() {
     }
     await insertarAlternas(rutaId)
 
-    // RUTA POR FAMILIA DE MOLDE: si el molde produce varios articulos, la misma ruta
-    // se replica (o actualiza) para los demas articulos de esa familia.
-    const familia = familiaDeMolde(nuevoPaso.molde_id).filter(id => id !== parseInt(articuloId))
-    if (familia.length > 0) {
-      await supabase.from('rutas_fabricacion').update({ aplica_familia: true }).eq('id', rutaId)
-      for (const artId of familia) {
-        const { data: ya } = await supabase.from('rutas_fabricacion').select('id')
-          .eq('articulo_id', artId).eq('tipo_operacion', payload.tipo_operacion).eq('molde_id', payload.molde_id).maybeSingle()
-        let rid
-        if (ya) {
-          await supabase.from('rutas_fabricacion').update({ ...payload, aplica_familia: true }).eq('id', ya.id)
-          rid = ya.id
-          await supabase.from('ruta_maquinas_alternas').delete().eq('ruta_id', rid)
-        } else {
-          const { data: nueva } = await supabase.from('rutas_fabricacion')
-            .insert({ articulo_id: artId, secuencia: 1, aplica_familia: true, ...payload }).select().single()
-          rid = nueva?.id
-        }
-        if (rid) await insertarAlternas(rid)
-      }
-    }
+    // RUTA POR FAMILIA DE MOLDE: ya no se replica desde aqui. La base tiene un
+    // disparador que propaga la ruta y sus maquinas alternas a todos los
+    // articulos del molde, y que ademas se la hereda a cualquier articulo que
+    // se asigne a una cavidad mas adelante. Asi la sincronizacion tambien
+    // aplica a la carga masiva y no solo a esta pantalla.
 
     setExito(editandoPaso ? `Paso ${editandoPaso.secuencia} actualizado` : 'Paso agregado correctamente')
     setMostrarForm(false)
