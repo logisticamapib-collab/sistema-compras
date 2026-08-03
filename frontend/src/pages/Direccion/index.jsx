@@ -3,9 +3,11 @@ import { useAuth } from '../../context/AuthContext'
 import ReportesEjecutivos from './ReportesEjecutivos'
 import Aprobaciones from '../Aprobaciones/index'
 import Ordenes from '../Ordenes/index'
+import CosteoProduccion from './CosteoProduccion'
 
 const secciones = [
   { id: 'ejecutivos', modulo: 'rep_ejecutivos', titulo: 'Reportes Ejecutivos' },
+  { id: 'costeo', modulo: 'dir_costeo_prod', titulo: 'Costeo Real vs Estandar' },
   { id: 'aprobaciones', modulo: 'aprobaciones', titulo: 'Aprobaciones' },
   { id: 'ordenes', modulo: 'ordenes', titulo: 'Ordenes de Compra' },
 ]
@@ -34,6 +36,7 @@ export default function GrupoDireccion() {
           <p style={{ color: '#666', padding: '28px' }}>Tu rol no tiene ninguna seccion de Direccion habilitada.</p>
         )}
         {seccion === 'ejecutivos' && <ReportesEjecutivos />}
+        {seccion === 'costeo' && <CosteoProduccion />}
         {seccion === 'aprobaciones' && <Aprobaciones />}
         {seccion === 'ordenes' && <Ordenes />}
       </div>

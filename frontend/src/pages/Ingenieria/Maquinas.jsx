@@ -8,7 +8,7 @@ const tipos = [
   { value: 'ensamble', label: 'Ensamble' },
 ]
 
-const formVacio = { clave: '', nombre: '', tipo: 'inyeccion', tonelaje: '', site_id: '', estatus: 'activa', capacidad_doble_inyeccion: false }
+const formVacio = { clave: '', nombre: '', tipo: 'inyeccion', tonelaje: '', site_id: '', estatus: 'activa', capacidad_doble_inyeccion: false, costo_hora_hombre: '', costo_hora_maquina: '' }
 
 export default function Maquinas() {
   const { perfil, tienePermiso } = useAuth()
@@ -39,7 +39,7 @@ export default function Maquinas() {
   }
 
   const maquinasFiltradas = maquinas.filter(m => !filtroMaq || (`${m.clave} ${m.nombre}`).toLowerCase().includes(filtroMaq.toLowerCase()))
-  const colsMaq = [{ label: 'Clave', get: m => m.clave }, { label: 'Nombre', get: m => m.nombre }, { label: 'Tipo', get: m => m.tipo }, { label: 'Tonelaje', get: m => m.tonelaje }, { label: 'Site', get: m => m.sites?.nombre || '' }, { label: 'Estatus', get: m => m.activo ? 'Activo' : 'Inactivo' }]
+  const colsMaq = [{ label: 'Clave', get: m => m.clave }, { label: 'Nombre', get: m => m.nombre }, { label: 'Tipo', get: m => m.tipo }, { label: 'Tonelaje', get: m => m.tonelaje }, { label: 'Costo hora-hombre', get: m => m.costo_hora_hombre }, { label: 'Costo hora-maquina', get: m => m.costo_hora_maquina }, { label: 'Site', get: m => m.sites?.nombre || '' }, { label: 'Estatus', get: m => m.activo ? 'Activo' : 'Inactivo' }]
   const abrirNuevo = () => { setEditando(null); setForm(formVacio); setMostrarForm(true); setError('') }
   const abrirEditar = (m) => {
     setEditando(m)
@@ -47,6 +47,8 @@ export default function Maquinas() {
       clave: m.clave, nombre: m.nombre || '', tipo: m.tipo, tonelaje: m.tonelaje || '',
       site_id: m.site_id?.toString() || '', estatus: m.estatus,
       capacidad_doble_inyeccion: m.capacidad_doble_inyeccion || false,
+      costo_hora_hombre: m.costo_hora_hombre ?? '',
+      costo_hora_maquina: m.costo_hora_maquina ?? '',
     })
     setMostrarForm(true)
     setError('')
@@ -63,6 +65,8 @@ export default function Maquinas() {
       site_id: form.site_id ? parseInt(form.site_id) : null,
       estatus: form.estatus,
       capacidad_doble_inyeccion: form.tipo === 'inyeccion' ? form.capacidad_doble_inyeccion : false,
+      costo_hora_hombre: form.costo_hora_hombre === '' ? 0 : parseFloat(form.costo_hora_hombre),
+      costo_hora_maquina: form.costo_hora_maquina === '' ? 0 : parseFloat(form.costo_hora_maquina),
     }
 
     let error
@@ -125,6 +129,16 @@ export default function Maquinas() {
             <div style={styles.campo}>
               <label style={styles.label}>Tonelaje</label>
               <input style={styles.input} type="number" value={form.tonelaje} onChange={e => setForm({ ...form, tonelaje: e.target.value })} />
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Costo hora-hombre</label>
+              <input style={styles.input} type="number" min="0" step="0.01" value={form.costo_hora_hombre}
+                onChange={e => setForm({ ...form, costo_hora_hombre: e.target.value })} placeholder="0 = usa la tarifa de planta" />
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Costo hora-maquina</label>
+              <input style={styles.input} type="number" min="0" step="0.01" value={form.costo_hora_maquina}
+                onChange={e => setForm({ ...form, costo_hora_maquina: e.target.value })} placeholder="0 = usa la tarifa de planta" />
             </div>
             <div style={styles.campo}>
               <label style={styles.label}>Site</label>
