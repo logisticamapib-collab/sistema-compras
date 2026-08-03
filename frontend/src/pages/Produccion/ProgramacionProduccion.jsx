@@ -109,17 +109,32 @@ export default function ProgramacionProduccion() {
   const runPrograma = async (arrastrar) => {
     setArrastreForm(null); setCargando(true); setError('')
     try {
+      // Se mueve la fecha ANTES de programar para que la capacidad la tome
+      // en cuenta. La semana se reasigna despues, cuando ya existe su id.
       if (arrastrar && arrastreForm) {
         for (const o of arrastreForm.ots) {
           await supabase.from('ordenes_trabajo').update({ fecha_programada: iso(lunes) }).eq('id', o.id)
-          await supabase.from('programa_cambios').insert({ empresa_id: perfil.empresa_id, semana_id: semana?.id || null, ot_id: o.id, tipo: 'arrastre', campo: 'fecha', antes: o.fecha_programada, despues: iso(lunes), usuario_id: perfil.id, usuario_nombre: perfil.nombre })
         }
       }
-      const { error } = await supabase.rpc('programar_semana', {
+      const { data: semanaId, error } = await supabase.rpc('programar_semana', {
         p_empresa_id: perfil.empresa_id, p_site_id: perfil.site_id || null,
         p_semana_inicio: iso(lunes), p_usuario_id: perfil.id, p_cambio_molde_min: 60,
       })
       if (error) { setError(error.message); setCargando(false); return }
+      // Una OT arrastrada debe quedar ligada a la semana destino. Las que
+      // estan 'en_proceso' no las re-secuencia programar_semana, asi que sin
+      // esto seguirian colgadas de la semana anterior y el aviso de
+      // pendientes se repetiria cada vez.
+      if (arrastrar && arrastreForm && semanaId) {
+        for (const o of arrastreForm.ots) {
+          await supabase.from('ordenes_trabajo').update({ semana_id: semanaId }).eq('id', o.id)
+          await supabase.from('programa_cambios').insert({
+            empresa_id: perfil.empresa_id, semana_id: semanaId, ot_id: o.id,
+            tipo: 'arrastre', campo: 'fecha', antes: o.fecha_programada, despues: iso(lunes),
+            usuario_id: perfil.id, usuario_nombre: perfil.nombre,
+          })
+        }
+      }
       setExito(arrastrar ? 'Semana programada (OT pendientes arrastradas)' : 'Semana programada')
       await cargar(); setTimeout(() => setExito(''), 3000)
     } catch (err) { setError('Error: ' + err.message) }
