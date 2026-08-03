@@ -14,6 +14,7 @@ const iso = (d) => d.toISOString().slice(0, 10)
 const lunesDe = (d) => { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); x.setHours(0, 0, 0, 0); return x }
 const addDias = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x }
 const ddmm = (s) => { const p = String(s).split('-'); return `${p[2]}/${p[1]}` }
+const fechaHora = (ts) => ts ? new Date(ts).toLocaleString('es-MX', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'
 
 export default function ProgramacionProduccion() {
   const { perfil, tienePermiso } = useAuth()
@@ -39,6 +40,10 @@ export default function ProgramacionProduccion() {
   const [seqMaquina, setSeqMaquina] = useState('')
   const [seq, setSeq] = useState(null)
   const [seqCargando, setSeqCargando] = useState(false)
+  const [plan, setPlan] = useState([])
+  const [planCargando, setPlanCargando] = useState(false)
+  const [verPlan, setVerPlan] = useState(false)
+  const [chequeo, setChequeo] = useState(null)
 
   const lunes = ref
   const domingo = addDias(lunes, 6)
@@ -212,6 +217,38 @@ export default function ProgramacionProduccion() {
   const personalDia = (dia) => otsDe0(dia).reduce((s, o) => s + (personal[o.articulo_id] || 0), 0)
   function otsDe0(dia) { return ots.filter(o => o.fecha_programada === iso(dia)) }
 
+  // ---------- Plan de capacidad ----------
+  // Cada OT tiene duracion real: (cantidad / cavidades) x ciclo / eficiencia,
+  // mas cambio de molde y purga de color. La maquina corre continuo entre
+  // turnos, asi que una OT puede cruzar de turno y empujar a la siguiente.
+  const cargarPlan = async () => {
+    setPlanCargando(true)
+    const res = await Promise.all(maquinas.map(m =>
+      supabase.rpc('plan_maquina', {
+        p_empresa_id: perfil.empresa_id, p_maquina_id: m.id,
+        p_desde: iso(lunes), p_hasta: iso(domingo), p_excluir_ot: null,
+      }).then(r => ({ maquina: m, filas: r.data || [], error: r.error }))
+    ))
+    setPlanCargando(false)
+    const conError = res.find(r => r.error)
+    if (conError) { setError('No se pudo calcular el plan: ' + conError.error.message); return }
+    setPlan(res.filter(r => r.filas.length > 0))
+  }
+
+  useEffect(() => { if (verPlan && maquinas.length) cargarPlan() }, [verPlan, maquinas, ref])
+
+  // Revisa si el destino elegido en el modal esta ocupado, y de ser asi
+  // cuanto habria que recortar la OT que estorba.
+  const revisarDestino = async (maquinaId, fecha, turno, otId) => {
+    if (!maquinaId || !fecha || !turno) { setChequeo(null); return }
+    const { data, error: e } = await supabase.rpc('validar_traslape', {
+      p_empresa_id: perfil.empresa_id, p_maquina_id: Number(maquinaId),
+      p_fecha: fecha, p_turno: turno, p_ot_id: otId || null,
+    })
+    if (e) { setChequeo(null); return }
+    setChequeo(data && data[0] ? data[0] : null)
+  }
+
   // ---------- Secuencia sugerida por color ----------
   // Agrupa por molde para no cambiar de molde de mas y dentro de cada campana
   // corre los colores de claro a oscuro, porque regresar a un claro exige
@@ -266,12 +303,75 @@ export default function ProgramacionProduccion() {
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           {puedeProgramar && semana?.estatus !== 'cerrada' && <button style={styles.boton} disabled={cargando} onClick={iniciarProgramar}>{cargando ? '...' : 'Programar semana'}</button>}
+          <button style={styles.botonSec} onClick={() => setVerPlan(v => !v)}>{verPlan ? 'Cerrar carga' : 'Carga y capacidad'}</button>
           {puedeProgramar && <button style={styles.botonSec} onClick={() => { setSeq(null); setSeqMaquina(seqMaquina ? '' : 'abrir') }}>{seqMaquina ? 'Cerrar secuencia' : 'Secuencia por color'}</button>}
           {puedeCerrar && semana && semana.estatus !== 'cerrada' && <button style={styles.botonCerrar} onClick={cerrarSemana}>Cerrar semana</button>}
         </div>
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
+
+      {/* ---------- Carga y capacidad ---------- */}
+      {verPlan && (
+        <div style={styles.seqPanel}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#1a1a2e' }}>Carga y capacidad de la semana</span>
+            {planCargando && <span style={{ fontSize: '12.5px', color: '#64748b' }}>Calculando...</span>}
+          </div>
+          <p style={styles.seqAyuda}>
+            La duracion de cada OT sale de su cantidad, las cavidades del molde y el ciclo de la ruta, ajustada
+            por la eficiencia real de esa maquina, mas el cambio de molde y la purga de color. La maquina corre
+            continuo entre turnos, por eso una OT puede cruzar de turno y empujar a la que sigue.
+          </p>
+
+          {!planCargando && plan.length === 0 && (
+            <p style={styles.seqVacio}>No hay OT programadas esta semana, o falta capturar el tiempo estandar en las rutas.</p>
+          )}
+
+          {plan.map(({ maquina, filas }) => {
+            const totalMin = filas.reduce((a, r) => a + (Number(r.total_min) || 0), 0)
+            const ef = filas[0]?.eficiencia
+            return (
+              <div key={maquina.id} style={styles.planMaq}>
+                <div style={styles.planMaqTop}>
+                  <span style={{ fontWeight: 600, fontSize: '13px' }}>{maquina.clave} &middot; {maquina.nombre}</span>
+                  <span style={{ fontSize: '12px', color: '#64748b' }}>
+                    {filas.length} OT &middot; {Math.round(totalMin / 60)} h de carga
+                    {ef ? ` · eficiencia ${(Number(ef) * 100).toFixed(0)}%` : ''}
+                  </span>
+                </div>
+                {filas.map(r => {
+                  const col = !r.cabe ? '#b91c1c' : r.atrasada ? '#dc2626' : r.empujada ? '#d97706' : '#16a34a'
+                  const bg = !r.cabe ? '#fef2f2' : r.atrasada ? '#fef2f2' : r.empujada ? '#fffbeb' : '#f0fdf4'
+                  return (
+                    <div key={r.ot_id} style={{ ...styles.planFila, borderLeftColor: col, background: bg }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '12.5px', fontWeight: 600, color: '#1a1a2e' }}>
+                          #{r.posicion} {r.folio} &middot; {r.articulo_codigo}
+                          {r.color_clave && <span style={styles.planTag}>{r.color_clave}</span>}
+                        </span>
+                        <span style={{ fontSize: '12px', color: '#475569' }}>
+                          {Number(r.cantidad).toLocaleString('es-MX')} pz &middot; {Math.round(Number(r.total_min) / 60)} h
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '3px' }}>
+                        {r.inicio ? fechaHora(r.inicio) : '-'} &rarr; {r.fin ? fechaHora(r.fin) : '-'}
+                        {r.turnos_ocupados ? ` · ocupa ${r.turnos_ocupados}` : ''}
+                      </div>
+                      <div style={{ fontSize: '11.5px', marginTop: '3px', color: col }}>
+                        {!r.cabe && 'No alcanza a terminar en el horizonte: hay que partirla, subir cantidad de turnos o mover a otra maquina.'}
+                        {r.cabe && r.empujada && `Se pidio para ${fechaHora(r.inicio_solicitado)} pero arranca ${Math.round(Number(r.empuje_min) / 60)} h despues porque la maquina sigue ocupada.`}
+                        {r.cabe && !r.empujada && r.atrasada && 'Segun el plan ya deberia haber terminado y sigue abierta.'}
+                        {r.cabe && !r.empujada && !r.atrasada && `Arranca a tiempo · setup ${r.setup_min || 0} min${Number(r.purga_min) > 0 ? ` + purga ${r.purga_min} min` : ''}`}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* ---------- Secuencia sugerida por color ---------- */}
       {seqMaquina !== '' && (
@@ -406,7 +506,7 @@ export default function ProgramacionProduccion() {
                       const atras = o.fecha_programada < hoy && o.estatus === 'programada'
                       const cambia = implicaCambio(o)
                       return (
-                        <button key={o.id} onClick={() => setEdit({ ...o, _orig: { maquina_id: o.maquina_id, fecha_programada: o.fecha_programada, turno: o.turno }, _nuevaMaquina: String(o.maquina_id || ''), _motivo: '' })} style={{ ...styles.card, borderLeftColor: atras ? '#dc2626' : cambia ? '#d97706' : COLOR_EST[estadoMaq(o.maquina_id)]?.c || '#7c3aed', backgroundColor: cambia ? '#fffbeb' : '#fff' }}>
+                        <button key={o.id} onClick={() => { setChequeo(null); setEdit({ ...o, _orig: { maquina_id: o.maquina_id, fecha_programada: o.fecha_programada, turno: o.turno }, _nuevaMaquina: String(o.maquina_id || ''), _motivo: '' }) }} style={{ ...styles.card, borderLeftColor: atras ? '#dc2626' : cambia ? '#d97706' : COLOR_EST[estadoMaq(o.maquina_id)]?.c || '#7c3aed', backgroundColor: cambia ? '#fffbeb' : '#fff' }}>
                           <div style={styles.cardTop}><span style={styles.turnoBadge}>{o.turno}</span> <strong>#{o.secuencia}</strong> {o.folio}</div>
                           <div style={{ fontWeight: '600', fontSize: '12px' }}>{familia(o)}</div>
                           <div style={{ fontSize: '11px', color: '#64748b' }}>Molde {o.molde_id || '-'} · {fmt(o.cantidad_programada)} pz</div>
@@ -436,7 +536,7 @@ export default function ProgramacionProduccion() {
               const pend = solicitudPendiente(edit.id)
               return (<>
                 <div style={styles.campo}><label style={styles.label}>Maquina</label>
-                  <select style={styles.input} value={edit.maquina_id || ''} onChange={e => setEdit({ ...edit, maquina_id: e.target.value })}>
+                  <select style={styles.input} value={edit.maquina_id || ''} onChange={e => { setEdit({ ...edit, maquina_id: e.target.value }); revisarDestino(e.target.value, edit.fecha_programada, edit.turno, edit.id) }}>
                     {maquinas.map(m => <option key={m.id} value={m.id}>{m.clave} - {m.nombre}{permitidas.has(m.id) ? '  (autorizada)' : ''}</option>)}
                   </select>
                   <span style={{ fontSize: '11px', color: '#64748b' }}>Autorizadas en la ruta: {[...permitidas].map(id => maquinas.find(m => m.id === id)?.clave).filter(Boolean).join(', ') || 'ninguna'}</span>
@@ -451,14 +551,36 @@ export default function ProgramacionProduccion() {
               </>)
             })()}
             <div style={styles.campo}><label style={styles.label}>Fecha</label>
-              <input style={styles.input} type="date" value={edit.fecha_programada || ''} onChange={e => setEdit({ ...edit, fecha_programada: e.target.value })} /></div>
+              <input style={styles.input} type="date" value={edit.fecha_programada || ''} onChange={e => { setEdit({ ...edit, fecha_programada: e.target.value }); revisarDestino(edit.maquina_id, e.target.value, edit.turno, edit.id) }} /></div>
             <div style={styles.campo}><label style={styles.label}>Turno</label>
-              <select style={styles.input} value={edit.turno || ''} onChange={e => setEdit({ ...edit, turno: e.target.value })}>
+              <select style={styles.input} value={edit.turno || ''} onChange={e => { setEdit({ ...edit, turno: e.target.value }); revisarDestino(edit.maquina_id, edit.fecha_programada, e.target.value, edit.id) }}>
                 {turnos.map(t => <option key={t.id} value={t.clave}>{t.clave} - {t.nombre}</option>)}
               </select></div>
+
+            {/* Candado de capacidad: no basta con avisar que no cabe, dice cuanto SI cabe */}
+            {chequeo && !chequeo.cabe && (
+              <div style={styles.avisoRojo}>
+                <b>Ese turno no esta libre.</b>
+                <div style={{ marginTop: '5px', lineHeight: 1.5 }}>{chequeo.mensaje}</div>
+                {chequeo.cantidad_sugerida != null && (
+                  <div style={{ marginTop: '7px', fontSize: '12px' }}>
+                    Opciones: reducir la <b>{chequeo.ot_bloq_folio}</b> a{' '}
+                    <b>{Number(chequeo.cantidad_sugerida).toLocaleString('es-MX')} pz</b>, cerrarla antes,
+                    o programar esta OT a partir de <b>{fechaHora(chequeo.libera_en)}</b>.
+                  </div>
+                )}
+              </div>
+            )}
+            {chequeo && chequeo.cabe && (
+              <div style={styles.avisoVerde}>La maquina esta libre en ese turno.</div>
+            )}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
               <button style={styles.botonSec} onClick={() => setEdit(null)}>Cancelar</button>
-              <button style={styles.boton} onClick={guardarEdit}>Guardar</button>
+              <button
+                style={{ ...styles.boton, opacity: (chequeo && !chequeo.cabe) ? 0.45 : 1, cursor: (chequeo && !chequeo.cabe) ? 'not-allowed' : 'pointer' }}
+                disabled={!!(chequeo && !chequeo.cabe)}
+                title={chequeo && !chequeo.cabe ? 'La maquina no esta libre en ese turno' : ''}
+                onClick={guardarEdit}>Guardar</button>
             </div>
           </div>
         </div>
@@ -485,6 +607,12 @@ export default function ProgramacionProduccion() {
 }
 
 const styles = {
+  avisoRojo: { background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', color: '#b91c1c', marginTop: '10px', lineHeight: 1.5 },
+  avisoVerde: { background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '9px 12px', fontSize: '12.5px', color: '#15803d', marginTop: '10px' },
+  planMaq: { border: '1px solid #e2e8f0', borderRadius: '9px', padding: '10px 12px', marginTop: '10px' },
+  planMaqTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', paddingBottom: '7px', borderBottom: '1px solid #f1f5f9', marginBottom: '7px' },
+  planFila: { borderLeft: '3px solid', borderRadius: '7px', padding: '7px 10px', marginBottom: '6px' },
+  planTag: { fontSize: '10.5px', fontWeight: 600, padding: '2px 7px', borderRadius: '20px', background: '#ede9fe', color: '#6d28d9', marginLeft: '6px' },
   seqPanel: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px 16px', margin: '0 0 14px' },
   seqSel: { padding: '7px 10px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '13px', outline: 'none', background: '#fff', minWidth: '220px' },
   seqAyuda: { fontSize: '12px', color: '#64748b', lineHeight: 1.55, margin: '8px 0 12px' },
