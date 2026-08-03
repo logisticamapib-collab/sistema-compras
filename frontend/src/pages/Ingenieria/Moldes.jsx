@@ -148,6 +148,27 @@ export default function Moldes() {
     }))
   }
 
+  // Tapar una cavidad afecta a TODOS sus colores a la vez: se tapa la cavidad
+  // fisica, no el codigo. Al bajar el conteo suben los disparos, asi que el
+  // plan de capacidad se alarga solo y el costo por pieza sube.
+  const alternarBloqueo = async (numeroCavidad, bloquear) => {
+    let motivo = null
+    if (bloquear) {
+      motivo = prompt(`Motivo por el que se tapa la cavidad #${numeroCavidad} (dano, balanceo de sets, etc.)`)
+      if (motivo === null) return
+    }
+    setLoading(true); setError('')
+    const { error: e } = await supabase.rpc('bloquear_cavidad', {
+      p_molde_id: moldeCavidades.molde.id, p_numero_cavidad: numeroCavidad,
+      p_bloquear: bloquear, p_motivo: motivo, p_usuario: perfil.id,
+    })
+    setLoading(false)
+    if (e) { setError('No se pudo actualizar la cavidad: ' + e.message); return }
+    setExito(bloquear ? `Cavidad #${numeroCavidad} tapada` : `Cavidad #${numeroCavidad} liberada`)
+    setTimeout(() => setExito(''), 3000)
+    abrirCavidades(moldeCavidades.molde)
+  }
+
   const guardarCavidades = async () => {
     setLoading(true); setError('')
     try {
@@ -193,11 +214,25 @@ export default function Moldes() {
           una linea por color. Los articulos del <b>mismo color</b> salen juntos en un disparo; los de
           <b> distinto color</b> se corren por separado, con purga entre uno y otro.
         </p>
+        {(() => {
+          const activas = [...new Set(moldeCavidades.cavidades.filter(c => c.activa !== false).map(c => c.numero_cavidad))].length
+          const nominal = moldeCavidades.molde.num_cavidades
+            || [...new Set(moldeCavidades.cavidades.map(c => c.numero_cavidad))].length
+          if (activas >= nominal) return null
+          return (
+            <div style={styles.avisoCav}>
+              <b>{nominal - activas} de {nominal} cavidades tapadas.</b> El molde entrega {activas} piezas por
+              disparo en vez de {nominal}, asi que las OT tardan mas y el costo por pieza sube. El plan de
+              capacidad ya lo considera; el OEE sigue midiendo contra las {nominal} nominales para que la
+              perdida de capacidad se vea como caida de desempeno.
+            </div>
+          )
+        })()}
         <div style={styles.tabla}>
           <div style={styles.tablaHeader}>
             <span style={{ flex: 1 }}>Cavidad</span>
             <span style={{ flex: 3 }}>Articulo que produce</span>
-            <span style={{ width: '90px' }}></span>
+            <span style={{ width: '190px' }}></span>
           </div>
           {[...new Set(moldeCavidades.cavidades.map(c => c.numero_cavidad))].sort((a, b) => a - b).map(num => {
             const filas = moldeCavidades.cavidades.filter(c => c.numero_cavidad === num && !c._borrar)
@@ -208,7 +243,7 @@ export default function Moldes() {
                   const art = articulos.find(x => x.id === c.articulo_id)
                   const col = colores.find(x => x.id === art?.color_id)
                   return (
-                    <div key={key} style={{ ...styles.tablaFila, borderBottom: 'none' }}>
+                    <div key={key} style={{ ...styles.tablaFila, borderBottom: 'none', opacity: c.activa === false ? 0.45 : 1 }}>
                       <span style={{ flex: 1, fontWeight: '600' }}>{i === 0 ? `#${num}` : ''}</span>
                       <span style={{ flex: 3, display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <select style={{ ...styles.input, flex: 1 }} value={c.articulo_id || ''}
@@ -231,10 +266,23 @@ export default function Moldes() {
                     </div>
                   )
                 })}
-                <div style={{ padding: '2px 0 6px 12px' }}>
+                <div style={{ padding: '2px 0 6px 12px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <button style={{ ...styles.botonAccion, fontSize: '11.5px' }} onClick={() => agregarVariante(num)}>
                     + Variante de color en la cavidad #{num}
                   </button>
+                  {(() => {
+                    const tapada = moldeCavidades.cavidades.some(c => c.numero_cavidad === num && c.activa === false)
+                    const conMotivo = moldeCavidades.cavidades.find(c => c.numero_cavidad === num && c.motivo_bloqueo)
+                    return tapada ? (
+                      <>
+                        <span style={styles.tapadaTag}>Tapada{conMotivo?.motivo_bloqueo ? `: ${conMotivo.motivo_bloqueo}` : ''}</span>
+                        <button style={{ ...styles.botonAccion, fontSize: '11.5px' }} onClick={() => alternarBloqueo(num, false)}>Liberar</button>
+                      </>
+                    ) : (
+                      <button style={{ ...styles.botonAccion, fontSize: '11.5px', color: '#b45309', borderColor: '#fcd34d' }}
+                        onClick={() => alternarBloqueo(num, true)}>Tapar cavidad</button>
+                    )
+                  })()}
                 </div>
               </div>
             )
@@ -358,6 +406,8 @@ export default function Moldes() {
 }
 
 const styles = {
+  avisoCav: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', color: '#92400e', marginBottom: '12px', lineHeight: 1.5 },
+  tapadaTag: { fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px', background: '#fef3c7', color: '#b45309' },
   container: { padding: '28px' },
   encabezado: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
   titulo: { fontSize: '18px', fontWeight: '600', color: '#1a1a2e', margin: '0' },
