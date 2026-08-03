@@ -32,16 +32,19 @@ export default function Moldes() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: m }, { data: a }, st, mq, cols] = await Promise.all([
+    // El orden de las variables DEBE seguir el orden de las consultas.
+    const [{ data: mol }, { data: sit }, { data: maq }, { data: art }, { data: cols }] = await Promise.all([
       supabase.from('moldes').select('*, site:sites(nombre), maq:maquinas(clave)').eq('empresa_id', perfil.empresa_id).order('clave'),
       supabase.from('sites').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id).order('nombre'),
       supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
       supabase.from('articulos').select('id, codigo_interno, descripcion, color_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
       supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
     ])
-    setSites(st.data || []); setMaquinas(mq.data || []); setColores(cols.data || [])
-    setMoldes(m || [])
-    setArticulos(a || [])
+    setMoldes(mol || [])
+    setSites(sit || [])
+    setMaquinas(maq || [])
+    setArticulos(art || [])
+    setColores(cols || [])
     setLoading(false)
   }
 

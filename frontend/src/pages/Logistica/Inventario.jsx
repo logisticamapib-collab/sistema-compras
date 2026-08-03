@@ -73,7 +73,8 @@ export default function Inventario() {
   const cargarDatos = async () => {
     const sid = siteEfectivo(perfil, site)
     setLoading(true)
-    const [art, alm, ubi, ps, lot, ex, mov, ct] = await Promise.all([
+    // El orden de las variables DEBE seguir el orden de las consultas.
+    const [art, alm, ubi, ps, lot, ex, cont, mov] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, flujo_id, origen').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
       supabase.from('almacenes').select('*').eq('activo', true).order('clave'),
       supabase.from('ubicaciones').select('*').eq('activo', true).order('clave'),
@@ -89,7 +90,7 @@ export default function Inventario() {
     setPasos(ps.data || [])
     setLotes(lot.data || [])
     setExistencias(((ex.data) || []).filter(x => { if (!sid) return true; const _a = (alm.data || []).find(z => z.id === x.almacen_id); return _a && _a.site_id === sid }))
-    setContenedores(ct.data || [])
+    setContenedores(cont.data || [])
     setMovimientos(mov.data || [])
     setLoading(false)
   }
