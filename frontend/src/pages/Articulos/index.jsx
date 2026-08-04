@@ -29,7 +29,7 @@ const formVacio = {
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
   clasificacion_abc: '', abc_criterio: 'manual', color_id: '', parte_id: '',
-  familia_resina_id: '',
+  familia_resina_id: '', tipo_material: '',
 }
 
 export default function Articulos() {
@@ -151,6 +151,7 @@ export default function Articulos() {
       color_id: articulo.color_id?.toString() || '',
       parte_id: articulo.parte_id?.toString() || '',
       familia_resina_id: articulo.familia_resina_id?.toString() || '',
+      tipo_material: articulo.tipo_material || '',
       abc_criterio: articulo.abc_criterio || 'manual',
       sites_destino: (destinos || []).map(d => d.site_id.toString()),
     })
@@ -174,6 +175,9 @@ export default function Articulos() {
     setLoading(true)
 
     const esFabricado = form.origen === 'fabricado'
+    const esDerivadoMolino = form.tipo_material === 'molido' || form.tipo_material === 'barredura'
+    const esPieza = esFabricado && !esDerivadoMolino
+    const llevaResina = !esFabricado || esDerivadoMolino
 
     const payload = {
       codigo_interno: form.codigo_interno,
@@ -206,9 +210,13 @@ export default function Articulos() {
       pct_molido_max: esFabricado && form.admite_molido ? (parseFloat(form.pct_molido_max) || 0) : 0,
       site_id: form.site_id ? parseInt(form.site_id) : null,
       clasificacion_abc: form.clasificacion_abc || null,
-      color_id: form.color_id ? parseInt(form.color_id) : null,
-      parte_id: form.parte_id ? parseInt(form.parte_id) : null,
-      familia_resina_id: form.familia_resina_id ? parseInt(form.familia_resina_id) : null,
+      // Color y parte equivalente describen una PIEZA moldeada: no aplican a
+      // una resina comprada ni al molido. La familia de resina es al reves,
+      // describe el MATERIAL: va en la resina y en sus derivados de molino,
+      // no en la pieza, cuyo material sale de su lista de materiales.
+      color_id: esPieza && form.color_id ? parseInt(form.color_id) : null,
+      parte_id: esPieza && form.parte_id ? parseInt(form.parte_id) : null,
+      familia_resina_id: llevaResina && form.familia_resina_id ? parseInt(form.familia_resina_id) : null,
       abc_criterio: form.abc_criterio || 'manual',
     }
 
@@ -522,48 +530,72 @@ export default function Articulos() {
             </div>
           </div>
 
-          <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
-            Identificacion de la pieza
-          </h3>
-          <div style={styles.fila}>
-            <div style={styles.campo}>
-              <label style={styles.label}>Color</label>
-              <select style={styles.input} value={form.color_id}
-                onChange={e => setForm({ ...form, color_id: e.target.value })}>
-                <option value="">Sin color / no aplica</option>
-                {colores.map(c => <option key={c.id} value={c.id}>{c.clave} - {c.nombre}</option>)}
-              </select>
-              <span style={styles.ayudaCampo}>
-                Si dos articulos comparten molde pero tienen distinto color, el sistema los corre por
-                separado con purga entre ellos, no como co-productos del mismo disparo.
-              </span>
-            </div>
-            <div style={styles.campo}>
-              <label style={styles.label}>Parte equivalente</label>
-              <select style={styles.input} value={form.parte_id}
-                onChange={e => setForm({ ...form, parte_id: e.target.value })}>
-                <option value="">Sin parte / codigo unico</option>
-                {partes.map(x => <option key={x.id} value={x.id}>{x.clave}{x.nombre ? ` - ${x.nombre}` : ''}</option>)}
-              </select>
-              <span style={styles.ayudaCampo}>
-                Agrupa codigos que son la misma pieza aunque salgan de moldes distintos. El inventario se
-                ve junto, el FIFO cruza los dos codigos y se puede surtir un pedido con cualquiera.
-              </span>
-            </div>
-            <div style={styles.campo}>
-              <label style={styles.label}>Familia de resina</label>
-              <select style={styles.input} value={form.familia_resina_id}
-                onChange={e => setForm({ ...form, familia_resina_id: e.target.value })}>
-                <option value="">Sin asignar</option>
-                {familias.map(f => <option key={f.id} value={f.id}>{f.clave} - {f.nombre}</option>)}
-              </select>
-              <span style={styles.ayudaCampo}>
-                El material base: polipropileno, poliamida, ABS. Es lo que permite ver el molino por
-                tipo de resina sin importar de que pieza vino, y el molido y la barredura la heredan
-                de su resina virgen.
-              </span>
-            </div>
-          </div>
+          {/* Color y parte equivalente describen una pieza moldeada. Una resina
+              comprada no tiene "color de molde" ni "parte equivalente", asi que
+              estos campos solo salen cuando el articulo es fabricado, y no en el
+              molido ni en la barredura, que son subproductos de material. */}
+          {form.origen === 'fabricado' && form.tipo_material !== 'molido' && form.tipo_material !== 'barredura' && (
+            <>
+              <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
+                Identificacion de la pieza
+              </h3>
+              <div style={styles.fila}>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Color</label>
+                  <select style={styles.input} value={form.color_id}
+                    onChange={e => setForm({ ...form, color_id: e.target.value })}>
+                    <option value="">Sin color / no aplica</option>
+                    {colores.map(c => <option key={c.id} value={c.id}>{c.clave} - {c.nombre}</option>)}
+                  </select>
+                  <span style={styles.ayudaCampo}>
+                    Si dos articulos comparten molde pero tienen distinto color, el sistema los corre por
+                    separado con purga entre ellos, no como co-productos del mismo disparo.
+                  </span>
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Parte equivalente</label>
+                  <select style={styles.input} value={form.parte_id}
+                    onChange={e => setForm({ ...form, parte_id: e.target.value })}>
+                    <option value="">Sin parte / codigo unico</option>
+                    {partes.map(x => <option key={x.id} value={x.id}>{x.clave}{x.nombre ? ` - ${x.nombre}` : ''}</option>)}
+                  </select>
+                  <span style={styles.ayudaCampo}>
+                    Agrupa codigos que son la misma pieza aunque salgan de moldes distintos. El inventario se
+                    ve junto, el FIFO cruza los dos codigos y se puede surtir un pedido con cualquiera.
+                  </span>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* La familia de resina es al reves: describe el MATERIAL, no la pieza.
+              Va en la resina que se compra y en su molido y barredura. Una pieza
+              fabricada no la lleva porque su material sale de su lista de
+              materiales, y ponersela a mano abriria la puerta a que se
+              contradigan. */}
+          {(form.origen !== 'fabricado' || form.tipo_material === 'molido' || form.tipo_material === 'barredura') && (
+            <>
+              <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
+                Material base
+              </h3>
+              <div style={styles.fila}>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Familia de resina</label>
+                  <select style={styles.input} value={form.familia_resina_id}
+                    onChange={e => setForm({ ...form, familia_resina_id: e.target.value })}>
+                    <option value="">Sin asignar</option>
+                    {familias.map(f => <option key={f.id} value={f.id}>{f.clave} - {f.nombre}</option>)}
+                  </select>
+                  <span style={styles.ayudaCampo}>
+                    Polipropileno, poliamida, ABS. Es lo que permite ver el molino por tipo de resina sin
+                    importar de que pieza vino. Capturala aqui en la resina virgen: su molido y su
+                    barredura la heredan solos.
+                  </span>
+                </div>
+                <div style={{ ...styles.campo, flex: 2 }} />
+              </div>
+            </>
+          )}
 
           {form.origen === 'comprado' && (
             <>
