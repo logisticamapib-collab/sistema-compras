@@ -16,6 +16,9 @@ export default function EmbarquePreparar() {
   const [folioIn, setFolioIn] = useState('')
   const [emb, setEmb] = useState(null)
   const [objetivo, setObjetivo] = useState([])
+  // codigo escaneado -> codigo del objetivo al que cubre. Dos moldes pueden
+  // fabricar la misma pieza con codigos distintos y son intercambiables.
+  const [equiv, setEquiv] = useState({})
   const [lineas, setLineas] = useState([])
   const [fifo, setFifo] = useState({})
   const [scan, setScan] = useState('')
@@ -41,6 +44,20 @@ export default function EmbarquePreparar() {
       supabase.from('existencias').select('cantidad, lote:lotes(id, codigo_lote, articulo_id, fecha, estatus_calidad)'),
     ])
     setObjetivo(obj || []); setLineas(ls || [])
+
+    // Para cada articulo del objetivo se traen sus codigos equivalentes, de
+    // modo que escanear una caja del otro molde cuente contra el objetivo y
+    // no se marque como fuera de FIFO.
+    const mapa = {}
+    const arts = [...new Set((obj || []).map(o => o.articulo_id))]
+    const eqs = await Promise.all(arts.map(id =>
+      supabase.rpc('equivalentes_articulo', { p_articulo_id: id })
+        .then(r => ({ objetivo: id, filas: r.data || [] }))
+    ))
+    eqs.forEach(({ objetivo: oid, filas }) => {
+      filas.forEach(f => { if (f.articulo_id !== oid) mapa[f.articulo_id] = oid })
+    })
+    setEquiv(mapa)
     const ff = {}
     ;(ex || []).forEach(x => {
       const l = x.lote
@@ -67,7 +84,13 @@ export default function EmbarquePreparar() {
   // ---- progreso por articulo ----
   const req = {}, esc = {}, disp = {}
   objetivo.forEach(o => { req[o.articulo_id] = (req[o.articulo_id] || 0) + Number(o.cantidad_requerida) })
-  lineas.forEach(l => { esc[l.articulo_id] = (esc[l.articulo_id] || 0) + Number(l.cantidad) })
+  // lo escaneado cuenta contra el articulo del objetivo, aunque la caja sea
+  // de un codigo equivalente producido en el otro molde
+  const objetivoDe = (artId) => (artId in req) ? artId : (equiv[artId] || artId)
+  lineas.forEach(l => {
+    const k = objetivoDe(l.articulo_id)
+    esc[k] = (esc[k] || 0) + Number(l.cantidad)
+  })
   Object.keys(fifo).forEach(a => { disp[a] = fifo[a].reduce((s, x) => s + x.cantidad, 0) })
   const arts = [...new Set([...Object.keys(req), ...Object.keys(esc)])]
   const completoGlobal = objetivo.length > 0 && Object.keys(req).every(a => (esc[a] || 0) >= req[a] - 0.001)
@@ -83,13 +106,16 @@ export default function EmbarquePreparar() {
     if (!c.lote || c.lote.estatus_calidad !== 'liberado') { setError(`El lote de "${folio}" no esta liberado por Calidad.`); setScan(''); return }
     if (lineas.some(l => l.contenedor_id === c.id)) { setError(`"${folio}" ya fue escaneado.`); setScan(''); return }
     const art = c.lote.articulo_id
-    const enObjetivo = art in req
+    // si el codigo escaneado es equivalente a uno del objetivo, cubre a ese
+    const objArt = objetivoDe(art)
+    const enObjetivo = objArt in req
+    const esEquivalente = enObjetivo && objArt !== art
     const disponibles = fifo[art] || []
     const masViejo = disponibles.find(d => String(d.fecha) < String(c.lote.fecha) && !lineas.some(l => l.lote_id === d.lote_id))
     let fuera = false, motivo = ''
     if (!enObjetivo) { fuera = true; motivo = 'no esta en el objetivo de este embarque' }
     else if (masViejo) { fuera = true; motivo = `hay un lote mas viejo (${masViejo.codigo})` }
-    else if ((esc[art] || 0) >= (req[art] || 0)) { fuera = true; motivo = 'ya cubriste lo requerido de este articulo' }
+    else if ((esc[objArt] || 0) >= (req[objArt] || 0)) { fuera = true; motivo = 'ya cubriste lo requerido de este articulo' }
     if (fuera) {
       const ok = window.confirm(`El lote ${c.lote.codigo_lote} esta FUERA DE FIFO: ${motivo}.\n\n¿Confirmas agregarlo fuera de FIFO? (requerira autorizacion del gerente)`)
       if (!ok) { setScan(''); return }
@@ -100,6 +126,10 @@ export default function EmbarquePreparar() {
       escaneado_por: perfil.id, escaneado_at: new Date().toISOString(),
     })
     if (error) { setError(error.message); return }
+    if (esEquivalente && !fuera) {
+      const objCod = objetivo.find(o => o.articulo_id === objArt)?.articulos?.codigo_interno || objArt
+      setMsg(`Caja del codigo equivalente aceptada: cubre el objetivo de ${objCod}. La caja conserva su propio codigo y lote, asi que la trazabilidad sigue diciendo de que molde salio.`)
+    }
     setScan('')
     await abrir(emb)
   }

@@ -28,7 +28,7 @@ const formVacio = {
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
-  clasificacion_abc: '', abc_criterio: 'manual', color_id: '',
+  clasificacion_abc: '', abc_criterio: 'manual', color_id: '', parte_id: '',
 }
 
 export default function Articulos() {
@@ -60,6 +60,7 @@ export default function Articulos() {
   })
   const [formCliente, setFormCliente] = useState({ cliente_id: '', codigo_cliente: '', precio: '' })
   const [colores, setColores] = useState([])
+  const [partes, setPartes] = useState([])
   const [form, setForm] = useState(formVacio)
 
   const puedeCrear = tienePermiso('articulos', 'crear')
@@ -71,7 +72,7 @@ export default function Articulos() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }, { data: cols }] = await Promise.all([
+    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }, { data: cols }, { data: prts }] = await Promise.all([
       supabase.from('articulos').select('*, categorias(nombre), sites(nombre, codigo)').eq('empresa_id', perfil.empresa_id).order('codigo_interno'),
       supabase.from('categorias').select('*').eq('empresa_id', perfil.empresa_id),
       supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
@@ -79,9 +80,11 @@ export default function Articulos() {
       supabase.from('sites').select('id, nombre').eq('empresa_id', perfil.empresa_id),
       supabase.from('articulo_sites_destino').select('articulo_id, site_id'),
       supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
+      supabase.from('partes').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
     ])
     setArticulos(a || [])
     setColores(cols || [])
+    setPartes(prts || [])
     setCategorias(c || [])
     setProveedores(p || [])
     setClientes(cl || [])
@@ -142,6 +145,7 @@ export default function Articulos() {
       site_id: articulo.site_id?.toString() || '',
       clasificacion_abc: articulo.clasificacion_abc || '',
       color_id: articulo.color_id?.toString() || '',
+      parte_id: articulo.parte_id?.toString() || '',
       abc_criterio: articulo.abc_criterio || 'manual',
       sites_destino: (destinos || []).map(d => d.site_id.toString()),
     })
@@ -198,6 +202,7 @@ export default function Articulos() {
       site_id: form.site_id ? parseInt(form.site_id) : null,
       clasificacion_abc: form.clasificacion_abc || null,
       color_id: form.color_id ? parseInt(form.color_id) : null,
+      parte_id: form.parte_id ? parseInt(form.parte_id) : null,
       abc_criterio: form.abc_criterio || 'manual',
     }
 
@@ -531,6 +536,18 @@ export default function Articulos() {
                   <label style={styles.label}>Tiempo de transito (dias)</label>
                   <input style={styles.input} type="number" min="0" value={form.tiempo_transito_dias}
                     onChange={e => setForm({ ...form, tiempo_transito_dias: e.target.value })} placeholder="0" />
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Parte equivalente</label>
+                  <select style={styles.input} value={form.parte_id}
+                    onChange={e => setForm({ ...form, parte_id: e.target.value })}>
+                    <option value="">Sin parte / codigo unico</option>
+                    {partes.map(x => <option key={x.id} value={x.id}>{x.clave} - {x.nombre}</option>)}
+                  </select>
+                  <span style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.4 }}>
+                    Agrupa codigos que son la misma pieza aunque salgan de moldes distintos. El inventario
+                    se ve junto y se puede surtir un pedido con cualquiera de ellos.
+                  </span>
                 </div>
                 <div style={styles.campo}>
                   <label style={styles.label}>Color</label>
