@@ -60,7 +60,7 @@ export default function InventarioCiclico() {
   const [cliAsign, setCliAsign] = useState({})   // articulo_id -> cliente_id elegido para MP compartida
   const [periodo, setPeriodo] = useState(new Date().toISOString().slice(0, 7))
   const [master, setMaster] = useState(null)   // { tarima, cajas } confirmacion de master
-  const [cfg, setCfg] = useState({ dias_a: 30, dias_b: 90, dias_c: 180, tolerancia_pct: 0, requiere_segunda_aut: false, segunda_aut_rol: '' })
+  const [cfg, setCfg] = useState({ dias_a: 30, dias_b: 90, dias_c: 180, meses_abc: 12, tolerancia_pct: 0, requiere_segunda_aut: false, segunda_aut_rol: '' })
 
   useEffect(() => { cargar() }, [site])
   const cargar = async () => {
@@ -415,6 +415,7 @@ export default function InventarioCiclico() {
     try {
       await supabase.from('inventario_parametros').upsert({
         empresa_id: emp, dias_a: Number(cfg.dias_a), dias_b: Number(cfg.dias_b), dias_c: Number(cfg.dias_c),
+        meses_abc: Number(cfg.meses_abc) || 12,
         tolerancia_pct: Number(cfg.tolerancia_pct) || 0, requiere_segunda_aut: !!cfg.requiere_segunda_aut,
         segunda_aut_rol: cfg.segunda_aut_rol || null, updated_at: new Date().toISOString(), updated_by: perfil.id,
       }, { onConflict: 'empresa_id' })
@@ -423,25 +424,81 @@ export default function InventarioCiclico() {
     setProc(false)
   }
 
-  // Recalcular ABC (Pareto) segun el criterio de cada articulo
+  // Recalcular ABC (Pareto) segun el criterio de cada articulo.
+  //
+  // Aplica igual a materia prima y a producto terminado. El criterio vive en
+  // el articulo: 'piezas' mide lo que se le mando al cliente, 'costo' mide el
+  // dinero que amarra en almacen, y 'manual' significa que alguien lo fijo a
+  // proposito y aqui no se toca.
   const recalcularABC = async () => {
     setProc(true); setError('')
     try {
-      const { data: movs } = await supabase.from('movimientos').select('articulo_id, cantidad, tipo').eq('empresa_id', emp).in('tipo', ['salida_embarque', 'consumo_produccion'])
-      const val = {}
-      ;(movs || []).forEach(m => { val[m.articulo_id] = (val[m.articulo_id] || 0) + Number(m.cantidad || 0) })
-      const candidatos = arts.filter(a => (a.abc_criterio || 'manual') !== 'manual')
-      const conValor = candidatos.map(a => ({ a, v: (a.abc_criterio === 'costo' ? (val[a.id] || 0) * Number(a.costo || 0) : (val[a.id] || 0)) }))
-        .sort((x, y) => y.v - x.v)
-      const total = conValor.reduce((s, x) => s + x.v, 0)
-      let acum = 0; let n = 0
-      for (const x of conValor) {
-        acum += x.v
-        const pct = total > 0 ? acum / total : 1
-        const clase = pct <= 0.8 ? 'A' : pct <= 0.95 ? 'B' : 'C'
-        await supabase.from('articulos').update({ clasificacion_abc: clase }).eq('id', x.a.id); n++
+      // Ventana movil. Sin ella el Pareto mira toda la historia y una pieza
+      // que se dejo de correr hace dos anos sigue saliendo A, robandole
+      // frecuencia de conteo a lo que si se esta moviendo hoy.
+      const meses = Number(cfg.meses_abc) || 12
+      const d = new Date(); d.setMonth(d.getMonth() - meses)
+      const desdeISO = d.toISOString()
+
+      // Supabase corta cada consulta en 1000 renglones. Sin paginar, el ABC se
+      // calcularia con una parte de los movimientos y nadie se enteraria.
+      const movs = []
+      const PAG = 1000
+      for (let pag = 0; ; pag++) {
+        const { data, error: eMov } = await supabase.from('movimientos')
+          .select('articulo_id, cantidad, tipo')
+          .eq('empresa_id', emp)
+          .in('tipo', ['salida_embarque', 'consumo_produccion'])
+          .gte('fecha', desdeISO)
+          .order('id')
+          .range(pag * PAG, pag * PAG + PAG - 1)
+        if (eMov) throw eMov
+        movs.push(...(data || []))
+        if (!data || data.length < PAG) break
       }
-      setExito(`ABC recalculado en ${n} articulo(s) (los marcados como manual no se tocan).`); await cargar()
+      const val = {}
+      movs.forEach(m => { val[m.articulo_id] = (val[m.articulo_id] || 0) + Number(m.cantidad || 0) })
+
+      // Un Pareto POR CRITERIO, no uno solo. Antes se rankeaban juntos los
+      // articulos medidos en pesos y los medidos en piezas y se acumulaba
+      // sobre esa suma: al mezclar unidades el corte de 80/95% no significa
+      // nada, y la clase que salia dependia de cuantos articulos de cada tipo
+      // hubiera.
+      const grupos = { costo: [], piezas: [] }
+      arts.forEach(a => {
+        if (a.abc_criterio !== 'costo' && a.abc_criterio !== 'piezas') return
+        const q = val[a.id] || 0
+        grupos[a.abc_criterio].push({ a, v: a.abc_criterio === 'costo' ? q * Number(a.costo || 0) : q })
+      })
+
+      let n = 0, sinMov = 0
+      for (const crit of ['costo', 'piezas']) {
+        const lista = grupos[crit].sort((x, y) => y.v - x.v)
+        const total = lista.reduce((s, x) => s + x.v, 0)
+        let acum = 0
+        for (const x of lista) {
+          let clase
+          if (x.v <= 0) {
+            // Sin movimiento en la ventana no hay Pareto que valga.
+            clase = 'C'; sinMov++
+          } else {
+            // El corte se evalua ANTES de sumar el articulo. Se sigue metiendo
+            // a la clase A hasta llegar al 80%, y el articulo que hace cruzar
+            // ese 80% todavia es A, porque sin el no se alcanza. Evaluandolo
+            // despues de sumar, el articulo mas grande de cada grupo se caia
+            // solo a B: con pocos numeros de parte, uno que se lleve el 82%
+            // del volumen cruza el corte el mismo y quedaba mal clasificado.
+            const pctPrevio = total > 0 ? acum / total : 1
+            acum += x.v
+            clase = pctPrevio < 0.8 ? 'A' : pctPrevio < 0.95 ? 'B' : 'C'
+          }
+          await supabase.from('articulos').update({ clasificacion_abc: clase }).eq('id', x.a.id); n++
+        }
+      }
+      setExito(`ABC recalculado en ${n} articulo(s) sobre los ultimos ${meses} meses`
+        + (sinMov ? `; ${sinMov} sin movimiento en la ventana quedaron en C` : '')
+        + '. Los marcados como manual no se tocan.')
+      await cargar()
     } catch (err) { setError('Error: ' + err.message) }
     setProc(false)
   }
@@ -449,6 +506,9 @@ export default function InventarioCiclico() {
   if (loading) return <p style={{ padding: 28, color: '#666' }}>Cargando...</p>
   const pend = pendientesHoy()
   const porAprobar = conteos.filter(c => c.estatus === 'pendiente_aprobacion')
+  // Un articulo sin clase no falla ni avisa: el ciclico lo asume C y se cuenta
+  // lo menos posible. Vale mas decirlo que dejar que pase callado.
+  const sinClase = arts.filter(a => !a.clasificacion_abc).length
 
   return (
     <div style={S.c} className="aparecer">
@@ -456,6 +516,14 @@ export default function InventarioCiclico() {
       <div style={{ marginBottom: 10 }} className="no-imprimir"><FiltroSite value={site} onChange={setSite} /></div>
       {error && <p style={S.err}>{error}</p>}
       {exito && <p style={S.ok}>{exito}</p>}
+      {sinClase > 0 && (
+        <p style={S.aviso} className="no-imprimir">
+          <b>{sinClase}</b> articulo(s) activos no tienen clase ABC, y el ciclico los esta tratando
+          como <b>C</b>: se cuentan cada {cfg.dias_c} dias, que es lo menos posible. Corre
+          <b> Recalcular ABC</b> en Configuracion, o fija la clase a mano en Articulos si quieres
+          forzar alguno en particular.
+        </p>
+      )}
       <div style={S.tabs}>
         {[['programa', `Programa de hoy (${pend.length})`], ['cierre', 'Cierre de mes'], ['toma', 'Toma fisica'], ['aprobar', `Por aprobar (${porAprobar.length})`], ['historial', 'Historial'], ['config', 'Configuracion']].map(([id, n]) => (
           <button key={id} style={vista === id ? S.tabOn : S.tab} onClick={() => { setVista(id); setError(''); setExito('') }}>{n}</button>
@@ -666,6 +734,12 @@ export default function InventarioCiclico() {
               </div>
             ))}
           </div>
+          <label style={S.lbl}>Ventana del Pareto ABC (meses)</label>
+          <input style={S.input} type="number" min="1" value={cfg.meses_abc} onChange={e => setCfg({ ...cfg, meses_abc: e.target.value })} />
+          <p style={S.hint}>
+            Cuanta historia mira el recalculo. Lo que no se movio en esa ventana cae a C, para que una
+            pieza descontinuada no siga robandole frecuencia de conteo a lo que si se esta corriendo.
+          </p>
           <label style={S.lbl}>Tolerancia de diferencia (%)</label>
           <input style={S.input} type="number" value={cfg.tolerancia_pct} onChange={e => setCfg({ ...cfg, tolerancia_pct: e.target.value })} />
           <label style={{ ...S.chk, marginTop: 12 }}>
@@ -748,5 +822,6 @@ const S = {
   ov: { position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 },
   modal: { background: '#fff', borderRadius: 12, padding: 22, width: 520, maxWidth: '94vw' },
   err: { color: '#dc2626', fontSize: 13, marginBottom: 12 },
+  aviso: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: '10px 12px', fontSize: 12.5, color: '#92400e', marginBottom: 12, lineHeight: 1.5 },
   ok: { color: '#16a34a', fontSize: 13, marginBottom: 12 },
 }

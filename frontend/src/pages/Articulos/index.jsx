@@ -28,7 +28,7 @@ const formVacio = {
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
-  clasificacion_abc: '', abc_criterio: 'manual', color_id: '', parte_id: '',
+  clasificacion_abc: '', abc_criterio: '', color_id: '', parte_id: '',
   familia_resina_id: '', tipo_material: '',
 }
 
@@ -152,7 +152,7 @@ export default function Articulos() {
       parte_id: articulo.parte_id?.toString() || '',
       familia_resina_id: articulo.familia_resina_id?.toString() || '',
       tipo_material: articulo.tipo_material || '',
-      abc_criterio: articulo.abc_criterio || 'manual',
+      abc_criterio: articulo.abc_criterio || '',
       sites_destino: (destinos || []).map(d => d.site_id.toString()),
     })
     setMostrarForm(true)
@@ -178,6 +178,12 @@ export default function Articulos() {
     const esDerivadoMolino = form.tipo_material === 'molido' || form.tipo_material === 'barredura'
     const esPieza = esFabricado && !esDerivadoMolino
     const llevaResina = !esFabricado || esDerivadoMolino
+    // Sin criterio explicito, cada tipo de articulo toma el suyo: el fabricado
+    // se mide por lo que se le embarco al cliente y el comprado por el dinero
+    // que amarra en almacen. 'manual' es una palanca para forzar un numero de
+    // parte, no un valor de arranque: mientras diga manual y no tenga clase,
+    // el ciclico lo cuenta como C, o sea lo menos posible.
+    const criterioABC = form.abc_criterio || (esFabricado ? 'piezas' : 'costo')
 
     const payload = {
       codigo_interno: form.codigo_interno,
@@ -217,7 +223,7 @@ export default function Articulos() {
       color_id: esPieza && form.color_id ? parseInt(form.color_id) : null,
       parte_id: esPieza && form.parte_id ? parseInt(form.parte_id) : null,
       familia_resina_id: llevaResina && form.familia_resina_id ? parseInt(form.familia_resina_id) : null,
-      abc_criterio: form.abc_criterio || 'manual',
+      abc_criterio: criterioABC,
     }
 
     let error, articuloId
@@ -597,6 +603,46 @@ export default function Articulos() {
             </>
           )}
 
+          {/* El conteo ciclico aplica a todo lo que tiene existencia, no solo a
+              lo comprado. Un producto terminado sin clase caia a C por omision
+              y se contaba cada 180 dias, que para lo que se le embarca al
+              cliente es justo al reves de lo que conviene. */}
+          <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
+            Conteo ciclico
+          </h3>
+          <div style={styles.fila}>
+            <div style={styles.campo}>
+              <label style={styles.label}>Clasificacion ABC</label>
+              <select style={styles.input} value={form.clasificacion_abc}
+                onChange={e => setForm({ ...form, clasificacion_abc: e.target.value })}>
+                <option value="">Sin clasificar (se cuenta como C)</option>
+                <option value="A">A - alta rotacion / valor</option>
+                <option value="B">B - media</option>
+                <option value="C">C - baja</option>
+              </select>
+              <span style={styles.ayudaCampo}>
+                Define cada cuantos dias toca contarlo. Los dias de cada clase se configuran en
+                Inventario Ciclico y son los mismos para materia prima y para producto terminado.
+              </span>
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Criterio ABC</label>
+              <select style={styles.input}
+                value={form.abc_criterio || (form.origen === 'fabricado' ? 'piezas' : 'costo')}
+                onChange={e => setForm({ ...form, abc_criterio: e.target.value })}>
+                <option value="piezas">Por piezas embarcadas</option>
+                <option value="costo">Por costo (valor de consumo)</option>
+                <option value="manual">Manual (lo fijo yo)</option>
+              </select>
+              <span style={styles.ayudaCampo}>
+                Con piezas o costo, el recalculo del Pareto le asigna la clase solo. Con
+                <b> manual</b> nadie se la mueve, para cuando quieras forzar un numero de parte a
+                contarse mas seguido por alguna situacion en particular.
+              </span>
+            </div>
+            <div style={{ ...styles.campo, flex: 1 }} />
+          </div>
+
           {form.origen === 'comprado' && (
             <>
               <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
@@ -617,25 +663,6 @@ export default function Articulos() {
                   <label style={styles.label}>Tiempo de transito (dias)</label>
                   <input style={styles.input} type="number" min="0" value={form.tiempo_transito_dias}
                     onChange={e => setForm({ ...form, tiempo_transito_dias: e.target.value })} placeholder="0" />
-                </div>
-                <div style={styles.campo}>
-                  <label style={styles.label}>Clasificacion ABC (inv. ciclico)</label>
-                  <select style={styles.input} value={form.clasificacion_abc}
-                    onChange={e => setForm({ ...form, clasificacion_abc: e.target.value })}>
-                    <option value="">Sin clasificar</option>
-                    <option value="A">A - alta rotacion / valor</option>
-                    <option value="B">B - media</option>
-                    <option value="C">C - baja</option>
-                  </select>
-                </div>
-                <div style={styles.campo}>
-                  <label style={styles.label}>Criterio ABC</label>
-                  <select style={styles.input} value={form.abc_criterio}
-                    onChange={e => setForm({ ...form, abc_criterio: e.target.value })}>
-                    <option value="manual">Manual (lo fijo yo)</option>
-                    <option value="costo">Por costo (valor de consumo)</option>
-                    <option value="piezas">Por piezas embarcadas</option>
-                  </select>
                 </div>
                 <div style={styles.campo}>
                   <label style={styles.label}>Stock minimo (alerta)</label>
