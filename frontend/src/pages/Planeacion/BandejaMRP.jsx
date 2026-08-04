@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
@@ -19,6 +19,8 @@ export default function BandejaMRP() {
   const [cavidades, setCavidades] = useState([])     // molde_cavidades (activa)
   const [artColor, setArtColor] = useState({})       // articulo_id -> color_id
   const [colores, setColores] = useState([])
+  const [artParte, setArtParte] = useState({})     // articulo_id -> parte
+  const [repartos, setRepartos] = useState({})     // resultado_id -> reparto entre moldes
   const [normas, setNormas] = useState([])           // normas_empaque oficiales
   const [moldes, setMoldes] = useState([])
   const [bom, setBom] = useState([])
@@ -34,19 +36,28 @@ export default function BandejaMRP() {
 
   const cargarBase = async () => {
     const emp = perfil.empresa_id
-    const [{ data: cli }, { data: ac }, { data: mc }, { data: ne }, { data: mo }, { data: bm }, { data: arc }, { data: cols }] = await Promise.all([
+    const [{ data: cli }, { data: ac }, { data: mc }, { data: ne }, { data: mo }, { data: bm }, { data: arc }, { data: cols }, { data: prts }] = await Promise.all([
       supabase.from('clientes').select('id, nombre').eq('empresa_id', emp).order('nombre'),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id'),
       supabase.from('molde_cavidades').select('molde_id, articulo_id, activa').eq('activa', true),
       supabase.from('normas_empaque').select('id, articulo_id, piezas_por_empaque, activa, tipo').eq('activa', true).eq('tipo', 'oficial'),
       supabase.from('moldes').select('id, clave, nombre').eq('empresa_id', emp),
       supabase.from('bom').select('*'),
-      supabase.from('articulos').select('id, color_id').eq('empresa_id', emp),
+      supabase.from('articulos').select('id, color_id, parte_id, codigo_interno').eq('empresa_id', emp),
       supabase.from('colores').select('*').eq('empresa_id', emp).eq('activo', true),
+      supabase.from('partes').select('*').eq('empresa_id', emp).eq('activo', true),
     ])
     const mapCol = {}
     ;(arc || []).forEach(r => { mapCol[r.id] = r.color_id ?? null })
     setArtColor(mapCol); setColores(cols || [])
+    // articulo -> su parte, para avisar que un renglon cubre la demanda de
+    // otro codigo y para poder repartir entre moldes gemelos
+    const mapParte = {}
+    ;(arc || []).forEach(x => {
+      const pt = (prts || []).find(p => p.id === x.parte_id)
+      if (pt) mapParte[x.id] = pt
+    })
+    setArtParte(mapParte)
     setClientes(cli || [])
     const pref = {}
     ;(ac || []).forEach(r => { if (!pref[r.articulo_id]) pref[r.articulo_id] = r.cliente_id })
@@ -76,6 +87,22 @@ export default function BandejaMRP() {
     const c = {}, q = {}
     rows.forEach(r => { c[r.id] = prefCliente[r.articulo_id] || ''; q[r.id] = r.orden_planeada })
     setCliFila(c); setCant(q)
+
+    // Para los articulos que pertenecen a una parte con mas de un molde, se
+    // pregunta si el molde principal alcanza a producir la cantidad antes de
+    // la fecha requerida. Si no, se sugiere abrir tambien el gemelo.
+    const rep = {}
+    for (const r of rows) {
+      const pt = artParte[r.articulo_id]
+      if (!pt || !r.fecha_requerida) continue
+      const { data: sug } = await supabase.rpc('sugerir_moldes_parte', {
+        p_empresa_id: perfil.empresa_id, p_articulo_id: r.articulo_id,
+        p_cantidad: Number(r.orden_planeada) || 0,
+        p_fecha_requerida: r.fecha_requerida, p_site_id: perfil.site_id || null,
+      })
+      if (sug && sug.length > 1) rep[r.id] = sug
+    }
+    setRepartos(rep)
   }
 
   const toggle = (id) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s) }
@@ -380,7 +407,8 @@ export default function BandejaMRP() {
                 <span style={{ flex: 1.4 }}>Cliente (consigna)</span>
               </div>
               {ordenes.map(o => (
-                <div key={o.id} style={styles.tr}>
+                <React.Fragment key={o.id}>
+                <div style={styles.tr}>
                   <span style={{ width: '32px' }}><input type="checkbox" checked={sel.has(o.id)} onChange={() => toggle(o.id)} /></span>
                   <span style={{ flex: 2 }}><strong>{o.articulo?.codigo_interno}</strong><br /><span style={{ fontSize: '11px', color: '#94a3b8' }}>{o.articulo?.descripcion}</span></span>
                   <span style={{ flex: 1 }}><span style={badge(o.articulo?.se_maquila && o.accion === 'ot' ? 'maquila' : o.accion)}>{o.articulo?.se_maquila && o.accion === 'ot' ? 'Maquila' : (ACCION_LABEL[o.accion] || o.accion)}</span></span>
@@ -399,6 +427,52 @@ export default function BandejaMRP() {
                       : <span style={{ color: '#cbd5e1' }}>-</span>}
                   </span>
                 </div>
+                {/* Parte equivalente: de que codigos cubre la demanda y, si el
+                    molde principal no alcanza para la fecha del cliente, como
+                    repartir con el gemelo. */}
+                {(() => {
+                  const pt = artParte[o.articulo_id]
+                  if (!pt) return null
+                  const rep = repartos[o.id] || []
+                  const conCarga = rep.filter(x => Number(x.sugerido_pz) > 0)
+                  const cubierto = rep.reduce((a2, x) => a2 + (Number(x.sugerido_pz) || 0), 0)
+                  const pedido = Number(o.orden_planeada) || 0
+                  const falta = Math.max(pedido - cubierto, 0)
+                  const necesitaGemelo = conCarga.length > 1
+                  return (
+                    <div style={{ ...styles.notaParte, ...(falta > 0 ? styles.notaRoja : necesitaGemelo ? styles.notaAmbar : {}) }}>
+                      <div>
+                        <b>Parte {pt.clave}</b>: este renglon planea el codigo principal y cubre la demanda
+                        de todos los codigos equivalentes del grupo. El inventario y el FIFO ya se ven juntos.
+                      </div>
+                      {rep.length > 1 && (
+                        <div style={{ marginTop: '4px' }}>
+                          {necesitaGemelo
+                            ? <b>El molde principal no alcanza para el {fLarga(o.fecha_requerida)}. Reparto sugerido:</b>
+                            : <span>El molde principal alcanza solo para esta fecha.</span>}
+                          <div style={{ marginTop: '3px' }}>
+                            {rep.map(x => (
+                              <div key={x.articulo_id} style={{ paddingLeft: '10px' }}>
+                                {x.es_principal ? 'Principal' : 'Gemelo'} &middot; {x.codigo_interno}
+                                {x.molde_clave ? ` (molde ${x.molde_clave}` : ''}{x.maquina_clave ? `, ${x.maquina_clave})` : x.molde_clave ? ')' : ''}
+                                {' '}&rarr; capacidad {fmt(x.capacidad_pz)} pz
+                                {Number(x.sugerido_pz) > 0 && <b> · producir {fmt(x.sugerido_pz)} pz</b>}
+                                {!x.maquina_clave && <span style={{ color: '#b91c1c' }}> · sin ruta ni maquina capturada</span>}
+                              </div>
+                            ))}
+                          </div>
+                          {falta > 0 && (
+                            <div style={{ marginTop: '4px' }}>
+                              <b>Aun con los dos moldes faltan {fmt(falta)} pz</b> para llegar al {fLarga(o.fecha_requerida)}.
+                              Habria que meter tiempo extra, adelantar el arranque o renegociar la fecha.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+                </React.Fragment>
               ))}
             </div>
           )}
@@ -476,6 +550,9 @@ function badge(a) {
 }
 
 const styles = {
+  notaParte: { background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '7px', padding: '7px 10px', margin: '0 0 8px 32px', fontSize: '11.5px', color: '#1e40af', lineHeight: 1.5 },
+  notaAmbar: { background: '#fffbeb', borderColor: '#fcd34d', color: '#92400e' },
+  notaRoja: { background: '#fef2f2', borderColor: '#fca5a5', color: '#b91c1c' },
   encabezado: { marginBottom: '8px' },
   titulo: { fontSize: '18px', fontWeight: '600', color: '#1a1a2e', margin: '0' },
   ayuda: { fontSize: '13px', color: '#64748b', margin: '0 0 20px 0', maxWidth: '820px', lineHeight: '1.5' },
