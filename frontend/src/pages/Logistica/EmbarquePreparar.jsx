@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import EscanerCamara from '../../components/EscanerCamara'
@@ -43,13 +43,13 @@ export default function EmbarquePreparar() {
       supabase.from('embarque_lineas').select('*, articulos(codigo_interno), lotes(codigo_lote), contenedores(folio)').eq('embarque_id', e.id).order('id'),
       supabase.from('existencias').select('cantidad, lote:lotes(id, codigo_lote, articulo_id, fecha, estatus_calidad)'),
     ])
+    const arts = [...new Set((obj || []).map(o => o.articulo_id))]
     setObjetivo(obj || []); setLineas(ls || [])
 
     // Para cada articulo del objetivo se traen sus codigos equivalentes, de
     // modo que escanear una caja del otro molde cuente contra el objetivo y
     // no se marque como fuera de FIFO.
     const mapa = {}
-    const arts = [...new Set((obj || []).map(o => o.articulo_id))]
     const eqs = await Promise.all(arts.map(id =>
       supabase.rpc('equivalentes_articulo', { p_articulo_id: id })
         .then(r => ({ objetivo: id, filas: r.data || [] }))
@@ -58,16 +58,21 @@ export default function EmbarquePreparar() {
       filas.forEach(f => { if (f.articulo_id !== oid) mapa[f.articulo_id] = oid })
     })
     setEquiv(mapa)
-    const ff = {}
-    ;(ex || []).forEach(x => {
-      const l = x.lote
-      if (!l || l.estatus_calidad !== 'liberado') return
-      const g = ff[l.articulo_id] = ff[l.articulo_id] || {}
-      if (!g[l.id]) g[l.id] = { lote_id: l.id, codigo: l.codigo_lote, fecha: l.fecha, cantidad: 0 }
-      g[l.id].cantidad += Number(x.cantidad)
-    })
+    // FIFO por PARTE: si el articulo pertenece a un grupo de codigos
+    // equivalentes, la fila se ordena por fecha CRUZANDO los codigos. Un lote
+    // del molde 002 puede ir antes que uno del 001 si es mas viejo.
     const arr = {}
-    Object.keys(ff).forEach(a => { arr[a] = Object.values(ff[a]).sort((x, y) => String(x.fecha).localeCompare(String(y.fecha))) })
+    for (const id of arts) {
+      const { data: f } = await supabase.rpc('fifo_parte', {
+        p_empresa_id: perfil.empresa_id, p_articulo_id: id, p_site_id: null,
+      })
+      arr[id] = (f || []).map(x => ({
+        lote_id: x.lote_id, codigo: x.codigo_lote, fecha: x.fecha,
+        cantidad: Number(x.disponible), articulo_id: x.articulo_id,
+        codigo_articulo: x.codigo_interno, molde: x.molde_clave,
+        es_el_mismo: x.es_el_mismo,
+      }))
+    }
     setFifo(arr)
   }
 
@@ -110,11 +115,18 @@ export default function EmbarquePreparar() {
     const objArt = objetivoDe(art)
     const enObjetivo = objArt in req
     const esEquivalente = enObjetivo && objArt !== art
-    const disponibles = fifo[art] || []
+    // el FIFO se evalua contra la fila de la parte del objetivo, no la del
+    // codigo escaneado: asi un lote mas viejo del otro molde si estorba
+    const disponibles = fifo[objArt] || fifo[art] || []
     const masViejo = disponibles.find(d => String(d.fecha) < String(c.lote.fecha) && !lineas.some(l => l.lote_id === d.lote_id))
     let fuera = false, motivo = ''
     if (!enObjetivo) { fuera = true; motivo = 'no esta en el objetivo de este embarque' }
-    else if (masViejo) { fuera = true; motivo = `hay un lote mas viejo (${masViejo.codigo})` }
+    else if (masViejo) {
+      fuera = true
+      motivo = `hay un lote mas viejo: ${masViejo.codigo} del ${masViejo.fecha}`
+        + (masViejo.codigo_articulo && masViejo.articulo_id !== art
+           ? ` (codigo equivalente ${masViejo.codigo_articulo}${masViejo.molde ? ', molde ' + masViejo.molde : ''})` : '')
+    }
     else if ((esc[objArt] || 0) >= (req[objArt] || 0)) { fuera = true; motivo = 'ya cubriste lo requerido de este articulo' }
     if (fuera) {
       const ok = window.confirm(`El lote ${c.lote.codigo_lote} esta FUERA DE FIFO: ${motivo}.\n\n¿Confirmas agregarlo fuera de FIFO? (requerira autorizacion del gerente)`)
@@ -286,7 +298,8 @@ export default function EmbarquePreparar() {
           const comp = r > 0 && e >= r - 0.001
           const extra = r === 0
           return (
-            <div key={a} style={{ ...styles.tr, backgroundColor: comp ? '#f0fdf4' : extra ? '#fffbeb' : '#fff' }}>
+            <React.Fragment key={a}>
+            <div style={{ ...styles.tr, backgroundColor: comp ? '#f0fdf4' : extra ? '#fffbeb' : '#fff' }}>
               <span style={{ flex: 1.4, fontWeight: '600' }}>{o?.articulos?.codigo_interno || (lineas.find(l => String(l.articulo_id) === String(a))?.articulos?.codigo_interno)}</span>
               <span style={{ flex: 2, color: '#64748b' }}>{o?.articulos?.descripcion || ''}</span>
               <span style={{ flex: 1 }}>{o?.oc_cliente || '-'}</span>
@@ -297,6 +310,36 @@ export default function EmbarquePreparar() {
                 {extra ? <span style={styles.bExtra}>EXTRA</span> : comp ? <span style={styles.bOk}>✓ COMPLETO</span> : insuf ? <span style={styles.bInsuf}>INSUFICIENTE</span> : <span style={styles.bFalta}>FALTA</span>}
               </span>
             </div>
+            {/* Fila FIFO sugerida. Si el articulo pertenece a una parte, el
+                orden cruza los codigos de los dos moldes por fecha de lote. */}
+            {preparando && falta > 0 && (fifo[a] || []).length > 0 && (() => {
+              let resta = falta
+              const cola = []
+              for (const d of (fifo[a] || [])) {
+                if (resta <= 0) break
+                if (lineas.some(l => l.lote_id === d.lote_id)) continue
+                const toma = Math.min(d.cantidad, resta)
+                cola.push({ ...d, toma })
+                resta -= toma
+              }
+              if (cola.length === 0) return null
+              const cruzada = cola.some(x => x.es_el_mismo === false)
+              return (
+                <div key={a + '-fifo'} style={styles.fifoBox} className="no-imprimir">
+                  <b>Surtir en este orden (FIFO{cruzada ? ' entre los codigos equivalentes' : ''}):</b>
+                  {cola.map((d, i) => (
+                    <span key={d.lote_id} style={styles.fifoItem}>
+                      {i + 1}. {fmt(d.toma)} pz &middot; lote {d.codigo} &middot; {d.fecha}
+                      {d.codigo_articulo && d.es_el_mismo === false
+                        ? ` · ${d.codigo_articulo}${d.molde ? ' (molde ' + d.molde + ')' : ''}`
+                        : d.molde ? ` (molde ${d.molde})` : ''}
+                    </span>
+                  ))}
+                  {resta > 0 && <span style={{ ...styles.fifoItem, color: '#b91c1c' }}>Faltan {fmt(resta)} pz sin existencia liberada.</span>}
+                </div>
+              )
+            })()}
+            </React.Fragment>
           )
         })}
         {objetivo.length === 0 && <p style={{ color: '#666', fontSize: '13px', padding: '8px' }}>Sin objetivo (embarque manual).</p>}
@@ -351,6 +394,8 @@ function badgeEst(e) {
 }
 
 const styles = {
+  fifoBox: { display: 'flex', flexDirection: 'column', gap: '2px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '7px', padding: '7px 10px', margin: '2px 0 8px', fontSize: '11.5px', color: '#475569' },
+  fifoItem: { paddingLeft: '8px' },
   titulo: { fontSize: '18px', fontWeight: '600', color: '#1a1a2e', margin: '0 0 4px' },
   ayuda: { fontSize: '13px', color: '#64748b', margin: '0 0 16px', maxWidth: '760px' },
   head: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', gap: '10px', flexWrap: 'wrap' },

@@ -516,6 +516,36 @@ export default function Articulos() {
             </div>
           </div>
 
+          <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
+            Identificacion de la pieza
+          </h3>
+          <div style={styles.fila}>
+            <div style={styles.campo}>
+              <label style={styles.label}>Color</label>
+              <select style={styles.input} value={form.color_id}
+                onChange={e => setForm({ ...form, color_id: e.target.value })}>
+                <option value="">Sin color / no aplica</option>
+                {colores.map(c => <option key={c.id} value={c.id}>{c.clave} - {c.nombre}</option>)}
+              </select>
+              <span style={styles.ayudaCampo}>
+                Si dos articulos comparten molde pero tienen distinto color, el sistema los corre por
+                separado con purga entre ellos, no como co-productos del mismo disparo.
+              </span>
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Parte equivalente</label>
+              <select style={styles.input} value={form.parte_id}
+                onChange={e => setForm({ ...form, parte_id: e.target.value })}>
+                <option value="">Sin parte / codigo unico</option>
+                {partes.map(x => <option key={x.id} value={x.id}>{x.clave}{x.nombre ? ` - ${x.nombre}` : ''}</option>)}
+              </select>
+              <span style={styles.ayudaCampo}>
+                Agrupa codigos que son la misma pieza aunque salgan de moldes distintos. El inventario se
+                ve junto, el FIFO cruza los dos codigos y se puede surtir un pedido con cualquiera.
+              </span>
+            </div>
+          </div>
+
           {form.origen === 'comprado' && (
             <>
               <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
@@ -536,30 +566,6 @@ export default function Articulos() {
                   <label style={styles.label}>Tiempo de transito (dias)</label>
                   <input style={styles.input} type="number" min="0" value={form.tiempo_transito_dias}
                     onChange={e => setForm({ ...form, tiempo_transito_dias: e.target.value })} placeholder="0" />
-                </div>
-                <div style={styles.campo}>
-                  <label style={styles.label}>Parte equivalente</label>
-                  <select style={styles.input} value={form.parte_id}
-                    onChange={e => setForm({ ...form, parte_id: e.target.value })}>
-                    <option value="">Sin parte / codigo unico</option>
-                    {partes.map(x => <option key={x.id} value={x.id}>{x.clave} - {x.nombre}</option>)}
-                  </select>
-                  <span style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.4 }}>
-                    Agrupa codigos que son la misma pieza aunque salgan de moldes distintos. El inventario
-                    se ve junto y se puede surtir un pedido con cualquiera de ellos.
-                  </span>
-                </div>
-                <div style={styles.campo}>
-                  <label style={styles.label}>Color</label>
-                  <select style={styles.input} value={form.color_id}
-                    onChange={e => setForm({ ...form, color_id: e.target.value })}>
-                    <option value="">Sin color / no aplica</option>
-                    {colores.map(c => <option key={c.id} value={c.id}>{c.clave} - {c.nombre}</option>)}
-                  </select>
-                  <span style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.4 }}>
-                    Si dos articulos comparten molde pero tienen distinto color, el sistema los corre por
-                    separado con purga entre ellos, no como co-productos del mismo disparo.
-                  </span>
                 </div>
                 <div style={styles.campo}>
                   <label style={styles.label}>Clasificacion ABC (inv. ciclico)</label>
@@ -1051,6 +1057,7 @@ function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente
 
 const btnBase = { padding: '9px 14px', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }
 const styles = {
+  ayudaCampo: { fontSize: '11px', color: '#64748b', lineHeight: 1.4 },
   btnExcel: { padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
   btnPdf: { padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
   filaCheckbox: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' },

@@ -12,7 +12,7 @@ import { useAuth } from '../../context/AuthContext'
 // y rastreando por separado. La parte solo le dice al sistema "estos son la
 // misma pieza", para poder ver el disponible junto y surtir de cualquiera.
 
-const vacio = { clave: '', nombre: '', descripcion: '', activo: true }
+const vacio = { clave: '', nombre: '', activo: true }
 
 export default function Partes() {
   const { perfil, tienePermiso } = useAuth()
@@ -54,10 +54,10 @@ export default function Partes() {
 
   const guardar = async () => {
     setError(''); setExito('')
-    if (!form.clave || !form.nombre) { setError('Clave y nombre son obligatorios'); return }
+    if (!form.clave) { setError('La clave es obligatoria'); return }
     const payload = {
-      empresa_id: emp, clave: form.clave.toUpperCase(), nombre: form.nombre,
-      descripcion: form.descripcion || null, activo: !!form.activo,
+      empresa_id: emp, clave: form.clave.toUpperCase(),
+      nombre: form.nombre || null, activo: !!form.activo,
     }
     const r = editando
       ? await supabase.from('partes').update(payload).eq('id', editando.id)
@@ -68,6 +68,16 @@ export default function Partes() {
       return
     }
     setForm(null); setEditando(null); setExito('Parte guardada'); cargar()
+  }
+
+  // El principal es el codigo con el que se planea y se programa por defecto.
+  // Los demas siguen siendo validos para surtir, pero la produccion se dirige
+  // al principal salvo que se decida otra cosa al crear la OT.
+  const marcarPrincipal = async (parteId, artId) => {
+    setError(''); setExito('')
+    const { error: e } = await supabase.from('partes').update({ articulo_principal_id: artId }).eq('id', parteId)
+    if (e) { setError('No se pudo marcar: ' + e.message); return }
+    setExito('Codigo principal actualizado'); cargar()
   }
 
   const agregarArticulo = async (parteId) => {
@@ -90,7 +100,7 @@ export default function Partes() {
   const COLS = [
     { label: 'Clave', get: p => p.clave },
     { label: 'Nombre', get: p => p.nombre },
-    { label: 'Descripcion', get: p => p.descripcion || '' },
+    { label: 'Principal', get: p => articulos.find(x => x.id === p.articulo_principal_id)?.codigo_interno || '' },
     { label: 'Codigos', get: p => miembros(p.id).map(a => a.codigo_interno).join(' / ') },
     { label: 'Activo', get: p => p.activo ? 'Si' : 'No' },
   ]
@@ -131,15 +141,11 @@ export default function Partes() {
                 onChange={e => setForm({ ...form, clave: e.target.value.toUpperCase() })} placeholder="MANIJA-LH" />
             </div>
             <div style={{ ...S.campo, flex: 2 }}>
-              <label style={S.label}>Nombre *</label>
+              <label style={S.label}>Nombre (opcional)</label>
               <input style={S.input} value={form.nombre}
-                onChange={e => setForm({ ...form, nombre: e.target.value })} placeholder="Manija izquierda" />
+                onChange={e => setForm({ ...form, nombre: e.target.value })}
+                placeholder="Si lo dejas vacio se usa la descripcion del codigo principal" />
             </div>
-          </div>
-          <div style={S.campo}>
-            <label style={S.label}>Descripcion</label>
-            <input style={S.input} value={form.descripcion}
-              onChange={e => setForm({ ...form, descripcion: e.target.value })} />
           </div>
           <label style={S.check}>
             <input type="checkbox" checked={form.activo} onChange={e => setForm({ ...form, activo: e.target.checked })} />
@@ -172,6 +178,11 @@ export default function Partes() {
                   {abierta ? '▼' : '▶'} {p.clave} &middot; {p.nombre}
                 </span>
                 {!p.activo && <span style={S.badgeGris}>inactiva</span>}
+                {p.articulo_principal_id && (
+                  <span style={S.badgePrin}>
+                    principal: {articulos.find(x => x.id === p.articulo_principal_id)?.codigo_interno || '-'}
+                  </span>
+                )}
                 <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>
                   {ms.length === 0
                     ? 'Sin codigos asignados todavia'
@@ -188,7 +199,7 @@ export default function Partes() {
                 {ms.length > 0 && (
                   <table style={S.tabla}>
                     <thead>
-                      <tr><th style={S.th}>Codigo</th><th style={S.th}>Descripcion</th><th style={S.th}>Molde</th><th style={S.th}></th></tr>
+                      <tr><th style={S.th}>Codigo</th><th style={S.th}>Descripcion</th><th style={S.th}>Molde</th><th style={S.th}>Principal</th><th style={S.th}></th></tr>
                     </thead>
                     <tbody>
                       {ms.map(a => (
@@ -196,6 +207,13 @@ export default function Partes() {
                           <td style={{ ...S.td, fontWeight: 600 }}>{a.codigo_interno}</td>
                           <td style={S.td}>{a.descripcion}</td>
                           <td style={S.td}>{moldeDe(a.id)}</td>
+                          <td style={S.td}>
+                            {p.articulo_principal_id === a.id
+                              ? <span style={S.badgePrin}>principal</span>
+                              : puedeEditar
+                                ? <button style={S.botonAccion} onClick={() => marcarPrincipal(p.id, a.id)}>Marcar</button>
+                                : '-'}
+                          </td>
                           <td style={{ ...S.td, textAlign: 'right' }}>
                             {puedeEditar && <button style={S.botonAccion} onClick={() => quitarArticulo(a.id, a.codigo_interno)}>Quitar</button>}
                           </td>
@@ -203,6 +221,12 @@ export default function Partes() {
                       ))}
                     </tbody>
                   </table>
+                )}
+                {ms.length > 1 && !p.articulo_principal_id && (
+                  <p style={S.avisoPrin}>
+                    Falta marcar cual es el <b>codigo principal</b>. Es con el que el sistema planea y
+                    programa por defecto; los otros siguen sirviendo para surtir y el FIFO cruza todos.
+                  </p>
                 )}
                 {ms.length === 1 && (
                   <p style={S.ayuda}>
@@ -259,5 +283,7 @@ const S = {
   tabla: { width: '100%', borderCollapse: 'collapse', fontSize: '13px' },
   th: { textAlign: 'left', padding: '7px 9px', borderBottom: '2px solid #e2e8f0', color: '#64748b', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.03em' },
   td: { padding: '7px 9px', borderBottom: '1px solid #f1f5f9', color: '#1a1a2e' },
+  badgePrin: { fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px', background: '#dbeafe', color: '#1d4ed8', marginLeft: '8px' },
+  avisoPrin: { fontSize: '12px', color: '#92400e', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '7px', padding: '8px 10px', margin: '10px 0 0', lineHeight: 1.5 },
   badgeGris: { fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px', background: '#f1f5f9', color: '#64748b', marginLeft: '8px' },
 }
