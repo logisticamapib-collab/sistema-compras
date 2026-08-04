@@ -151,10 +151,14 @@ export default function EmbarquePreparar() {
     if (!manual.articulo_id || !manual.cantidad) { setError('Articulo y cantidad obligatorios.'); return }
     const ok = window.confirm('Alta manual = material fuera de FIFO (aun en produccion o sin folio). ¿Confirmas?')
     if (!ok) return
-    await supabase.from('embarque_lineas').insert({
+    // El alta manual tambien pasa por los candados de la base (por ejemplo,
+    // molido de consigna que el contrato no deja vender). Si rebota hay que
+    // decirlo: antes se ignoraba el error y el renglon simplemente no aparecia.
+    const { error: eMan } = await supabase.from('embarque_lineas').insert({
       embarque_id: emb.id, articulo_id: parseInt(manual.articulo_id), lote_id: null, cantidad: parseFloat(manual.cantidad),
       contenedor_id: null, fuera_fifo: true, escaneado_por: perfil.id, escaneado_at: new Date().toISOString(),
     })
+    if (eMan) { setError(eMan.message); return }
     setManual({ articulo_id: '', cantidad: '' }); await abrir(emb)
   }
 

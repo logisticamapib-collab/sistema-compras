@@ -29,6 +29,7 @@ const formVacio = {
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
   clasificacion_abc: '', abc_criterio: 'manual', color_id: '', parte_id: '',
+  familia_resina_id: '',
 }
 
 export default function Articulos() {
@@ -61,6 +62,7 @@ export default function Articulos() {
   const [formCliente, setFormCliente] = useState({ cliente_id: '', codigo_cliente: '', precio: '' })
   const [colores, setColores] = useState([])
   const [partes, setPartes] = useState([])
+  const [familias, setFamilias] = useState([])
   const [form, setForm] = useState(formVacio)
 
   const puedeCrear = tienePermiso('articulos', 'crear')
@@ -72,7 +74,7 @@ export default function Articulos() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }, { data: cols }, { data: prts }] = await Promise.all([
+    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }, { data: cols }, { data: prts }, { data: fams }] = await Promise.all([
       supabase.from('articulos').select('*, categorias(nombre), sites(nombre, codigo)').eq('empresa_id', perfil.empresa_id).order('codigo_interno'),
       supabase.from('categorias').select('*').eq('empresa_id', perfil.empresa_id),
       supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
@@ -81,10 +83,12 @@ export default function Articulos() {
       supabase.from('articulo_sites_destino').select('articulo_id, site_id'),
       supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
       supabase.from('partes').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
+      supabase.from('familias_resina').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden').order('clave'),
     ])
     setArticulos(a || [])
     setColores(cols || [])
     setPartes(prts || [])
+    setFamilias(fams || [])
     setCategorias(c || [])
     setProveedores(p || [])
     setClientes(cl || [])
@@ -146,6 +150,7 @@ export default function Articulos() {
       clasificacion_abc: articulo.clasificacion_abc || '',
       color_id: articulo.color_id?.toString() || '',
       parte_id: articulo.parte_id?.toString() || '',
+      familia_resina_id: articulo.familia_resina_id?.toString() || '',
       abc_criterio: articulo.abc_criterio || 'manual',
       sites_destino: (destinos || []).map(d => d.site_id.toString()),
     })
@@ -203,6 +208,7 @@ export default function Articulos() {
       clasificacion_abc: form.clasificacion_abc || null,
       color_id: form.color_id ? parseInt(form.color_id) : null,
       parte_id: form.parte_id ? parseInt(form.parte_id) : null,
+      familia_resina_id: form.familia_resina_id ? parseInt(form.familia_resina_id) : null,
       abc_criterio: form.abc_criterio || 'manual',
     }
 
@@ -542,6 +548,19 @@ export default function Articulos() {
               <span style={styles.ayudaCampo}>
                 Agrupa codigos que son la misma pieza aunque salgan de moldes distintos. El inventario se
                 ve junto, el FIFO cruza los dos codigos y se puede surtir un pedido con cualquiera.
+              </span>
+            </div>
+            <div style={styles.campo}>
+              <label style={styles.label}>Familia de resina</label>
+              <select style={styles.input} value={form.familia_resina_id}
+                onChange={e => setForm({ ...form, familia_resina_id: e.target.value })}>
+                <option value="">Sin asignar</option>
+                {familias.map(f => <option key={f.id} value={f.id}>{f.clave} - {f.nombre}</option>)}
+              </select>
+              <span style={styles.ayudaCampo}>
+                El material base: polipropileno, poliamida, ABS. Es lo que permite ver el molino por
+                tipo de resina sin importar de que pieza vino, y el molido y la barredura la heredan
+                de su resina virgen.
               </span>
             </div>
           </div>
