@@ -10,6 +10,7 @@ import Trazabilidad from './Trazabilidad'
 import TerminalLauncher from '../../components/TerminalLauncher'
 import AutorizacionMaquinaAlterna from './AutorizacionMaquinaAlterna'
 import Calibracion from './Calibracion'
+import PlanControl from './PlanControl'
 import ModuloPendiente from '../ModuloPendiente'
 
 const secciones = [
@@ -22,6 +23,7 @@ const secciones = [
   { id: 'trazabilidad', modulo: 'cal_trazabilidad', titulo: 'Trazabilidad de Lote' },
   { id: 'maq_alterna', modulo: 'cal_maq_alterna', titulo: 'Autorizacion Maquina Alterna' },
   { id: 'calibracion', modulo: 'cal_calibracion', titulo: 'Calibracion de Equipos' },
+  { id: 'plan_control', modulo: 'cal_plan_control', titulo: 'Plan de Control' },
   { id: 'terminal', modulo: 'cal_terminal', titulo: 'Terminal (piso)' },
 ]
 
@@ -57,6 +59,7 @@ export default function GrupoCalidad() {
         {seccion === 'trazabilidad' && <Trazabilidad />}
         {seccion === 'maq_alterna' && <AutorizacionMaquinaAlterna />}
         {seccion === 'calibracion' && <Calibracion />}
+        {seccion === 'plan_control' && <PlanControl />}
         {seccion === 'terminal' && <TerminalLauncher titulo="Terminal de Calidad" opciones={[{ label: 'Liberacion de lotes', color: '#b91c1c', Comp: BandejaLiberacion }, { label: 'Cuarentena', color: '#d97706', Comp: Cuarentena }, { label: 'No conformidades', color: '#9f1239', Comp: NoConformidades }, { label: 'Alertas de calidad', color: '#be123c', Comp: AlertasCalidad }, { label: 'Trazabilidad de lote', color: '#7c2d12', Comp: Trazabilidad }]} />}
       </div>
     </div>
