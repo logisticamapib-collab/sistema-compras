@@ -12,6 +12,7 @@ import AutorizacionMaquinaAlterna from './AutorizacionMaquinaAlterna'
 import Calibracion from './Calibracion'
 import PlanControl from './PlanControl'
 import SPC from './SPC'
+import Documentos from './Documentos'
 import ModuloPendiente from '../ModuloPendiente'
 
 const secciones = [
@@ -26,6 +27,7 @@ const secciones = [
   { id: 'calibracion', modulo: 'cal_calibracion', titulo: 'Calibracion de Equipos' },
   { id: 'plan_control', modulo: 'cal_plan_control', titulo: 'Plan de Control' },
   { id: 'spc', modulo: 'cal_spc', titulo: 'Cartas de Control y Capacidad' },
+  { id: 'documentos', modulo: 'cal_documentos', titulo: 'Documentos y Registros' },
   { id: 'terminal', modulo: 'cal_terminal', titulo: 'Terminal (piso)' },
 ]
 
@@ -63,6 +65,7 @@ export default function GrupoCalidad() {
         {seccion === 'calibracion' && <Calibracion />}
         {seccion === 'plan_control' && <PlanControl />}
         {seccion === 'spc' && <SPC />}
+        {seccion === 'documentos' && <Documentos />}
         {seccion === 'terminal' && <TerminalLauncher titulo="Terminal de Calidad" opciones={[{ label: 'Liberacion de lotes', color: '#b91c1c', Comp: BandejaLiberacion }, { label: 'Cuarentena', color: '#d97706', Comp: Cuarentena }, { label: 'No conformidades', color: '#9f1239', Comp: NoConformidades }, { label: 'Alertas de calidad', color: '#be123c', Comp: AlertasCalidad }, { label: 'Trazabilidad de lote', color: '#7c2d12', Comp: Trazabilidad }, { label: 'Captura SPC', color: '#0f766e', Comp: SPC }]} />}
       </div>
     </div>
