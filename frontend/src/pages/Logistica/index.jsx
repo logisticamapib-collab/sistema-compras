@@ -18,6 +18,7 @@ import MovimientoMaterial from './MovimientoMaterial'
 import TraspasoEscaneo from './TraspasoEscaneo'
 import Contenedores from './Contenedores'
 import Molinos from './Molinos'
+import Toolcrib from './Toolcrib'
 import TerminalLauncher from '../../components/TerminalLauncher'
 import SuministroProduccion from './SuministroProduccion'
 import InventarioCiclico from './InventarioCiclico'
@@ -31,6 +32,7 @@ const secciones = [
   { id: 'traspaso_escaneo', modulo: 'log_movimiento', titulo: 'Traspaso por Escaneo' },
   { id: 'contenedores', modulo: 'log_contenedores', titulo: 'Cajas y Tarimas' },
   { id: 'molinos', modulo: 'log_molinos', titulo: 'Molinos' },
+  { id: 'toolcrib', modulo: 'log_toolcrib', titulo: 'Toolcrib' },
   { id: 'inventario', modulo: 'log_inventario', titulo: 'Inventario' },
   { id: 'ciclico', modulo: 'log_ciclico', titulo: 'Inventario Ciclico' },
   { id: 'consultas', modulo: 'log_consultas', titulo: 'Consultas de Inventario' },
@@ -76,6 +78,7 @@ export default function GrupoLogistica() {
         {seccion === 'traspaso_escaneo' && <TraspasoEscaneo />}
         {seccion === 'contenedores' && <Contenedores />}
         {seccion === 'molinos' && <Molinos />}
+        {seccion === 'toolcrib' && <Toolcrib />}
         {seccion === 'inventario' && <Inventario />}
         {seccion === 'ciclico' && <InventarioCiclico />}
         {seccion === 'consultas' && <ConsultasInventario />}
