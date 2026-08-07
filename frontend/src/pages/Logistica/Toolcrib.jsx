@@ -17,9 +17,13 @@ import { siteEfectivo } from '../../lib/sites'
 // abiertos, la gente usaria el facil y los numeros nunca cuadrarian. Al
 // surtir, el insumo se escribe solo en la orden.
 //
-// El centro de costo no se teclea: baja del molde, de su maquina o de su
-// area, en cascada. La cuenta de gasto baja de la categoria del articulo. Un
-// eje que se captura a mano se captura mal.
+// Una cosa es donde se COMPRA y otra donde se CONSUME. El mismo buje se
+// compra bajo Logistica / Toolcrib y se consume bajo Produccion / Maquina 1;
+// son dos asientos distintos. Por eso la imputacion de la SALIDA baja del
+// destino: centro de costo y cuenta de gasto salen del molde, de su maquina o
+// de su area, en cascada. La categoria del articulo, que es la clasificacion
+// de compra, solo se usa como ultimo recurso si el destino no tiene cuenta.
+// Un eje que se captura a mano se captura mal.
 
 const hoyISO = () => new Date().toISOString().slice(0, 10)
 const fmt = (n) => (Number(n) || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })
@@ -70,6 +74,8 @@ export default function Toolcrib() {
   const [mttoMolde, setMttoMolde] = useState([])
   const [mttoGen, setMttoGen] = useState([])
   const [articulos, setArticulos] = useState([])
+  const [centros, setCentros] = useState([])
+  const [cuentas, setCuentas] = useState([])
   const [vales, setVales] = useState([])
   const [existencias, setExistencias] = useState([])
 
@@ -93,15 +99,15 @@ export default function Toolcrib() {
   const cargar = async () => {
     setLoading(true); setError('')
     const sid = siteEfectivo(perfil, site)
-    const [pa, al, mo, mq, ar, ot, mm, mg, art, va] = await Promise.all([
+    const [pa, al, mo, mq, ar, ot, mm, mg, art, va, cc, cg] = await Promise.all([
       supabase.from('toolcrib_parametros').select('*').eq('empresa_id', emp).maybeSingle(),
       supabase.from('almacenes').select('id, clave, nombre, site_id, es_toolcrib')
         .eq('empresa_id', emp).eq('activo', true).order('clave'),
-      supabase.from('moldes').select('id, clave, nombre, maquina_asignada_id, centro_costo_id')
+      supabase.from('moldes').select('id, clave, nombre, maquina_asignada_id, centro_costo_id, cuenta_gasto_id')
         .eq('empresa_id', emp).eq('activo', true).order('clave'),
-      supabase.from('maquinas').select('id, clave, nombre, area_id, centro_costo_id')
+      supabase.from('maquinas').select('id, clave, nombre, area_id, centro_costo_id, cuenta_gasto_id')
         .eq('empresa_id', emp).eq('activo', true).order('clave'),
-      supabase.from('areas').select('id, clave, nombre, centro_costo_id')
+      supabase.from('areas').select('id, clave, nombre, centro_costo_id, cuenta_gasto_id')
         .eq('empresa_id', emp).eq('activo', true).order('clave'),
       supabase.from('ordenes_trabajo').select('id, folio, articulo_id')
         .eq('empresa_id', emp).in('estatus', ['programada', 'en_proceso'])
@@ -113,13 +119,16 @@ export default function Toolcrib() {
       supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, costo, categoria_id, categorias(nombre, tipo)')
         .eq('empresa_id', emp).eq('activo', true).order('codigo_interno'),
       supabase.from('toolcrib_vales')
-        .select('*, moldes(clave), maquinas(clave), areas(clave), centros_costos(codigo)')
+        .select('*, moldes(clave), maquinas(clave), areas(clave), centros_costos(codigo), cuentas_gastos(codigo)')
         .eq('empresa_id', emp).order('fecha', { ascending: false }).limit(200),
+      supabase.from('centros_costos').select('id, codigo, nombre').eq('activo', true).order('codigo'),
+      supabase.from('cuentas_gastos').select('id, codigo, nombre').eq('activo', true).order('codigo'),
     ])
     setParam(pa.data || null)
     setAlmacenes(al.data || []); setMoldes(mo.data || []); setMaquinas(mq.data || [])
     setAreas(ar.data || []); setOts(ot.data || []); setMttoMolde(mm.data || [])
     setMttoGen(mg.data || []); setArticulos(art.data || []); setVales(va.data || [])
+    setCentros(cc.data || []); setCuentas(cg.data || [])
 
     const tc = (al.data || []).find(a => a.es_toolcrib)
     if (tc) {
@@ -246,6 +255,17 @@ export default function Toolcrib() {
     const { error: e } = await supabase.rpc('cancelar_vale_toolcrib', { p_empresa_id: emp, p_vale_id: v.id })
     if (e) { setError(e.message); return }
     setExito('Vale cancelado'); cargar()
+  }
+
+  // La imputacion llega resuelta del destino, pero siempre hay excepciones.
+  // Solo se puede corregir en borrador: la base rechaza el cambio despues de
+  // surtir, porque ya habria un asiento hecho.
+  const guardarImputacion = async (v, campo, valor) => {
+    setError(''); setExito('')
+    const { error: e } = await supabase.from('toolcrib_vales')
+      .update({ [campo]: valor ? Number(valor) : null }).eq('id', v.id)
+    if (e) { setError(e.message); return }
+    setExito('Imputacion actualizada'); cargar()
   }
 
   const guardarParam = async (campo, valor) => {
@@ -462,12 +482,28 @@ export default function Toolcrib() {
               </div>
 
               {imput && (
-                <div style={imput.centro_costo_id ? S.previo : S.previoAmbar}>
-                  {imput.centro_costo_id
-                    ? <>Centro de costo <b>resuelto solo</b>: sale {imput.origen}. Nadie lo teclea.</>
-                    : <>No se pudo deducir el centro de costo: {imput.origen}. El vale se puede
-                       crear igual, pero el consumo no va a caer en ningun centro de costo hasta
-                       que se lo asignes al molde, a la maquina o al area.</>}
+                <div style={imput.centro_costo_id && imput.cuenta_gasto_id ? S.previo : S.previoAmbar}>
+                  <b>Asi se va a imputar la salida.</b> Ojo: esto no es como se compro el
+                  articulo, es contra que se consume.
+                  <div style={{ marginTop: 4 }}>
+                    Centro de costo:{' '}
+                    {imput.centro_costo_id
+                      ? <b>{centros.find(c => c.id === imput.centro_costo_id)?.codigo}</b>
+                      : <b>sin resolver</b>} <span style={S.mini}>({imput.origen_cc})</span>
+                  </div>
+                  <div>
+                    Cuenta de gasto:{' '}
+                    {imput.cuenta_gasto_id
+                      ? <b>{cuentas.find(c => c.id === imput.cuenta_gasto_id)?.codigo}</b>
+                      : <b>sin resolver</b>} <span style={S.mini}>({imput.origen_cg})</span>
+                  </div>
+                  {(!imput.centro_costo_id || !imput.cuenta_gasto_id) && (
+                    <div style={{ marginTop: 4 }}>
+                      Lo que quede sin resolver se puede capturar en el vale antes de surtirlo, pero
+                      conviene asignarselo al molde, a la maquina o al area para que salga solo la
+                      proxima vez.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -550,6 +586,33 @@ export default function Toolcrib() {
                   )}
                   {vale.autorizado_at && vale.estatus === 'borrador' && (
                     <p style={S.previo}>Autorizado el {fecha(vale.autorizado_at)}. Ya se puede surtir.</p>
+                  )}
+
+                  {vale.estatus === 'borrador' && puedeCrear && (
+                    <div style={S.fila}>
+                      <div style={S.campo}>
+                        <label style={S.label}>Centro de costo</label>
+                        <select style={S.input} value={vale.centro_costo_id || ''}
+                          onChange={e => guardarImputacion(vale, 'centro_costo_id', e.target.value)}>
+                          <option value="">Sin asignar</option>
+                          {centros.map(c => <option key={c.id} value={c.id}>{c.codigo} - {c.nombre}</option>)}
+                        </select>
+                      </div>
+                      <div style={S.campo}>
+                        <label style={S.label}>Cuenta de gasto</label>
+                        <select style={S.input} value={vale.cuenta_gasto_id || ''}
+                          onChange={e => guardarImputacion(vale, 'cuenta_gasto_id', e.target.value)}>
+                          <option value="">Sin asignar</option>
+                          {cuentas.map(c => <option key={c.id} value={c.id}>{c.codigo} - {c.nombre}</option>)}
+                        </select>
+                      </div>
+                      <div style={{ ...S.campo, flex: 2, justifyContent: 'flex-end' }}>
+                        <span style={S.ayuda}>
+                          Llegan resueltos del destino. Se pueden corregir aqui, pero una vez surtido
+                          el vale ya no se cambian: habria un asiento hecho.
+                        </span>
+                      </div>
+                    </div>
                   )}
 
                   {lineas.length > 0 && (
@@ -896,11 +959,13 @@ export default function Toolcrib() {
           </div>
 
           <div style={S.card}>
-            <p style={S.cardTit}>De donde sale el centro de costo</p>
+            <p style={S.cardTit}>De donde sale la imputacion de la salida</p>
             <p style={S.ayuda}>
-              En cascada, para que nadie lo teclee: primero el del molde, si no el de su maquina
-              asignada, si no el del area de esa maquina. Lo que este vacio aqui es lo que va a
-              caer sin imputar.
+              En cascada, para que nadie la teclee: primero la del molde, si no la de su maquina
+              asignada, si no la del area de esa maquina. Aplica igual al centro de costo y a la
+              cuenta de gasto. Lo que este vacio aqui es lo que va a caer sin imputar.
+              <b> Esto no tiene que ver con como se compro el articulo</b>: esa clasificacion vive
+              en la requisicion y es otro asiento.
             </p>
             <div style={S.fila}>
               <div style={{ flex: 1, minWidth: 240 }}>
@@ -920,6 +985,26 @@ export default function Toolcrib() {
                 {areas.filter(a => !a.centro_costo_id).length === 0
                   ? <p style={S.mini}>Todas tienen.</p>
                   : <p style={S.mini}>{areas.filter(a => !a.centro_costo_id).map(a => a.clave).join(', ')}</p>}
+              </div>
+            </div>
+            <div style={S.fila}>
+              <div style={{ flex: 1, minWidth: 240 }}>
+                <p style={S.subTit}>Moldes sin cuenta de gasto</p>
+                {moldes.filter(m => !m.cuenta_gasto_id).length === 0
+                  ? <p style={S.mini}>Todos tienen, o la heredan de su maquina.</p>
+                  : <p style={S.mini}>{moldes.filter(m => !m.cuenta_gasto_id).map(m => m.clave).join(', ')}</p>}
+              </div>
+              <div style={{ flex: 1, minWidth: 240 }}>
+                <p style={S.subTit}>Maquinas sin cuenta de gasto</p>
+                {maquinas.filter(m => !m.cuenta_gasto_id).length === 0
+                  ? <p style={S.mini}>Todas tienen.</p>
+                  : <p style={S.mini}>{maquinas.filter(m => !m.cuenta_gasto_id).map(m => m.clave).join(', ')}</p>}
+              </div>
+              <div style={{ flex: 1, minWidth: 240 }}>
+                <p style={S.subTit}>Areas sin cuenta de gasto</p>
+                {areas.filter(a => !a.cuenta_gasto_id).length === 0
+                  ? <p style={S.mini}>Todas tienen.</p>
+                  : <p style={S.mini}>{areas.filter(a => !a.cuenta_gasto_id).map(a => a.clave).join(', ')}</p>}
               </div>
             </div>
           </div>
