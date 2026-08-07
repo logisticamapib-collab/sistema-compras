@@ -24,7 +24,7 @@ import { cargarRoles } from '../../lib/roles'
 
 const rolVacio = {
   clave: '', nombre: '', descripcion: '', nivel: 1,
-  es_gerencial: false, omite_aprobacion: false, orden: 100,
+  es_gerencial: false, omite_aprobacion: false, acceso_total: false, orden: 100,
 }
 const puestoVacio = { clave: '', nombre: '', nivel: 1, area_id: '', notas: '' }
 
@@ -85,6 +85,7 @@ export default function RolesPuestos() {
       clave, nombre: formRol.nombre, descripcion: formRol.descripcion || null,
       nivel: Number(formRol.nivel) || 1,
       es_gerencial: !!formRol.es_gerencial, omite_aprobacion: !!formRol.omite_aprobacion,
+      acceso_total: !!formRol.acceso_total,
       orden: Number(formRol.orden) || 100,
     }
     if (formRol.editando) {
@@ -249,6 +250,11 @@ export default function RolesPuestos() {
                     onChange={e => setFormRol({ ...formRol, omite_aprobacion: e.target.checked })} />
                   <span>Su requisicion se va directo a compras, sin firma</span>
                 </label>
+                <label style={S.check}>
+                  <input type="checkbox" checked={!!formRol.acceso_total}
+                    onChange={e => setFormRol({ ...formRol, acceso_total: e.target.checked })} />
+                  <span>Acceso total a todos los modulos</span>
+                </label>
               </div>
               <div style={S.acciones}>
                 <button style={S.botonSec} onClick={() => { setFormRol(null); setClonarDe('') }}>Cancelar</button>
@@ -270,7 +276,7 @@ export default function RolesPuestos() {
                   <th style={S.th}>Rol</th><th style={S.th}>Clave</th><th style={S.th}>Nivel</th>
                   <th style={S.thR}>Usuarios</th><th style={S.thR}>Modulos</th>
                   <th style={S.th}>Aprueba</th><th style={S.th}>Sin firma</th>
-                  <th style={S.th}>Activo</th><th style={S.th}></th>
+                  <th style={S.th}>Todo</th><th style={S.th}>Activo</th><th style={S.th}></th>
                 </tr>
               </thead>
               <tbody>
@@ -284,7 +290,9 @@ export default function RolesPuestos() {
                     <td style={S.td}><code style={S.code}>{r.clave}</code></td>
                     <td style={S.td}>{r.nivel ? nivelNombre(r.nivel) : '-'}</td>
                     <td style={S.tdR}>{usoRol[r.clave] || 0}</td>
-                    <td style={{ ...S.tdR, color: r.modulos === 0 ? '#b91c1c' : '#1a1a2e' }}>{r.modulos}</td>
+                    <td style={{ ...S.tdR, color: r.modulos === 0 ? '#b91c1c' : '#1a1a2e' }}>
+                      {r.modulos}{r.acceso_total && <span style={S.mini}> (todos)</span>}
+                    </td>
                     <td style={S.td}>
                       <input type="checkbox" disabled={!puedeEditar} checked={!!r.es_gerencial}
                         onChange={() => toggleRol(r, 'es_gerencial')} />
@@ -292,6 +300,10 @@ export default function RolesPuestos() {
                     <td style={S.td}>
                       <input type="checkbox" disabled={!puedeEditar} checked={!!r.omite_aprobacion}
                         onChange={() => toggleRol(r, 'omite_aprobacion')} />
+                    </td>
+                    <td style={S.td}>
+                      <input type="checkbox" disabled={!puedeEditar} checked={!!r.acceso_total}
+                        onChange={() => toggleRol(r, 'acceso_total')} />
                     </td>
                     <td style={S.td}>
                       <input type="checkbox" disabled={!puedeEditar} checked={!!r.activo}
@@ -312,7 +324,9 @@ export default function RolesPuestos() {
             <p style={S.ayuda}>
               <b>Aprueba</b> significa que puede aparecer como jefe en la cadena de compras.
               <b> Sin firma</b> significa que su propia requisicion se va directo a compras.
-              Un rol con cero modulos no puede hacer nada: asignale permisos en Permisos por Rol.
+              <b> Todo</b> le da acceso completo a todos los modulos, incluidos los que se creen
+              despues: el sistema se los otorga solo, sin que nadie tenga que acordarse. Un rol con
+              cero modulos no puede hacer nada: asignale permisos en Permisos por Rol.
             </p>
           </div>
         </>
