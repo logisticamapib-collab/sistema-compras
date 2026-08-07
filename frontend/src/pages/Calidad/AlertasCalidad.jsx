@@ -20,6 +20,7 @@ export default function AlertasCalidad() {
   const [site, setSite] = useState('')
   const [articulos, setArticulos] = useState([])
   const [defectos, setDefectos] = useState([])
+  const [areas, setAreas] = useState([])
   const [form, setForm] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -31,21 +32,22 @@ export default function AlertasCalidad() {
     const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const emp = perfil.empresa_id
-    const [a, ar, de] = await Promise.all([
-      supabase.from('calidad_alertas').select('*, articulo:articulos(codigo_interno), defecto:causas_scrap(nombre)').eq('empresa_id', emp).order('id', { ascending: false }),
+    const [a, ar, de, ars] = await Promise.all([
+      supabase.from('calidad_alertas').select('*, articulo:articulos(codigo_interno), defecto:causas_scrap(nombre), areas(clave, nombre)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('articulos').select('id, codigo_interno, site_id').eq('empresa_id', emp),
       supabase.from('causas_scrap').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true),
+      supabase.from('areas').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true).order('clave'),
     ])
     const _artOK = (id) => { if (!sid) return true; const x = (ar.data || []).find(z => z.id === id); return !x || x.site_id == null || x.site_id === sid }
-    setAlertas((a.data || []).filter(x => _artOK(x.articulo_id))); setArticulos(ar.data || []); setDefectos(de.data || [])
+    setAlertas((a.data || []).filter(x => _artOK(x.articulo_id))); setArticulos(ar.data || []); setDefectos(de.data || []); setAreas(ars.data || [])
     setLoading(false)
   }
 
-  const abrirNueva = () => { setError(''); setExito(''); setForm({ titulo: '', articulo_id: '', defecto_id: '', mensaje: '', severidad: 'mayor', area: '', vence: '' }) }
+  const abrirNueva = () => { setError(''); setExito(''); setForm({ titulo: '', articulo_id: '', defecto_id: '', mensaje: '', severidad: 'mayor', area_id: '', vence: '' }) }
   const crear = async () => {
     if (!form.titulo.trim()) { setError('Captura el titulo.'); return }
     const folio = `AC-${Date.now().toString().slice(-8)}`
-    const { error: e } = await supabase.from('calidad_alertas').insert({ empresa_id: perfil.empresa_id, folio, titulo: form.titulo, articulo_id: form.articulo_id ? Number(form.articulo_id) : null, defecto_id: form.defecto_id ? Number(form.defecto_id) : null, mensaje: form.mensaje || null, severidad: form.severidad, area: form.area || null, vence: form.vence || null, creado_por: perfil.id })
+    const { error: e } = await supabase.from('calidad_alertas').insert({ empresa_id: perfil.empresa_id, folio, titulo: form.titulo, articulo_id: form.articulo_id ? Number(form.articulo_id) : null, defecto_id: form.defecto_id ? Number(form.defecto_id) : null, mensaje: form.mensaje || null, severidad: form.severidad, area_id: form.area_id ? Number(form.area_id) : null, vence: form.vence || null, creado_por: perfil.id })
     if (e) { setError(e.message); return }
     setExito(`Alerta ${folio} publicada.`); setForm(null); cargar()
   }
@@ -55,7 +57,7 @@ export default function AlertasCalidad() {
   const colsExp = [
     { label: 'Folio', get: r => r.folio || '' }, { label: 'Titulo', get: r => r.titulo || '' },
     { label: 'Articulo', get: r => r.articulo?.codigo_interno || '' }, { label: 'Defecto', get: r => r.defecto?.nombre || '' },
-    { label: 'Severidad', get: r => r.severidad || '' }, { label: 'Area', get: r => r.area || '' },
+    { label: 'Severidad', get: r => r.severidad || '' }, { label: 'Area', get: r => r.areas?.nombre || '' },
     { label: 'Vigente', get: r => r.vigente ? 'Si' : 'No' }, { label: 'Vence', get: r => r.vence || '' },
   ]
   const lista = alertas.filter(a => filtro === 'vigentes' ? a.vigente : filtro === 'historial' ? !a.vigente : true)
@@ -81,7 +83,7 @@ export default function AlertasCalidad() {
           <div style={styles.fila}>
             <Campo label="Articulo"><select style={styles.input} value={form.articulo_id} onChange={e => setForm({ ...form, articulo_id: e.target.value })}><option value="">-</option>{articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno}</option>)}</select></Campo>
             <Campo label="Defecto"><select style={styles.input} value={form.defecto_id} onChange={e => setForm({ ...form, defecto_id: e.target.value })}><option value="">-</option>{defectos.map(d => <option key={d.id} value={d.id}>{d.nombre}</option>)}</select></Campo>
-            <Campo label="Area"><input style={styles.input} value={form.area} onChange={e => setForm({ ...form, area: e.target.value })} /></Campo>
+            <Campo label="Area"><select style={styles.input} value={form.area_id} onChange={e => setForm({ ...form, area_id: e.target.value })}><option value="">Sin asignar</option>{areas.map(a => <option key={a.id} value={a.id}>{a.clave} - {a.nombre}</option>)}</select></Campo>
           </div>
           <Campo label="Mensaje"><input style={styles.input} value={form.mensaje} onChange={e => setForm({ ...form, mensaje: e.target.value })} /></Campo>
           <div style={styles.botones}><button style={styles.botonSec} onClick={() => setForm(null)}>Cancelar</button><button style={styles.boton} onClick={crear}>Publicar</button></div>
@@ -97,7 +99,7 @@ export default function AlertasCalidad() {
               <span style={sevBadge(a.severidad)}>{a.severidad}</span>
             </div>
             <p style={styles.cardMsg}>{a.mensaje}</p>
-            <div style={styles.cardMeta}>{a.articulo?.codigo_interno || ''} {a.defecto?.nombre ? `· ${a.defecto.nombre}` : ''} {a.area ? `· ${a.area}` : ''} · {a.folio}{a.vence ? ` · vence ${fFecha(a.vence)}` : ''}</div>
+            <div style={styles.cardMeta}>{a.articulo?.codigo_interno || ''} {a.defecto?.nombre ? `· ${a.defecto.nombre}` : ''} {a.areas?.nombre ? `· ${a.areas.nombre}` : ''} · {a.folio}{a.vence ? ` · vence ${fFecha(a.vence)}` : ''}</div>
             {puedeEditar && <div style={{ marginTop: '8px' }}><button style={styles.botonAccion} onClick={() => toggleVigente(a)}>{a.vigente ? 'Desactivar' : 'Reactivar'}</button></div>}
           </div>
         ))}

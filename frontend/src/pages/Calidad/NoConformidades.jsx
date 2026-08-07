@@ -35,6 +35,7 @@ export default function NoConformidades() {
   const [clientes, setClientes] = useState([])
   const [usuarios, setUsuarios] = useState([])
   const [ots, setOts] = useState([])
+  const [areas, setAreas] = useState([])
   const [form, setForm] = useState(null)
   const [ed, setEd] = useState({})
   const [acc, setAcc] = useState({ tipo: 'correctiva', descripcion: '', responsable_id: '', fecha_compromiso: '' })
@@ -49,8 +50,8 @@ export default function NoConformidades() {
     const sid = siteEfectivo(perfil, site)
     setLoading(true)
     const emp = perfil.empresa_id
-    const [n, ar, de, mq, pv, cl, us, ot] = await Promise.all([
-      supabase.from('no_conformidades').select('*, articulo:articulos(codigo_interno), defecto:causas_scrap(nombre), cliente:clientes(nombre), proveedor:proveedores(nombre)').eq('empresa_id', emp).order('id', { ascending: false }),
+    const [n, ar, de, mq, pv, cl, us, ot, ars] = await Promise.all([
+      supabase.from('no_conformidades').select('*, articulo:articulos(codigo_interno), defecto:causas_scrap(nombre), cliente:clientes(nombre), proveedor:proveedores(nombre), areas(clave, nombre)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('articulos').select('id, codigo_interno, descripcion').eq('empresa_id', emp),
       supabase.from('causas_scrap').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true),
       (sid ? supabase.from('maquinas').select('id, clave, site_id').eq('empresa_id', emp).eq('site_id', sid) : supabase.from('maquinas').select('id, clave, site_id').eq('empresa_id', emp)),
@@ -58,15 +59,16 @@ export default function NoConformidades() {
       supabase.from('clientes').select('id, nombre').eq('empresa_id', emp),
       supabase.from('usuarios').select('id, nombre, rol').eq('empresa_id', emp),
       supabase.from('ordenes_trabajo').select('id, folio').eq('empresa_id', emp).order('id', { ascending: false }).limit(200),
+      supabase.from('areas').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true).order('clave'),
     ])
     setNcs((n.data || []).filter(x => { if (!sid) return true; const _ids = (mq.data || []).map(z => z.id); return !x.maquina_id || _ids.includes(x.maquina_id) })); setArticulos(ar.data || []); setDefectos(de.data || []); setMaquinas(mq.data || [])
-    setProveedores(pv.data || []); setClientes(cl.data || []); setUsuarios(us.data || []); setOts(ot.data || [])
+    setProveedores(pv.data || []); setClientes(cl.data || []); setUsuarios(us.data || []); setOts(ot.data || []); setAreas(ars.data || [])
     setLoading(false)
   }
   const artDe = (id) => articulos.find(a => a.id === id)
   const usrDe = (id) => usuarios.find(u => u.id === id)?.nombre || '-'
 
-  const abrirNueva = () => { setError(''); setExito(''); setForm({ origen: 'interno', articulo_id: '', lote_id: '', cantidad_afectada: '', defecto_id: '', descripcion: '', severidad: 'menor', area: '', maquina_id: '', ot_id: '', proveedor_id: '', cliente_id: '', responsable_id: '' }); setVista('nueva') }
+  const abrirNueva = () => { setError(''); setExito(''); setForm({ origen: 'interno', articulo_id: '', lote_id: '', cantidad_afectada: '', defecto_id: '', descripcion: '', severidad: 'menor', area_id: '', maquina_id: '', ot_id: '', proveedor_id: '', cliente_id: '', responsable_id: '' }); setVista('nueva') }
 
   const crear = async () => {
     setError('')
@@ -75,7 +77,7 @@ export default function NoConformidades() {
     try {
       const folio = `NC-${Date.now().toString().slice(-8)}`
       const { data: nc, error: e } = await supabase.from('no_conformidades').insert({
-        empresa_id: perfil.empresa_id, folio, origen: form.origen, detectado_por: perfil.id, area: form.area || null,
+        empresa_id: perfil.empresa_id, folio, origen: form.origen, detectado_por: perfil.id, area_id: form.area_id ? Number(form.area_id) : null,
         articulo_id: form.articulo_id ? Number(form.articulo_id) : null, cantidad_afectada: form.cantidad_afectada !== '' ? Number(form.cantidad_afectada) : null,
         defecto_id: form.defecto_id ? Number(form.defecto_id) : null, descripcion: form.descripcion, severidad: form.severidad,
         maquina_id: form.maquina_id ? Number(form.maquina_id) : null, ot_id: form.ot_id ? Number(form.ot_id) : null,
@@ -143,7 +145,7 @@ export default function NoConformidades() {
           <div style={styles.fila}>
             <Campo label="Origen"><select style={styles.input} value={form.origen} onChange={e => setForm({ ...form, origen: e.target.value })}>{ORIGENES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Campo>
             <Campo label="Severidad"><select style={styles.input} value={form.severidad} onChange={e => setForm({ ...form, severidad: e.target.value })}>{SEV.map(s => <option key={s} value={s}>{s}</option>)}</select></Campo>
-            <Campo label="Area"><input style={styles.input} value={form.area} onChange={e => setForm({ ...form, area: e.target.value })} placeholder="Ej. Inyeccion, Almacen" /></Campo>
+            <Campo label="Area"><select style={styles.input} value={form.area_id} onChange={e => setForm({ ...form, area_id: e.target.value })}><option value="">Sin asignar</option>{areas.map(a => <option key={a.id} value={a.id}>{a.clave} - {a.nombre}</option>)}</select></Campo>
           </div>
           <div style={styles.fila}>
             <Campo label="Articulo"><select style={styles.input} value={form.articulo_id} onChange={e => setForm({ ...form, articulo_id: e.target.value })}><option value="">-</option>{articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno}</option>)}</select></Campo>

@@ -18,6 +18,7 @@ export default function Usuarios() {
   const { perfil, tienePermiso } = useAuth()
   const [usuarios, setUsuarios] = useState([])
   const [sites, setSites] = useState([])
+  const [areas, setAreas] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [usuarioEditando, setUsuarioEditando] = useState(null)
@@ -26,7 +27,7 @@ export default function Usuarios() {
   const [exito, setExito] = useState('')
   const [form, setForm] = useState({
     nombre: '', email: '', password: '', rol: 'solicitante',
-    site_id: '', puesto: '', area: '', gerente_id: '',
+    site_id: '', puesto: '', area_id: '', gerente_id: '',
     nivel_aprobacion: 1, puede_aprobar_como_director: false,
     monto_maximo_aprobacion: ''
   })
@@ -35,15 +36,18 @@ export default function Usuarios() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: u }, { data: s }] = await Promise.all([
+    const [{ data: u }, { data: s }, { data: ars }] = await Promise.all([
       supabase.from('usuarios')
         .select('*, sites(nombre), gerente:gerente_id(nombre)')
         .eq('empresa_id', perfil.empresa_id)
         .order('nombre'),
-      supabase.from('sites').select('*').eq('empresa_id', perfil.empresa_id)
+      supabase.from('sites').select('*').eq('empresa_id', perfil.empresa_id),
+      supabase.from('areas').select('id, clave, nombre').eq('empresa_id', perfil.empresa_id)
+        .eq('activo', true).order('clave'),
     ])
     setUsuarios(u || [])
     setSites(s || [])
+    setAreas(ars || [])
     setLoading(false)
   }
 
@@ -56,7 +60,7 @@ export default function Usuarios() {
       rol: usuario.rol || 'solicitante',
       site_id: usuario.site_id?.toString() || '',
       puesto: usuario.puesto || '',
-      area: usuario.area || '',
+      area_id: usuario.area_id || '',
       gerente_id: usuario.gerente_id || '',
       nivel_aprobacion: usuario.nivel_aprobacion || 1,
       puede_aprobar_como_director: usuario.puede_aprobar_como_director || false,
@@ -70,7 +74,7 @@ export default function Usuarios() {
     setUsuarioEditando(null)
     setForm({
       nombre: '', email: '', password: '', rol: 'solicitante',
-      site_id: '', puesto: '', area: '', gerente_id: '',
+      site_id: '', puesto: '', area_id: '', gerente_id: '',
       nivel_aprobacion: 1, puede_aprobar_como_director: false,
       monto_maximo_aprobacion: ''
     })
@@ -96,7 +100,7 @@ export default function Usuarios() {
           nombre: form.nombre,
           rol: form.rol,
           puesto: form.puesto,
-          area: form.area,
+          area_id: form.area_id ? Number(form.area_id) : null,
           site_id: parseInt(form.site_id),
           gerente_id: form.gerente_id || null,
           nivel_aprobacion: parseInt(form.nivel_aprobacion),
@@ -130,7 +134,7 @@ export default function Usuarios() {
           email: form.email,
           rol: form.rol,
           puesto: form.puesto,
-          area: form.area,
+          area_id: form.area_id ? Number(form.area_id) : null,
           site_id: parseInt(form.site_id),
           empresa_id: perfil.empresa_id,
           gerente_id: form.gerente_id || null,
@@ -201,9 +205,11 @@ export default function Usuarios() {
               </div>
               <div style={styles.campo}>
                 <label style={styles.label}>Area / Departamento</label>
-                <input style={styles.input} value={form.area}
-                  onChange={e => setForm({ ...form, area: e.target.value })}
-                  placeholder="Ej: Logistica" />
+                <select style={styles.input} value={form.area_id}
+                  onChange={e => setForm({ ...form, area_id: e.target.value })}>
+                  <option value="">Sin asignar</option>
+                  {areas.map(a => <option key={a.id} value={a.id}>{a.clave} - {a.nombre}</option>)}
+                </select>
               </div>
             </div>
             {!usuarioEditando && (
@@ -325,7 +331,7 @@ export default function Usuarios() {
                 <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>{u.puesto}</p>
               </span>
               <span style={{ flex: 1.5, fontSize: '12px', color: '#666' }}>{u.email}</span>
-              <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{u.area || '-'}</span>
+              <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{areas.find(a => a.id === u.area_id)?.nombre || '-'}</span>
               <span style={{ flex: 1 }}>
                 <span style={{ ...styles.badge, backgroundColor: '#eff6ff', color: '#2563eb' }}>
                   {roles.find(r => r.value === u.rol)?.label || u.rol}

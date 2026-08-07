@@ -38,7 +38,7 @@ const TIPOS = ['vernier', 'micrometro', 'altimetro', 'indicador de caratula', 'b
 
 const equipoVacio = {
   clave: '', nombre: '', tipo: '', marca: '', modelo: '', serie: '',
-  resolucion: '', rango_min: '', rango_max: '', unidad: '', area: '',
+  resolucion: '', rango_min: '', rango_max: '', unidad: '', area_id: '',
   intervalo_meses: 12, requiere_rr: false, notas: '',
 }
 const calVacia = {
@@ -64,6 +64,7 @@ export default function Calibracion() {
   const [rrs, setRrs] = useState([])
   const [param, setParam] = useState(null)
   const [articulos, setArticulos] = useState([])
+  const [areas, setAreas] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -80,7 +81,7 @@ export default function Calibracion() {
   const cargar = async () => {
     setLoading(true); setError('')
     const sid = siteEfectivo(perfil, site)
-    const [eq, ca, rrq, pa, ar] = await Promise.all([
+    const [eq, ca, rrq, pa, ar, ars] = await Promise.all([
       supabase.rpc('equipos_estado', { p_empresa_id: emp, p_site_id: sid || null }),
       supabase.from('calibraciones').select('*').eq('empresa_id', emp)
         .order('fecha', { ascending: false }).order('id', { ascending: false }).limit(400),
@@ -89,10 +90,12 @@ export default function Calibracion() {
       supabase.from('calibracion_parametros').select('*').eq('empresa_id', emp).maybeSingle(),
       supabase.from('articulos').select('id, codigo_interno, descripcion')
         .eq('empresa_id', emp).eq('activo', true).order('codigo_interno'),
+      supabase.from('areas').select('id, clave, nombre').eq('empresa_id', emp)
+        .eq('activo', true).order('clave'),
     ])
     if (eq.error) setError('No se pudo cargar el padron: ' + eq.error.message)
     setEquipos(eq.data || []); setCalibs(ca.data || []); setRrs(rrq.data || [])
-    setParam(pa.data || null); setArticulos(ar.data || [])
+    setParam(pa.data || null); setArticulos(ar.data || []); setAreas(ars.data || [])
     setLoading(false)
   }
 
@@ -108,7 +111,7 @@ export default function Calibracion() {
       tipo: form.tipo || null, marca: form.marca || null, modelo: form.modelo || null,
       serie: form.serie || null, resolucion: num(form.resolucion),
       rango_min: num(form.rango_min), rango_max: num(form.rango_max),
-      unidad: form.unidad || null, area: form.area || null,
+      unidad: form.unidad || null, area_id: form.area_id ? Number(form.area_id) : null,
       intervalo_meses: Number(form.intervalo_meses), requiere_rr: !!form.requiere_rr,
       notas: form.notas || null,
     }
@@ -129,7 +132,7 @@ export default function Calibracion() {
     setForm({
       clave: e.clave, nombre: e.nombre, tipo: e.tipo || '', marca: e.marca || '',
       modelo: e.modelo || '', serie: e.serie || '', resolucion: e.resolucion ?? '',
-      rango_min: '', rango_max: '', unidad: e.unidad || '', area: e.area || '',
+      rango_min: '', rango_max: '', unidad: e.unidad || '', area_id: e.area_id || '',
       intervalo_meses: e.intervalo_meses, requiere_rr: !!e.requiere_rr, notas: '',
     })
     setTab('padron')
@@ -353,7 +356,11 @@ export default function Calibracion() {
                 </div>
                 <div style={S.campo}>
                   <label style={S.label}>Area donde vive</label>
-                  <input style={S.input} value={form.area} onChange={e => setForm({ ...form, area: e.target.value })} placeholder="Inyeccion / Laboratorio" />
+                  <select style={S.input} value={form.area_id}
+                    onChange={e => setForm({ ...form, area_id: e.target.value })}>
+                    <option value="">Sin asignar</option>
+                    {areas.map(a => <option key={a.id} value={a.id}>{a.clave} - {a.nombre}</option>)}
+                  </select>
                 </div>
               </div>
               <div style={S.fila}>

@@ -38,7 +38,7 @@ const BASES = {
 }
 
 const docVacio = {
-  codigo: '', titulo: '', tipo: 'procedimiento', area: '',
+  codigo: '', titulo: '', tipo: 'procedimiento', area_id: '',
   origen: 'interno', fuente_externa: '', proxima_revision: '', notas: '',
 }
 const regVacio = {
@@ -58,6 +58,7 @@ export default function Documentos() {
   const [regs, setRegs] = useState([])
   const [purga, setPurga] = useState([])
   const [articulos, setArticulos] = useState([])
+  const [areas, setAreas] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -72,7 +73,7 @@ export default function Documentos() {
 
   const cargar = async () => {
     setLoading(true); setError('')
-    const [d, t, r, p, a] = await Promise.all([
+    const [d, t, r, p, a, ars] = await Promise.all([
       supabase.rpc('documentos_resumen', { p_empresa_id: emp }),
       supabase.from('registro_tipos').select('*').eq('empresa_id', emp).order('categoria').order('clave'),
       supabase.from('registros_archivados')
@@ -80,10 +81,11 @@ export default function Documentos() {
         .eq('empresa_id', emp).order('fecha_registro', { ascending: false }).limit(300),
       supabase.rpc('registros_por_purgar', { p_empresa_id: emp, p_dias_aviso: 60 }),
       supabase.from('articulos').select('id, codigo_interno, descripcion').eq('empresa_id', emp).order('codigo_interno'),
+      supabase.from('areas').select('id, clave, nombre').eq('empresa_id', emp).eq('activo', true).order('clave'),
     ])
     if (d.error) setError('No se pudo cargar: ' + d.error.message)
     setDocs(d.data || []); setTipos(t.data || []); setRegs(r.data || [])
-    setPurga(p.data || []); setArticulos(a.data || [])
+    setPurga(p.data || []); setArticulos(a.data || []); setAreas(ars.data || [])
     setLoading(false)
   }
 
@@ -93,7 +95,7 @@ export default function Documentos() {
     if (!form.codigo || !form.titulo) { setError('El codigo y el titulo son obligatorios'); return }
     const payload = {
       empresa_id: emp, codigo: form.codigo.toUpperCase(), titulo: form.titulo,
-      tipo: form.tipo, area: form.area || null, origen: form.origen,
+      tipo: form.tipo, area_id: form.area_id ? Number(form.area_id) : null, origen: form.origen,
       fuente_externa: form.origen === 'externo' ? (form.fuente_externa || null) : null,
       proxima_revision: form.proxima_revision || null, notas: form.notas || null,
       version: 1, elaborado_por: perfil.id,
@@ -163,7 +165,8 @@ export default function Documentos() {
 
   // ---------- Tipos de registro ----------
   const guardarTipo = async (id, campo, valor) => {
-    const v = ['valor'].includes(campo) ? (valor === '' ? null : Number(valor)) : valor
+    const v = ['valor', 'responsable_area_id'].includes(campo)
+      ? (valor === '' ? null : Number(valor)) : valor
     const { error: e } = await supabase.from('registro_tipos').update({ [campo]: v }).eq('id', id)
     if (e) { setError('No se pudo guardar: ' + e.message); return }
     setExito('Tipo de registro actualizado'); cargar()
@@ -327,8 +330,11 @@ export default function Documentos() {
               <div style={S.fila}>
                 <div style={S.campo}>
                   <label style={S.label}>Area o proceso</label>
-                  <input style={S.input} value={form.area}
-                    onChange={e => setForm({ ...form, area: e.target.value })} placeholder="Inyeccion" />
+                  <select style={S.input} value={form.area_id}
+                    onChange={e => setForm({ ...form, area_id: e.target.value })}>
+                    <option value="">Sin asignar</option>
+                    {areas.map(a => <option key={a.id} value={a.id}>{a.clave} - {a.nombre}</option>)}
+                  </select>
                 </div>
                 <div style={S.campo}>
                   <label style={S.label}>Origen</label>
@@ -683,9 +689,12 @@ export default function Documentos() {
                     </select>
                   </td>
                   <td style={S.td}>
-                    <input style={{ ...S.inputMini, width: 120 }} disabled={!puedeAprobar}
-                      defaultValue={t.responsable_area || ''}
-                      onBlur={e => guardarTipo(t.id, 'responsable_area', e.target.value)} />
+                    <select style={{ ...S.inputMini, width: 130 }} disabled={!puedeAprobar}
+                      value={t.responsable_area_id || ''}
+                      onChange={e => guardarTipo(t.id, 'responsable_area_id', e.target.value)}>
+                      <option value="">Sin asignar</option>
+                      {areas.map(a => <option key={a.id} value={a.id}>{a.clave}</option>)}
+                    </select>
                   </td>
                   <td style={S.td}><span style={S.mini}>{t.referencia_norma || '-'}</span></td>
                 </tr>
