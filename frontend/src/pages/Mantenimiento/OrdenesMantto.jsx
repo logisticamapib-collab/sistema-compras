@@ -33,7 +33,7 @@ export default function OrdenesMantto() {
   const [lotes, setLotes] = useState([])
   const [form, setForm] = useState(null)
   const [asig, setAsig] = useState({ modo: 'interno', asignado_a: '', proveedor_id: '', costo_externo: '' })
-  const [ins, setIns] = useState({ modo: 'articulo', articulo_id: '', almacen_id: '', descripcion: '', cantidad: '', costo_unitario: '' })
+  const [ins, setIns] = useState({ modo: 'gasto', articulo_id: '', almacen_id: '', descripcion: '', cantidad: '', costo_unitario: '' })
   const [conf, setConf] = useState({ comentario: '' })
   const [loading, setLoading] = useState(true)
   const [proc, setProc] = useState(false)
@@ -92,7 +92,7 @@ export default function OrdenesMantto() {
     const { data: insu } = await supabase.from('mtto_gen_insumos').select('*').eq('orden_id', o.id).order('id')
     setSel(od); setInsumos(insu || [])
     setAsig({ modo: od.es_externo ? 'externo' : 'interno', asignado_a: od.asignado_a || '', proveedor_id: od.proveedor_id || '', costo_externo: od.costo_externo ?? '' })
-    setIns({ modo: 'articulo', articulo_id: '', almacen_id: '', descripcion: '', cantidad: '', costo_unitario: '' }); setConf({ comentario: '' })
+    setIns({ modo: 'gasto', articulo_id: '', almacen_id: '', descripcion: '', cantidad: '', costo_unitario: '' }); setConf({ comentario: '' })
     setVista('detalle')
   }
 
@@ -131,7 +131,13 @@ export default function OrdenesMantto() {
     setProc(true)
     try {
       let articulo_id = null, descripcion = ins.descripcion || null, lote_id = null, almacen_id = null
+      // El material salio de esta pantalla y se pide por vale de Toolcrib.
+      // El bloque de abajo queda inalcanzable a proposito: se conserva como
+      // referencia de como se descontaba el inventario antes de mover eso al vale.
       if (ins.modo === 'articulo') {
+        throw new Error('El material de almacen ya no se captura aqui: sale por vale de Toolcrib, y al surtirlo el insumo se escribe solo en esta orden. Si se capturara en los dos lados los numeros no cuadrarian.')
+      }
+      if (false) {
         if (!ins.articulo_id || !ins.almacen_id) throw new Error('Selecciona articulo y almacen.')
         articulo_id = Number(ins.articulo_id); almacen_id = Number(ins.almacen_id)
         if (!cu) cu = Number(artDe(articulo_id)?.costo || 0)
@@ -227,10 +233,16 @@ export default function OrdenesMantto() {
             <div style={styles.th}><span style={{ flex: 2 }}>Concepto</span><span style={{ flex: 1, textAlign: 'right' }}>Cant.</span><span style={{ flex: 1, textAlign: 'right' }}>C. unit</span><span style={{ flex: 1, textAlign: 'right' }}>Total</span></div>
             {insumos.map(i => (<div key={i.id} style={styles.tr}><span style={{ flex: 2 }}>{i.articulo_id ? <b>{artDe(i.articulo_id)?.codigo_interno} </b> : <span style={{ color: '#7c3aed' }}>Gasto </span>}{i.descripcion}</span><span style={{ flex: 1, textAlign: 'right' }}>{fmt(i.cantidad)}</span><span style={{ flex: 1, textAlign: 'right' }}>${fmt(i.costo_unitario)}</span><span style={{ flex: 1, textAlign: 'right', fontWeight: 600 }}>${fmt(i.costo_total)}</span></div>))}
             {insumos.length === 0 && <div style={styles.vacio}>Sin insumos.</div>}
+            <div style={{ background: '#f0fdfa', border: '1px solid #99f6e4', borderRadius: 8, padding: '9px 12px', fontSize: 12.5, color: '#115e59', margin: '10px 0', lineHeight: 1.5 }}>
+              El <b>material de almacen</b> ya no se captura aqui: se pide con un
+              <b> vale de Toolcrib</b> ligado a esta orden, y al surtirlo el insumo aparece solo en
+              esta lista con su costo. Asi el dato se escribe una vez y el consumo queda imputado al
+              molde, la maquina o el area. Abajo solo se capturan gastos que no salen del almacen.
+            </div>
           </div>
           {['asignada', 'en_proceso'].includes(sel.estatus) && puedeGestionar && (
             <div style={{ ...styles.fila, marginTop: '12px', alignItems: 'flex-end' }}>
-              <Campo label="Tipo"><select style={styles.input} value={ins.modo} onChange={e => setIns({ ...ins, modo: e.target.value })}><option value="articulo">Material (inventario)</option><option value="gasto">Gasto libre</option></select></Campo>
+              <Campo label="Tipo"><select style={styles.input} value={ins.modo} onChange={e => setIns({ ...ins, modo: e.target.value })}><option value="gasto">Gasto libre (no es material de almacen)</option></select></Campo>
               {ins.modo === 'articulo'
                 ? <><Campo label="Articulo"><select style={styles.input} value={ins.articulo_id} onChange={e => setIns({ ...ins, articulo_id: e.target.value })}><option value="">...</option>{articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno}</option>)}</select></Campo>
                     <Campo label="Almacen"><select style={styles.input} value={ins.almacen_id} onChange={e => setIns({ ...ins, almacen_id: e.target.value })}><option value="">...</option>{almacenes.filter(a => !a.es_virtual).map(a => <option key={a.id} value={a.id}>{a.clave}</option>)}</select></Campo></>

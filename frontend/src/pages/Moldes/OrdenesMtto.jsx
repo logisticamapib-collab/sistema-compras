@@ -43,7 +43,7 @@ export default function OrdenesMtto() {
   const [existencias, setExistencias] = useState([])
   const [lotes, setLotes] = useState([])
   const [form, setForm] = useState(null)
-  const [ins, setIns] = useState({ modo: 'articulo', articulo_id: '', almacen_id: '', descripcion: '', cantidad: '', costo_unitario: '' })
+  const [ins, setIns] = useState({ modo: 'gasto', articulo_id: '', almacen_id: '', descripcion: '', cantidad: '', costo_unitario: '' })
   const [loading, setLoading] = useState(true)
   const [proc, setProc] = useState(false)
   const [error, setError] = useState('')
@@ -125,7 +125,7 @@ export default function OrdenesMtto() {
     const { data: insu } = await supabase.from('molde_mtto_insumos').select('*').eq('mtto_id', o.id).order('id')
     const { data: fr } = await supabase.from('molde_mtto_firmas').select('*').eq('mtto_id', o.id)
     setFirmas(fr || [])
-    setSel(mm); setInsumos(insu || []); setIns({ modo: 'articulo', articulo_id: '', almacen_id: '', descripcion: '', cantidad: '', costo_unitario: '' })
+    setSel(mm); setInsumos(insu || []); setIns({ modo: 'gasto', articulo_id: '', almacen_id: '', descripcion: '', cantidad: '', costo_unitario: '' })
     setVista('detalle')
   }
 
@@ -146,7 +146,13 @@ export default function OrdenesMtto() {
     setProc(true)
     try {
       let articulo_id = null, descripcion = ins.descripcion || null, lote_id = null, almacen_id = null, cu2 = cu
+      // El material salio de esta pantalla y se pide por vale de Toolcrib.
+      // El bloque de abajo queda inalcanzable a proposito: se conserva como
+      // referencia de como se descontaba el inventario antes de mover eso al vale.
       if (ins.modo === 'articulo') {
+        throw new Error('El material de almacen ya no se captura aqui: sale por vale de Toolcrib, y al surtirlo el insumo se escribe solo en esta orden. Si se capturara en los dos lados los numeros no cuadrarian.')
+      }
+      if (false) {
         if (!ins.articulo_id) throw new Error('Selecciona el articulo/refaccion.')
         if (!ins.almacen_id) throw new Error('Selecciona el almacen para descontar.')
         articulo_id = Number(ins.articulo_id); almacen_id = Number(ins.almacen_id)
@@ -319,10 +325,16 @@ export default function OrdenesMtto() {
               <div key={i.id} style={styles.tr}><span style={{ flex: 2 }}>{i.articulo_id ? <b>{artDe(i.articulo_id)?.codigo_interno} </b> : <span style={{ color: '#7c3aed' }}>Gasto </span>}<span style={{ color: '#64748b' }}>{i.descripcion}</span></span><span style={{ flex: 1, textAlign: 'right' }}>{fmt(i.cantidad)}</span><span style={{ flex: 1, textAlign: 'right' }}>${fmt(i.costo_unitario)}</span><span style={{ flex: 1, textAlign: 'right', fontWeight: 600 }}>${fmt(i.costo_total)}</span></div>
             ))}
             {insumos.length === 0 && <div style={styles.vacio}>Sin insumos.</div>}
+            <div style={{ background: '#f0fdfa', border: '1px solid #99f6e4', borderRadius: 8, padding: '9px 12px', fontSize: 12.5, color: '#115e59', margin: '10px 0', lineHeight: 1.5 }}>
+              El <b>material de almacen</b> ya no se captura aqui: se pide con un
+              <b> vale de Toolcrib</b> ligado a esta orden, y al surtirlo el insumo aparece solo en
+              esta lista con su costo. Asi el dato se escribe una vez y el consumo queda imputado al
+              molde, la maquina o el area. Abajo solo se capturan gastos que no salen del almacen.
+            </div>
           </div>
           {abierta && puedeEditar && (
             <div style={{ ...styles.fila, marginTop: '12px', alignItems: 'flex-end' }}>
-              <Campo label="Tipo"><select style={styles.input} value={ins.modo} onChange={e => setIns({ ...ins, modo: e.target.value })}><option value="articulo">Refaccion (inventario)</option><option value="gasto">Gasto libre</option></select></Campo>
+              <Campo label="Tipo"><select style={styles.input} value={ins.modo} onChange={e => setIns({ ...ins, modo: e.target.value })}><option value="gasto">Gasto libre (no es material de almacen)</option></select></Campo>
               {ins.modo === 'articulo'
                 ? <>
                     <Campo label="Articulo"><select style={styles.input} value={ins.articulo_id} onChange={e => setIns({ ...ins, articulo_id: e.target.value })}><option value="">Selecciona...</option>{articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno}</option>)}</select></Campo>
