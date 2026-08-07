@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { ROLES_OMITEN_APROBACION } from '../../lib/roles'
 
 export default function NuevaRequisicion({ onVolver, onGuardado }) {
   const { perfil } = useAuth()
@@ -102,16 +103,22 @@ export default function NuevaRequisicion({ onVolver, onGuardado }) {
     if (enviar) {
       const rolSolicitante = perfil.rol
 
-      if (['gerente_planta', 'gerente_administrativo'].includes(rolSolicitante)) {
-        // Gerente planta/adm va directo a en_proceso (compras)
-        estatusInicial = 'en_proceso'
-      } else if (rolSolicitante === 'gerente_area') {
-        // Gerente area va directo a en_proceso (compras)
+      // Quien omite la aprobacion lo dice su rol en el catalogo, no una lista
+      // escrita aqui. Antes eran tres roles a mano y cualquier gerencia nueva
+      // quedaba fuera sin que nadie se enterara.
+      if (ROLES_OMITEN_APROBACION.includes(rolSolicitante)) {
         estatusInicial = 'en_proceso'
       } else {
-        // Solicitante normal va a su gerente directo
+        // Va a su jefe directo. Sin jefe no hay a quien mandarsela: mas vale
+        // decirlo aqui que dejar la requisicion muerta en 'enviada' esperando
+        // a un aprobador que no existe.
+        if (!perfil.gerente_id) {
+          setError('No tienes un jefe asignado, asi que no hay a quien mandarle esta requisicion para firma. Pidele a Configuracion que te asigne uno, o guardala como borrador mientras tanto.')
+          setLoading(false)
+          return
+        }
         estatusInicial = 'enviada'
-        aprobadorActualId = perfil.gerente_id || null
+        aprobadorActualId = perfil.gerente_id
       }
     }
 

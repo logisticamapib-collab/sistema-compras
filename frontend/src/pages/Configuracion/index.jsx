@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import Usuarios from './Usuarios'
+import RolesPuestos from './RolesPuestos'
 import Sites from './Sites'
 import CentrosCostos from './CentrosCostos'
 import CuentasGastos from './CuentasGastos'
@@ -14,6 +15,7 @@ import ConfigEtiquetas from './ConfigEtiquetas'
 const secciones = [
   { id: 'empresa', modulo: 'config_empresa', titulo: 'Datos de la Empresa' },
   { id: 'usuarios', modulo: 'config_usuarios', titulo: 'Usuarios' },
+  { id: 'roles_puestos', modulo: 'config_roles', titulo: 'Roles y Puestos' },
   { id: 'sites', modulo: 'config_sites', titulo: 'Sites / Plantas' },
   { id: 'centros', modulo: 'config_centros_costos', titulo: 'Centros de Costos' },
   { id: 'cuentas', modulo: 'config_cuentas_gastos', titulo: 'Cuentas de Gastos' },
@@ -61,6 +63,7 @@ export default function Configuracion() {
         )}
         {seccion === 'empresa' && <DatosEmpresa />}
         {seccion === 'usuarios' && <Usuarios />}
+        {seccion === 'roles_puestos' && <RolesPuestos />}
         {seccion === 'sites' && <Sites />}
         {seccion === 'centros' && <CentrosCostos />}
         {seccion === 'cuentas' && <CuentasGastos />}

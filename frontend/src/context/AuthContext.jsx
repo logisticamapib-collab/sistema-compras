@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { cargarRoles } from '../lib/roles'
 
 const AuthContext = createContext({})
 
@@ -30,6 +31,9 @@ export function AuthProvider({ children }) {
   }, [])
 
   const cargarPerfil = async (userId) => {
+    // El catalogo de roles vive en la base para poder crecer sin tocar codigo.
+    // Se carga aqui, una vez, antes de que las pantallas lo pidan.
+    await cargarRoles()
     const { data } = await supabase
       .from('usuarios')
       .select('*, empresas(*), sites(*), gerente:gerente_id(id, nombre, rol, email)')

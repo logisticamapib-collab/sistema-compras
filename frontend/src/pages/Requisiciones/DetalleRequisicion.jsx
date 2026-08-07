@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { esGerencial, ROLES_OMITEN_APROBACION } from '../../lib/roles'
 import EditarRequisicion from './EditarRequisicion'
 import ImprimirRequisicion from './ImprimirRequisicion'
 import NuevaOrden from '../Ordenes/NuevaOrden'
@@ -116,9 +117,14 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
 
   const puedeAprobar = () => {
     if (requisicion.estatus !== 'enviada') return false
+    // Quien fue designado aprobador, aprueba. Punto: su rol no importa, y ese
+    // es el diseno correcto porque la jerarquia vive en gerente_id.
     if (perfil?.id === requisicion.aprobador_actual_id) return true
-    if (['gerente_area', 'gerente_planta', 'gerente_administrativo', 'admin'].includes(perfil?.rol) &&
-      perfil?.id === requisicion.gerente_area_id) return true
+    // Respaldo para requisiciones viejas que quedaron sin aprobador asignado.
+    // Antes esto era una lista de cuatro roles escrita a mano que dejaba fuera
+    // a la mitad de las gerencias: si a alguien de esas le tocaba firmar, la
+    // requisicion se atoraba sin que nadie supiera por que.
+    if (esGerencial(perfil?.rol) && perfil?.id === requisicion.gerente_area_id) return true
     return false
   }
 
@@ -208,7 +214,7 @@ export default function DetalleRequisicion({ requisicion, onVolver }) {
 
     await supabase.from('requisiciones')
       .update({
-        estatus: ['gerente_area', 'gerente_planta', 'gerente_administrativo'].includes(perfil.rol)
+        estatus: ROLES_OMITEN_APROBACION.includes(perfil.rol)
           ? 'en_proceso' : 'enviada',
         aprobador_actual_id: aprobadorId,
         gerente_area_id: perfil.gerente_id || perfil.id,

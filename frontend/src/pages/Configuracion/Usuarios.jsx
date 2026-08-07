@@ -19,6 +19,7 @@ export default function Usuarios() {
   const [usuarios, setUsuarios] = useState([])
   const [sites, setSites] = useState([])
   const [areas, setAreas] = useState([])
+  const [puestos, setPuestos] = useState([])
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [usuarioEditando, setUsuarioEditando] = useState(null)
@@ -27,7 +28,7 @@ export default function Usuarios() {
   const [exito, setExito] = useState('')
   const [form, setForm] = useState({
     nombre: '', email: '', password: '', rol: 'solicitante',
-    site_id: '', puesto: '', area_id: '', gerente_id: '',
+    site_id: '', puesto_id: '', area_id: '', gerente_id: '',
     nivel_aprobacion: 1, puede_aprobar_como_director: false,
     monto_maximo_aprobacion: ''
   })
@@ -36,7 +37,7 @@ export default function Usuarios() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: u }, { data: s }, { data: ars }] = await Promise.all([
+    const [{ data: u }, { data: s }, { data: ars }, { data: pst }] = await Promise.all([
       supabase.from('usuarios')
         .select('*, sites(nombre), gerente:gerente_id(nombre)')
         .eq('empresa_id', perfil.empresa_id)
@@ -44,10 +45,13 @@ export default function Usuarios() {
       supabase.from('sites').select('*').eq('empresa_id', perfil.empresa_id),
       supabase.from('areas').select('id, clave, nombre').eq('empresa_id', perfil.empresa_id)
         .eq('activo', true).order('clave'),
+      supabase.from('puestos').select('id, clave, nombre, nivel, niveles_jerarquicos(nombre)')
+        .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('nivel').order('nombre'),
     ])
     setUsuarios(u || [])
     setSites(s || [])
     setAreas(ars || [])
+    setPuestos(pst || [])
     setLoading(false)
   }
 
@@ -59,7 +63,7 @@ export default function Usuarios() {
       password: '',
       rol: usuario.rol || 'solicitante',
       site_id: usuario.site_id?.toString() || '',
-      puesto: usuario.puesto || '',
+      puesto_id: usuario.puesto_id || '',
       area_id: usuario.area_id || '',
       gerente_id: usuario.gerente_id || '',
       nivel_aprobacion: usuario.nivel_aprobacion || 1,
@@ -74,7 +78,7 @@ export default function Usuarios() {
     setUsuarioEditando(null)
     setForm({
       nombre: '', email: '', password: '', rol: 'solicitante',
-      site_id: '', puesto: '', area_id: '', gerente_id: '',
+      site_id: '', puesto_id: '', area_id: '', gerente_id: '',
       nivel_aprobacion: 1, puede_aprobar_como_director: false,
       monto_maximo_aprobacion: ''
     })
@@ -99,7 +103,7 @@ export default function Usuarios() {
         .update({
           nombre: form.nombre,
           rol: form.rol,
-          puesto: form.puesto,
+          puesto_id: form.puesto_id ? Number(form.puesto_id) : null,
           area_id: form.area_id ? Number(form.area_id) : null,
           site_id: parseInt(form.site_id),
           gerente_id: form.gerente_id || null,
@@ -133,7 +137,7 @@ export default function Usuarios() {
           nombre: form.nombre,
           email: form.email,
           rol: form.rol,
-          puesto: form.puesto,
+          puesto_id: form.puesto_id ? Number(form.puesto_id) : null,
           area_id: form.area_id ? Number(form.area_id) : null,
           site_id: parseInt(form.site_id),
           empresa_id: perfil.empresa_id,
@@ -199,9 +203,15 @@ export default function Usuarios() {
               </div>
               <div style={styles.campo}>
                 <label style={styles.label}>Puesto</label>
-                <input style={styles.input} value={form.puesto}
-                  onChange={e => setForm({ ...form, puesto: e.target.value })}
-                  placeholder="Ej: Analista de compras" />
+                <select style={styles.input} value={form.puesto_id}
+                  onChange={e => setForm({ ...form, puesto_id: e.target.value })}>
+                  <option value="">Sin asignar</option>
+                  {puestos.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre}{p.niveles_jerarquicos?.nombre ? ` (${p.niveles_jerarquicos.nombre})` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div style={styles.campo}>
                 <label style={styles.label}>Area / Departamento</label>
@@ -328,7 +338,7 @@ export default function Usuarios() {
             <div key={u.id} style={styles.tablaFila}>
               <span style={{ flex: 2 }}>
                 <p style={{ margin: '0', fontWeight: '500', fontSize: '14px' }}>{u.nombre}</p>
-                <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>{u.puesto}</p>
+                <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>{puestos.find(p => p.id === u.puesto_id)?.nombre || '-'}</p>
               </span>
               <span style={{ flex: 1.5, fontSize: '12px', color: '#666' }}>{u.email}</span>
               <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{areas.find(a => a.id === u.area_id)?.nombre || '-'}</span>
