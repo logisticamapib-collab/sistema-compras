@@ -19,11 +19,9 @@ const COLS_PROV = [
 
 const CONDICIONES = ['contado', '15 dias', '30 dias', '45 dias', '60 dias', '90 dias']
 
-// Especificacion de la plantilla de carga masiva. El orden manda: asi salen las
-// columnas en el Excel.
 const COLS_CARGA = [
-  { campo: 'nombre', req: true, ayuda: 'Nombre comercial con el que se le conoce.' },
-  { campo: 'razon_social', ayuda: 'Razon social completa, como aparece en la factura.' },
+  { campo: 'nombre', req: true, ayuda: 'Nombre comercial: como le decimos aqui adentro.' },
+  { campo: 'razon_social', ayuda: 'Como aparece en la factura. Si lo dejas vacio se copia del nombre.' },
   { campo: 'rfc', upper: true, ayuda: 'RFC. Dejalo vacio si el proveedor es extranjero.' },
   { campo: 'contacto', ayuda: 'Nombre de la persona con quien se trata.' },
   { campo: 'email' },
@@ -56,10 +54,15 @@ export default function Proveedores() {
   // bloqueos[id] = texto que dice donde esta usado el proveedor. Si trae algo,
   // no se puede eliminar. Lo contesta la base, no la pantalla.
   const [bloqueos, setBloqueos] = useState({})
+  // vinculos[proveedor_id] = { id, nombre } de la ficha de cliente ligada.
+  // El enlace vive en clientes.proveedor_id: una sola columna para los dos
+  // sentidos, para que no haya dos banderas que se contradigan.
+  const [vinculos, setVinculos] = useState({})
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
   const [mostrarCarga, setMostrarCarga] = useState(false)
   const [proveedorEditando, setProveedorEditando] = useState(null)
+  const [tambienCliente, setTambienCliente] = useState(false)
   const [busqueda, setBusqueda] = useState('')
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -75,13 +78,17 @@ export default function Proveedores() {
 
   const cargarProveedores = async () => {
     setLoading(true)
-    const { data } = await supabase
-      .from('proveedores')
-      .select('*')
-      .eq('empresa_id', perfil.empresa_id)
-      .order('nombre')
-    const lista = data || []
+    // Ojo: el orden de las variables sigue el orden de las consultas.
+    const [rProv, rVinc] = await Promise.all([
+      supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).order('nombre'),
+      supabase.from('clientes').select('id, nombre, proveedor_id').eq('empresa_id', perfil.empresa_id).not('proveedor_id', 'is', null),
+    ])
+    const lista = rProv.data || []
     setProveedores(lista)
+
+    const mapaVinc = {}
+    for (const c of rVinc.data || []) mapaVinc[c.proveedor_id] = { id: c.id, nombre: c.nombre }
+    setVinculos(mapaVinc)
 
     // Una sola llamada para toda la lista, no una por renglon.
     if (lista.length) {
@@ -99,11 +106,8 @@ export default function Proveedores() {
   }
 
   const abrirNuevo = () => {
-    setProveedorEditando(null)
-    setForm(formVacio)
-    setMostrarForm(true)
-    setMostrarCarga(false)
-    setError('')
+    setProveedorEditando(null); setForm(formVacio); setTambienCliente(false)
+    setMostrarForm(true); setMostrarCarga(false); setError('')
   }
 
   const abrirEditar = (p) => {
@@ -115,9 +119,62 @@ export default function Proveedores() {
       condiciones_pago: p.condiciones_pago || '', dias_credito: p.dias_credito || 0,
       forma_pago: p.forma_pago || '', numero_cuenta: p.numero_cuenta || '', es_maquilador: !!p.es_maquilador,
     })
-    setMostrarForm(true)
-    setMostrarCarga(false)
-    setError('')
+    setTambienCliente(!!vinculos[p.id])
+    setMostrarForm(true); setMostrarCarga(false); setError('')
+  }
+
+  // Crea la ficha de cliente de la MISMA empresa y la enlaza, o enlaza una que
+  // ya exista. Nunca da de alta un tercer registro a ciegas.
+  const vincularComoCliente = async (provId, datos) => {
+    if (datos.rfc) {
+      const { data: ya } = await supabase.from('clientes')
+        .select('id, nombre, proveedor_id').eq('empresa_id', perfil.empresa_id).ilike('rfc', datos.rfc).limit(1)
+      if (ya && ya.length) {
+        if (ya[0].proveedor_id && ya[0].proveedor_id !== provId) {
+          return { error: `El cliente "${ya[0].nombre}" ya esta vinculado con otro proveedor. Revisa el catalogo de clientes antes de continuar.` }
+        }
+        // Al vincular, los datos fiscales de ESTA ficha pisan los de la otra.
+        if (!window.confirm(`Ya existe el cliente "${ya[0].nombre}" con el RFC ${datos.rfc}.\n\nVincularlo con este proveedor?\n\nOJO: al vincular, la razon social y la direccion de ESTE proveedor van a sobrescribir las de esa ficha de cliente. De ahi en adelante los dos lados se mantienen iguales.\n\nSi cancelas no se crea ni se vincula nada.`)) {
+          return { cancelado: true }
+        }
+        const { error: e } = await supabase.from('clientes').update({ proveedor_id: provId }).eq('id', ya[0].id)
+        if (e) return { error: 'No se pudo vincular: ' + e.message }
+        return { ok: true }
+      }
+    }
+
+    const { error: e1 } = await supabase.from('clientes').insert({
+      empresa_id: perfil.empresa_id,
+      nombre: datos.nombre,
+      razon_social: datos.razon_social || datos.nombre,
+      rfc: datos.rfc || null,
+      direccion: datos.direccion,
+      contacto: datos.contacto,
+      email: datos.email,
+      telefono: datos.telefono,
+      proveedor_id: provId,
+      activo: true,
+    })
+    if (e1) {
+      return {
+        error: e1.message.includes('clientes_empresa_rfc_uq')
+          ? 'Ya existe un cliente con ese RFC. Vinculalo desde el catalogo de clientes.'
+          : 'No se pudo crear la ficha de cliente: ' + e1.message,
+      }
+    }
+    return { ok: true }
+  }
+
+  const desvincular = async (p) => {
+    const v = vinculos[p.id]
+    if (!v) return
+    if (!window.confirm(`Desvincular a "${p.nombre}" de su ficha de cliente "${v.nombre}"?\n\nLa ficha de cliente NO se borra: deja de estar ligada y dejan de sincronizarse los datos fiscales.`)) return
+    setError(''); setExito('')
+    const { error } = await supabase.from('clientes').update({ proveedor_id: null }).eq('id', v.id)
+    if (error) { setError(error.message); return }
+    setExito('Proveedor desvinculado. La ficha de cliente sigue existiendo por separado.')
+    await cargarProveedores()
+    setTimeout(() => setExito(''), 4000)
   }
 
   const guardar = async () => {
@@ -125,22 +182,35 @@ export default function Proveedores() {
       setError('El nombre del proveedor es obligatorio')
       return
     }
+    const yaVinculado = proveedorEditando ? !!vinculos[proveedorEditando.id] : false
+    if (tambienCliente && !yaVinculado && !form.rfc) {
+      setError('Para habilitarlo tambien como cliente hace falta el RFC: es lo unico que permite saber si ya existe esa empresa en el catalogo de clientes.')
+      return
+    }
     setError('')
     setLoading(true)
 
-    const payload = { ...form, rfc: form.rfc || null, dias_credito: parseInt(form.dias_credito) || 0 }
+    const payload = {
+      ...form,
+      // La razon social nunca queda vacia: es el dato que viaja a la ficha de
+      // cliente y sincronizar un nulo borraria el dato bueno del otro lado.
+      razon_social: form.razon_social || form.nombre,
+      rfc: form.rfc || null,
+      dias_credito: parseInt(form.dias_credito) || 0,
+    }
 
+    let provId = proveedorEditando?.id
     let error
     if (proveedorEditando) {
       const resultado = await supabase.from('proveedores').update(payload).eq('id', proveedorEditando.id)
       error = resultado.error
     } else {
-      const resultado = await supabase.from('proveedores').insert({ ...payload, empresa_id: perfil.empresa_id })
+      const resultado = await supabase.from('proveedores').insert({ ...payload, empresa_id: perfil.empresa_id }).select('id').single()
       error = resultado.error
+      provId = resultado.data?.id
     }
 
     if (error) {
-      // La base rechaza RFC repetidos; el mensaje crudo no se entiende.
       setError(error.message.includes('proveedores_empresa_rfc_uq')
         ? 'Ya existe otro proveedor con ese RFC'
         : 'Error al guardar: ' + error.message)
@@ -148,13 +218,24 @@ export default function Proveedores() {
       return
     }
 
-    setExito(proveedorEditando ? 'Proveedor actualizado correctamente' : 'Proveedor guardado correctamente')
+    let aviso = proveedorEditando ? 'Proveedor actualizado correctamente' : 'Proveedor guardado correctamente'
+
+    if (tambienCliente && !yaVinculado && provId) {
+      const r = await vincularComoCliente(provId, payload)
+      if (r.error) { setError(r.error); setLoading(false); await cargarProveedores(); return }
+      aviso += r.cancelado ? '. No se vinculo como cliente.' : '. Tambien quedo dado de alta como cliente.'
+    } else if (!tambienCliente && yaVinculado) {
+      await supabase.from('clientes').update({ proveedor_id: null }).eq('id', vinculos[proveedorEditando.id].id)
+      aviso += '. Se desvinculo de su ficha de cliente (la ficha no se borro).'
+    }
+
+    setExito(aviso)
     setMostrarForm(false)
     setProveedorEditando(null)
     setForm(formVacio)
     await cargarProveedores()
     setLoading(false)
-    setTimeout(() => setExito(''), 3000)
+    setTimeout(() => setExito(''), 5000)
   }
 
   const toggleActivo = async (p) => {
@@ -177,6 +258,7 @@ export default function Proveedores() {
 
   const proveedoresFiltrados = proveedores.filter(p =>
     p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+    (p.razon_social || '').toLowerCase().includes(busqueda.toLowerCase()) ||
     (p.rfc && p.rfc.toLowerCase().includes(busqueda.toLowerCase()))
   )
 
@@ -210,6 +292,7 @@ export default function Proveedores() {
             'Los proveedores se dan de alta como Activos.',
             'Si un RFC o un nombre ya existe, esa fila se rechaza y el resto si se carga.',
             'es_maquilador = si habilita al proveedor para ordenes de maquila. Dejalo en no si solo te vende material.',
+            'La plantilla no habilita a nadie como cliente: eso se hace uno por uno desde la ficha, porque hay que revisar si esa empresa ya existe en el catalogo de clientes.',
           ]}
           existentes={proveedores}
           empresaId={perfil.empresa_id}
@@ -227,13 +310,13 @@ export default function Proveedores() {
               <label style={styles.label}>Nombre comercial *</label>
               <input style={styles.input} value={form.nombre}
                 onChange={e => setForm({ ...form, nombre: e.target.value })}
-                placeholder="Nombre del proveedor" />
+                placeholder="Como le decimos aqui adentro" />
             </div>
             <div style={styles.campo}>
               <label style={styles.label}>Razon social</label>
               <input style={styles.input} value={form.razon_social}
                 onChange={e => setForm({ ...form, razon_social: e.target.value })}
-                placeholder="Razon social completa" />
+                placeholder="Como aparece en la factura" />
             </div>
           </div>
           <div style={styles.fila}>
@@ -323,6 +406,28 @@ export default function Proveedores() {
               Es maquilador (subcontratacion): habilita este proveedor para ordenes de maquila
             </label>
           </div>
+
+          <div style={styles.bloqueVinculo}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', color: '#334155', cursor: 'pointer' }}>
+              <input type="checkbox" checked={tambienCliente} onChange={e => setTambienCliente(e.target.checked)} />
+              Habilitar tambien como cliente
+            </label>
+            <p style={styles.ayudaVinculo}>
+              Marcalo cuando ademas de vendernos nos compra. Se crea su ficha de cliente con los mismos datos fiscales y queda ligada a esta.
+              Si esa empresa ya existe como cliente, se pregunta antes de crear nada.
+              {' '}El RFC, la razon social y la direccion se mantienen iguales en las dos fichas; el contacto, el telefono y las condiciones de pago son independientes.
+            </p>
+            {proveedorEditando && vinculos[proveedorEditando.id] && (
+              <p style={styles.vinculoActual}>
+                Vinculado con el cliente <b>{vinculos[proveedorEditando.id].nombre}</b>.
+                {' '}Si desmarcas la casilla y guardas, se desliga (la ficha de cliente no se borra).
+              </p>
+            )}
+            {tambienCliente && !(proveedorEditando && vinculos[proveedorEditando.id]) && !form.rfc && (
+              <p style={styles.avisoVinculo}>Captura el RFC: sin el no hay forma de saber si esa empresa ya esta en el catalogo de clientes.</p>
+            )}
+          </div>
+
           <div style={styles.botones}>
             <button style={styles.botonSecundarioGris} onClick={() => setMostrarForm(false)}>Cancelar</button>
             <button style={styles.boton} onClick={guardar} disabled={loading}>
@@ -335,7 +440,7 @@ export default function Proveedores() {
       <div style={styles.buscador}>
         <input style={styles.inputBusqueda} value={busqueda}
           onChange={e => setBusqueda(e.target.value)}
-          placeholder="Buscar por nombre o RFC..." />
+          placeholder="Buscar por nombre, razon social o RFC..." />
       </div>
 
       <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', justifyContent: 'flex-end' }}>
@@ -359,11 +464,18 @@ export default function Proveedores() {
         ) : (
           proveedoresFiltrados.map(p => {
             const bloqueo = bloqueos[p.id]
+            const vinc = vinculos[p.id]
             return (
               <div key={p.id} style={styles.tablaFila}>
                 <span style={{ flex: 2 }}>
                   <p style={{ margin: '0', fontWeight: '500' }}>{p.nombre}</p>
-                  <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>{p.razon_social}</p>
+                  {p.razon_social && p.razon_social !== p.nombre &&
+                    <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>{p.razon_social}</p>}
+                  {vinc && (
+                    <span style={styles.badgeVinculo} title={`Tambien esta dado de alta como cliente: ${vinc.nombre}`}>
+                      tambien cliente
+                    </span>
+                  )}
                 </span>
                 <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.rfc}</span>
                 <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.contacto}</span>
@@ -377,6 +489,7 @@ export default function Proveedores() {
                 <span style={{ flex: 2, display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                   {puedeEditar && <button style={styles.botonAccion} onClick={() => abrirEditar(p)}>Editar</button>}
                   {puedeEditar && <button style={styles.botonAccion} onClick={() => toggleActivo(p)}>{p.activo ? 'Desactivar' : 'Activar'}</button>}
+                  {puedeEditar && vinc && <button style={styles.botonAccion} onClick={() => desvincular(p)}>Desvincular</button>}
                   {puedeEliminar && (bloqueo
                     ? <button style={styles.botonBloqueado} disabled title={`No se puede eliminar: ya tiene registros en ${bloqueo}. Solo se puede desactivar.`}>Eliminar</button>
                     : <button style={styles.botonEliminar} onClick={() => eliminar(p)} title="Este proveedor no tiene ningun registro asociado todavia">Eliminar</button>)}
@@ -406,8 +519,12 @@ const styles = {
   campo: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 },
   label: { fontSize: '12px', fontWeight: '500', color: '#444' },
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none' },
+  bloqueVinculo: { backgroundColor: '#f8fafc', border: '1px solid #eef2f7', borderRadius: '8px', padding: '14px 16px', marginBottom: '16px' },
+  ayudaVinculo: { fontSize: '12px', color: '#64748b', margin: '8px 0 0', lineHeight: 1.6, maxWidth: '860px' },
+  vinculoActual: { fontSize: '12px', color: '#0f766e', backgroundColor: '#f0fdfa', border: '1px solid #99f6e4', borderRadius: '6px', padding: '8px 10px', margin: '10px 0 0' },
+  avisoVinculo: { fontSize: '12px', color: '#b45309', margin: '10px 0 0' },
   buscador: { marginBottom: '16px' },
-  inputBusqueda: { padding: '9px 14px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', width: '300px' },
+  inputBusqueda: { padding: '9px 14px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', width: '340px' },
   botones: { display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' },
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
   botonSecundario: { padding: '9px 20px', backgroundColor: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
@@ -419,6 +536,7 @@ const styles = {
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '14px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '500' },
+  badgeVinculo: { display: 'inline-block', marginTop: '3px', padding: '1px 8px', borderRadius: '20px', fontSize: '10px', fontWeight: '600', backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
   exito: { color: '#16a34a', fontSize: '13px', marginBottom: '12px' },
   pie: { fontSize: '12px', color: '#64748b', marginTop: '12px', maxWidth: '820px', lineHeight: 1.6 },

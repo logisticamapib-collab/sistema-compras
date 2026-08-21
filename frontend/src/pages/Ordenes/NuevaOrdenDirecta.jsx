@@ -26,6 +26,10 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
   const [error, setError] = useState('')
   const [articulos, setArticulos] = useState([])
   const [proveedores, setProveedores] = useState([])
+  // Proveedores que ademas son clientes nuestros. Solo informa: no bloquea ni
+  // cambia el flujo. Compras debe saber que hay relacion en los dos sentidos
+  // antes de sentarse a negociar.
+  const [provTambienCliente, setProvTambienCliente] = useState(new Set())
   const [centrosCostos, setCentrosCostos] = useState([])
   const [cuentasGastos, setCuentasGastos] = useState([])
   const [gerentesArea, setGerentesArea] = useState([])
@@ -56,6 +60,14 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
     ])
     setArticulos(a || [])
     setProveedores(p || [])
+
+    // Consulta aparte a proposito: meterla al Promise.all de arriba obliga a
+    // agregar su variable en la posicion exacta, y ese descuadre ya rompio
+    // otras pantallas.
+    const { data: vinc } = await supabase
+      .from('clientes').select('proveedor_id')
+      .eq('empresa_id', perfil.empresa_id).not('proveedor_id', 'is', null)
+    setProvTambienCliente(new Set((vinc || []).map(v => v.proveedor_id)))
     setCentrosCostos(cc || [])
     setCuentasGastos(cg || [])
     setGerentesArea(ga || [])
@@ -224,8 +236,17 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
             <select style={styles.input} value={form.proveedor_id}
               onChange={e => setForm({ ...form, proveedor_id: e.target.value })}>
               <option value="">Selecciona proveedor</option>
-              {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              {proveedores.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre}{provTambienCliente.has(p.id) ? '  (tambien es cliente)' : ''}
+                </option>
+              ))}
             </select>
+            {form.proveedor_id && provTambienCliente.has(parseInt(form.proveedor_id)) && (
+              <p style={{ fontSize: '12px', color: '#1d4ed8', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '6px 9px', margin: '6px 0 0' }}>
+                Esta contraparte tambien es cliente nuestro.
+              </p>
+            )}
           </div>
           <div style={styles.campo}>
             <label style={styles.label}>Fecha entrega estimada *</label>

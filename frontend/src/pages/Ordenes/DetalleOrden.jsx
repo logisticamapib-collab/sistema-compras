@@ -73,6 +73,14 @@ export default function DetalleOrden({ orden, onVolver }) {
   const [seguimientoDetalle, setSeguimientoDetalle] = useState([])
   const [loading, setLoading] = useState(true)
   const [procesando, setProcesando] = useState(false)
+  // Aviso informativo: esta contraparte tambien nos compra. No cambia el flujo
+  // de la orden, solo se lo hace saber a Compras.
+  const [tambienCliente, setTambienCliente] = useState(false)
+  useEffect(() => {
+    if (!orden?.proveedor_id) { setTambienCliente(false); return }
+    supabase.from('clientes').select('id').eq('proveedor_id', orden.proveedor_id).limit(1)
+      .then(({ data }) => setTambienCliente(!!(data && data.length)))
+  }, [orden?.proveedor_id])
   const [comentario, setComentario] = useState('')
   const [comentarioSeguimiento, setComentarioSeguimiento] = useState('')
   const [recepciones, setRecepciones] = useState({})
@@ -348,7 +356,15 @@ export default function DetalleOrden({ orden, onVolver }) {
           <div style={styles.infoGrid}>
             <div style={styles.infoItem}>
               <span style={styles.infoLabel}>Proveedor</span>
-              <span style={styles.infoValor}>{orden.proveedores?.nombre}</span>
+              <span style={styles.infoValor}>
+                {orden.proveedores?.nombre}
+                {tambienCliente && (
+                  <span style={{ marginLeft: 8, padding: '1px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600, backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}
+                    title="Esta contraparte tambien esta dada de alta como cliente">
+                    tambien es cliente
+                  </span>
+                )}
+              </span>
             </div>
             <div style={styles.infoItem}>
               <span style={styles.infoLabel}>Comprador</span>

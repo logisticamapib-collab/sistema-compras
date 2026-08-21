@@ -18,6 +18,8 @@ export default function NuevaOrden({ onVolver, onGuardado, requisicionInicial = 
   const [lineasSeleccionadas, setLineasSeleccionadas] = useState([])
   const [proveedorPorLinea, setProveedorPorLinea] = useState({})
   const [proveedores, setProveedores] = useState([])
+  // Proveedores que ademas son clientes nuestros. Solo informa.
+  const [provTambienCliente, setProvTambienCliente] = useState(new Set())
   const [articuloProveedores, setArticuloProveedores] = useState({})
   const [mostrarConfirmacion, setMostrarConfirmacion] = useState(false)
   const [ordenesAgrupadas, setOrdenesAgrupadas] = useState({})
@@ -72,6 +74,14 @@ export default function NuevaOrden({ onVolver, onGuardado, requisicionInicial = 
 
     setRequisiciones(requisicionesConPendientes)
     setProveedores(p || [])
+
+    // Consulta aparte a proposito: meterla al Promise.all de arriba obliga a
+    // agregar su variable en la posicion exacta, y ese descuadre ya rompio
+    // otras pantallas.
+    const { data: vinc } = await supabase
+      .from('clientes').select('proveedor_id')
+      .eq('empresa_id', perfil.empresa_id).not('proveedor_id', 'is', null)
+    setProvTambienCliente(new Set((vinc || []).map(v => v.proveedor_id)))
     setArticulosCatalogo(a || [])
     setLoading(false)
   }
@@ -624,11 +634,13 @@ export default function NuevaOrden({ onVolver, onGuardado, requisicionInicial = 
                           {(articuloProveedores[linea.id]?.length > 0
                             ? articuloProveedores[linea.id].map(ap => (
                               <option key={ap.proveedor_id} value={ap.proveedor_id}>
-                                {ap.proveedores?.nombre} - ${parseFloat(ap.precio).toFixed(2)}
+                                {ap.proveedores?.nombre} - ${parseFloat(ap.precio).toFixed(2)}{provTambienCliente.has(ap.proveedor_id) ? '  (tambien es cliente)' : ''}
                               </option>
                             ))
                             : proveedores.map(p => (
-                              <option key={p.id} value={p.id}>{p.nombre}</option>
+                              <option key={p.id} value={p.id}>
+                                {p.nombre}{provTambienCliente.has(p.id) ? '  (tambien es cliente)' : ''}
+                              </option>
                             ))
                           )}
                         </select>
@@ -795,4 +807,4 @@ const styles = {
   tabVinculoActivo: { padding: '6px 12px', backgroundColor: '#2563eb', color: '#fff', border: '1px solid #2563eb', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
   filaVinculo: { display: 'flex', gap: '8px', alignItems: 'center' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
-}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
