@@ -2,24 +2,74 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
-const COLS_PROV = [{ label: 'Nombre', get: p => p.nombre }, { label: 'Razon social', get: p => p.razon_social }, { label: 'RFC', get: p => p.rfc }, { label: 'Contacto', get: p => p.contacto }, { label: 'Telefono', get: p => p.telefono }, { label: 'Email', get: p => p.email }, { label: 'Condiciones', get: p => p.condiciones_pago }, { label: 'Dias credito', get: p => p.dias_credito }, { label: 'Estatus', get: p => p.activo ? 'Activo' : 'Inactivo' }]
+import CargaMasivaCatalogo from '../../components/CargaMasivaCatalogo'
+
+const COLS_PROV = [
+  { label: 'Nombre', get: p => p.nombre },
+  { label: 'Razon social', get: p => p.razon_social },
+  { label: 'RFC', get: p => p.rfc },
+  { label: 'Contacto', get: p => p.contacto },
+  { label: 'Telefono', get: p => p.telefono },
+  { label: 'Email', get: p => p.email },
+  { label: 'Condiciones', get: p => p.condiciones_pago },
+  { label: 'Dias credito', get: p => p.dias_credito },
+  { label: 'Maquilador', get: p => p.es_maquilador ? 'Si' : 'No' },
+  { label: 'Estatus', get: p => p.activo ? 'Activo' : 'Inactivo' },
+]
+
+const CONDICIONES = ['contado', '15 dias', '30 dias', '45 dias', '60 dias', '90 dias']
+
+// Especificacion de la plantilla de carga masiva. El orden manda: asi salen las
+// columnas en el Excel.
+const COLS_CARGA = [
+  { campo: 'nombre', req: true, ayuda: 'Nombre comercial con el que se le conoce.' },
+  { campo: 'razon_social', ayuda: 'Razon social completa, como aparece en la factura.' },
+  { campo: 'rfc', upper: true, ayuda: 'RFC. Dejalo vacio si el proveedor es extranjero.' },
+  { campo: 'contacto', ayuda: 'Nombre de la persona con quien se trata.' },
+  { campo: 'email' },
+  { campo: 'telefono' },
+  { campo: 'direccion', ayuda: 'Calle, numero y colonia.' },
+  { campo: 'ciudad' },
+  { campo: 'estado' },
+  { campo: 'cp' },
+  { campo: 'condiciones_pago', tipo: 'lista', opciones: CONDICIONES },
+  { campo: 'dias_credito', tipo: 'num', defecto: 0, ayuda: 'Numero de dias. Si no aplica, escribe 0.' },
+  { campo: 'forma_pago', ayuda: 'Ej: Transferencia, 03.' },
+  { campo: 'numero_cuenta', ayuda: 'Cuenta o CLABE del proveedor.' },
+  { campo: 'es_maquilador', tipo: 'bool', ayuda: 'si / no. Solo un maquilador puede recibir ordenes de maquila.' },
+]
+const EJEMPLOS_CARGA = [
+  ['Resinas del Centro', 'Resinas del Centro SA de CV', 'RCE050101AB2', 'Ing. Pedro Lara', 'ventas@resinascentro.com', '442 987 6543', 'Av. Peñuelas 25', 'Queretaro', 'Queretaro', '76148', '30 dias', 30, 'Transferencia', '012680001234567890', 'no'],
+  ['Maquilados Bajio', 'Maquilados del Bajio SA de CV', 'MBA110315CD4', 'Lic. Ana Torres', 'contacto@maquiladosbajio.com', '477 111 2233', 'Blvd. Aeropuerto 500', 'Leon', 'Guanajuato', '37545', '45 dias', 45, 'Transferencia', '', 'si'],
+]
+
+const formVacio = {
+  nombre: '', razon_social: '', rfc: '', contacto: '',
+  email: '', telefono: '', direccion: '', ciudad: '',
+  estado: '', cp: '', condiciones_pago: '', dias_credito: 0,
+  forma_pago: '', numero_cuenta: '', es_maquilador: false,
+}
 
 export default function Proveedores() {
-  const { perfil } = useAuth()
+  const { perfil, tienePermiso } = useAuth()
   const [proveedores, setProveedores] = useState([])
+  // bloqueos[id] = texto que dice donde esta usado el proveedor. Si trae algo,
+  // no se puede eliminar. Lo contesta la base, no la pantalla.
+  const [bloqueos, setBloqueos] = useState({})
   const [loading, setLoading] = useState(true)
   const [mostrarForm, setMostrarForm] = useState(false)
+  const [mostrarCarga, setMostrarCarga] = useState(false)
   const [proveedorEditando, setProveedorEditando] = useState(null)
   const [busqueda, setBusqueda] = useState('')
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
-  const formVacio = {
-    nombre: '', razon_social: '', rfc: '', contacto: '',
-    email: '', telefono: '', direccion: '', ciudad: '',
-    estado: '', cp: '', condiciones_pago: '', dias_credito: 0,
-    forma_pago: '', numero_cuenta: '', es_maquilador: false
-  }
   const [form, setForm] = useState(formVacio)
+
+  // Esta pantalla no validaba permisos: cualquiera que alcanzara el menu podia
+  // dar de alta y editar proveedores.
+  const puedeCrear = tienePermiso('proveedores', 'crear')
+  const puedeEditar = tienePermiso('proveedores', 'editar')
+  const puedeEliminar = tienePermiso('proveedores', 'eliminar')
 
   useEffect(() => { cargarProveedores() }, [])
 
@@ -30,7 +80,21 @@ export default function Proveedores() {
       .select('*')
       .eq('empresa_id', perfil.empresa_id)
       .order('nombre')
-    setProveedores(data || [])
+    const lista = data || []
+    setProveedores(lista)
+
+    // Una sola llamada para toda la lista, no una por renglon.
+    if (lista.length) {
+      const { data: refs } = await supabase.rpc('referencias_resumen', {
+        p_tabla: 'proveedores',
+        p_ids: lista.map(p => p.id),
+      })
+      const mapa = {}
+      for (const r of refs || []) mapa[r.id] = r.motivos
+      setBloqueos(mapa)
+    } else {
+      setBloqueos({})
+    }
     setLoading(false)
   }
 
@@ -38,6 +102,7 @@ export default function Proveedores() {
     setProveedorEditando(null)
     setForm(formVacio)
     setMostrarForm(true)
+    setMostrarCarga(false)
     setError('')
   }
 
@@ -48,9 +113,10 @@ export default function Proveedores() {
       contacto: p.contacto || '', email: p.email || '', telefono: p.telefono || '',
       direccion: p.direccion || '', ciudad: p.ciudad || '', estado: p.estado || '', cp: p.cp || '',
       condiciones_pago: p.condiciones_pago || '', dias_credito: p.dias_credito || 0,
-      forma_pago: p.forma_pago || '', numero_cuenta: p.numero_cuenta || '', es_maquilador: !!p.es_maquilador
+      forma_pago: p.forma_pago || '', numero_cuenta: p.numero_cuenta || '', es_maquilador: !!p.es_maquilador,
     })
     setMostrarForm(true)
+    setMostrarCarga(false)
     setError('')
   }
 
@@ -62,7 +128,7 @@ export default function Proveedores() {
     setError('')
     setLoading(true)
 
-    const payload = { ...form, dias_credito: parseInt(form.dias_credito) || 0 }
+    const payload = { ...form, rfc: form.rfc || null, dias_credito: parseInt(form.dias_credito) || 0 }
 
     let error
     if (proveedorEditando) {
@@ -74,7 +140,10 @@ export default function Proveedores() {
     }
 
     if (error) {
-      setError('Error al guardar: ' + error.message)
+      // La base rechaza RFC repetidos; el mensaje crudo no se entiende.
+      setError(error.message.includes('proveedores_empresa_rfc_uq')
+        ? 'Ya existe otro proveedor con ese RFC'
+        : 'Error al guardar: ' + error.message)
       setLoading(false)
       return
     }
@@ -93,6 +162,19 @@ export default function Proveedores() {
     await cargarProveedores()
   }
 
+  // Eliminar es irreversible y por eso solo existe mientras nadie use al
+  // proveedor. El candado real vive en un disparador de la base: aunque esta
+  // pantalla se equivoque, el borrado no pasa.
+  const eliminar = async (p) => {
+    setError(''); setExito('')
+    if (!window.confirm(`Eliminar definitivamente a "${p.nombre}"?\n\nEsta accion no se puede deshacer. Si el proveedor ya opero alguna vez, usa Desactivar.`)) return
+    const { error } = await supabase.from('proveedores').delete().eq('id', p.id)
+    if (error) { setError(error.message); await cargarProveedores(); return }
+    setExito('Proveedor eliminado')
+    await cargarProveedores()
+    setTimeout(() => setExito(''), 3000)
+  }
+
   const proveedoresFiltrados = proveedores.filter(p =>
     p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
     (p.rfc && p.rfc.toLowerCase().includes(busqueda.toLowerCase()))
@@ -102,13 +184,40 @@ export default function Proveedores() {
     <div style={styles.container}>
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Proveedores</h2>
-        <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
-          {mostrarForm ? 'Cancelar' : '+ Nuevo proveedor'}
-        </button>
+        {puedeCrear && (
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button style={styles.botonSecundario} onClick={() => { setMostrarCarga(!mostrarCarga); setMostrarForm(false) }}>
+              {mostrarCarga ? 'Cerrar carga masiva' : 'Carga masiva'}
+            </button>
+            <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
+              {mostrarForm ? 'Cancelar' : '+ Nuevo proveedor'}
+            </button>
+          </div>
+        )}
       </div>
 
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
+
+      {mostrarCarga && puedeCrear && (
+        <CargaMasivaCatalogo
+          titulo="Proveedores"
+          tabla="proveedores"
+          columnas={COLS_CARGA}
+          dedupe={[{ campo: 'rfc', etiqueta: 'RFC' }, { campo: 'nombre', etiqueta: 'Nombre' }]}
+          ejemplos={EJEMPLOS_CARGA}
+          notas={[
+            'Los proveedores se dan de alta como Activos.',
+            'Si un RFC o un nombre ya existe, esa fila se rechaza y el resto si se carga.',
+            'es_maquilador = si habilita al proveedor para ordenes de maquila. Dejalo en no si solo te vende material.',
+          ]}
+          existentes={proveedores}
+          empresaId={perfil.empresa_id}
+          puedeCargar={puedeCrear}
+          onCargado={cargarProveedores}
+          onCerrar={() => setMostrarCarga(false)}
+        />
+      )}
 
       {mostrarForm && (
         <div style={styles.form}>
@@ -131,7 +240,7 @@ export default function Proveedores() {
             <div style={styles.campo}>
               <label style={styles.label}>RFC</label>
               <input style={styles.input} value={form.rfc}
-                onChange={e => setForm({ ...form, rfc: e.target.value })}
+                onChange={e => setForm({ ...form, rfc: e.target.value.toUpperCase() })}
                 placeholder="RFC del proveedor" />
             </div>
             <div style={styles.campo}>
@@ -184,12 +293,7 @@ export default function Proveedores() {
               <select style={styles.input} value={form.condiciones_pago}
                 onChange={e => setForm({ ...form, condiciones_pago: e.target.value })}>
                 <option value="">Selecciona</option>
-                <option value="contado">Contado</option>
-                <option value="15 dias">15 dias</option>
-                <option value="30 dias">30 dias</option>
-                <option value="45 dias">45 dias</option>
-                <option value="60 dias">60 dias</option>
-                <option value="90 dias">90 dias</option>
+                {CONDICIONES.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
               </select>
             </div>
             <div style={styles.campo}>
@@ -220,7 +324,7 @@ export default function Proveedores() {
             </label>
           </div>
           <div style={styles.botones}>
-            <button style={styles.botonSecundario} onClick={() => setMostrarForm(false)}>Cancelar</button>
+            <button style={styles.botonSecundarioGris} onClick={() => setMostrarForm(false)}>Cancelar</button>
             <button style={styles.boton} onClick={guardar} disabled={loading}>
               {loading ? 'Guardando...' : 'Guardar proveedor'}
             </button>
@@ -246,40 +350,48 @@ export default function Proveedores() {
           <span style={{ flex: 1 }}>Telefono</span>
           <span style={{ flex: 1 }}>Condiciones</span>
           <span style={{ flex: 1 }}>Estatus</span>
-          <span style={{ flex: 1 }}>Acciones</span>
+          <span style={{ flex: 2 }}>Acciones</span>
         </div>
         {loading ? (
           <p style={{ padding: '20px', color: '#666' }}>Cargando...</p>
         ) : proveedoresFiltrados.length === 0 ? (
           <p style={{ padding: '20px', color: '#666' }}>No hay proveedores registrados</p>
         ) : (
-          proveedoresFiltrados.map(p => (
-            <div key={p.id} style={styles.tablaFila}>
-              <span style={{ flex: 2 }}>
-                <p style={{ margin: '0', fontWeight: '500' }}>{p.nombre}</p>
-                <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>{p.razon_social}</p>
-              </span>
-              <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.rfc}</span>
-              <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.contacto}</span>
-              <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.telefono}</span>
-              <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.condiciones_pago}</span>
-              <span style={{ flex: 1 }}>
-                <span style={{ ...styles.badge, backgroundColor: p.activo ? '#f0fdf4' : '#fef2f2', color: p.activo ? '#16a34a' : '#dc2626' }}>
-                  {p.activo ? 'Activo' : 'Inactivo'}
+          proveedoresFiltrados.map(p => {
+            const bloqueo = bloqueos[p.id]
+            return (
+              <div key={p.id} style={styles.tablaFila}>
+                <span style={{ flex: 2 }}>
+                  <p style={{ margin: '0', fontWeight: '500' }}>{p.nombre}</p>
+                  <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>{p.razon_social}</p>
                 </span>
-              </span>
-              <span style={{ flex: 1 }}>
-                <button style={styles.botonAccion} onClick={() => abrirEditar(p)}>
-                  Editar
-                </button>
-                <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => toggleActivo(p)}>
-                  {p.activo ? 'Desactivar' : 'Activar'}
-                </button>
-              </span>
-            </div>
-          ))
+                <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.rfc}</span>
+                <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.contacto}</span>
+                <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.telefono}</span>
+                <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{p.condiciones_pago}</span>
+                <span style={{ flex: 1 }}>
+                  <span style={{ ...styles.badge, backgroundColor: p.activo ? '#f0fdf4' : '#fef2f2', color: p.activo ? '#16a34a' : '#dc2626' }}>
+                    {p.activo ? 'Activo' : 'Inactivo'}
+                  </span>
+                </span>
+                <span style={{ flex: 2, display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {puedeEditar && <button style={styles.botonAccion} onClick={() => abrirEditar(p)}>Editar</button>}
+                  {puedeEditar && <button style={styles.botonAccion} onClick={() => toggleActivo(p)}>{p.activo ? 'Desactivar' : 'Activar'}</button>}
+                  {puedeEliminar && (bloqueo
+                    ? <button style={styles.botonBloqueado} disabled title={`No se puede eliminar: ya tiene registros en ${bloqueo}. Solo se puede desactivar.`}>Eliminar</button>
+                    : <button style={styles.botonEliminar} onClick={() => eliminar(p)} title="Este proveedor no tiene ningun registro asociado todavia">Eliminar</button>)}
+                </span>
+              </div>
+            )
+          })
         )}
       </div>
+      {puedeEliminar && (
+        <p style={styles.pie}>
+          Eliminar solo esta disponible mientras el proveedor no tenga ningun registro asociado (ordenes de compra, recibos, maquilas, articulos ligados, no conformidades…).
+          En cuanto tiene historia, la unica opcion es Desactivar: borrarlo romperia la trazabilidad de las compras.
+        </p>
+      )}
     </div>
   )
 }
@@ -298,12 +410,16 @@ const styles = {
   inputBusqueda: { padding: '9px 14px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', width: '300px' },
   botones: { display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' },
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
-  botonSecundario: { padding: '9px 20px', backgroundColor: '#e2e8f0', color: '#444', border: 'none', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
+  botonSecundario: { padding: '9px 20px', backgroundColor: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
+  botonSecundarioGris: { padding: '9px 20px', backgroundColor: '#e2e8f0', color: '#444', border: 'none', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
   botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
+  botonEliminar: { padding: '4px 10px', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
+  botonBloqueado: { padding: '4px 10px', backgroundColor: '#f8fafc', color: '#cbd5e1', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'not-allowed' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },
   tablaFila: { display: 'flex', padding: '14px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '14px' },
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '500' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
   exito: { color: '#16a34a', fontSize: '13px', marginBottom: '12px' },
+  pie: { fontSize: '12px', color: '#64748b', marginTop: '12px', maxWidth: '820px', lineHeight: 1.6 },
 }
