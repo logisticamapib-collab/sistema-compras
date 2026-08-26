@@ -23,6 +23,7 @@ export default function Moldes() {
   const [form, setForm] = useState(formVacio)
   const [error, setError] = useState('')
   const [colores, setColores] = useState([])
+  const [variantes, setVariantes] = useState([])
   const [exito, setExito] = useState('')
 
   const puedeCrear = tienePermiso('ing_moldes', 'crear')
@@ -33,18 +34,20 @@ export default function Moldes() {
   const cargarDatos = async () => {
     setLoading(true)
     // El orden de las variables DEBE seguir el orden de las consultas.
-    const [{ data: mol }, { data: sit }, { data: maq }, { data: art }, { data: cols }] = await Promise.all([
+    const [{ data: mol }, { data: sit }, { data: maq }, { data: art }, { data: cols }, { data: vars_ }] = await Promise.all([
       supabase.from('moldes').select('*, site:sites(nombre), maq:maquinas(clave)').eq('empresa_id', perfil.empresa_id).order('clave'),
       supabase.from('sites').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id).order('nombre'),
       supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
-      supabase.from('articulos').select('id, codigo_interno, descripcion, color_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
+      supabase.from('articulos').select('id, codigo_interno, descripcion, color_id, variante_codigo_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
       supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
+      supabase.from('variantes_codigo').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
     ])
     setMoldes(mol || [])
     setSites(sit || [])
     setMaquinas(maq || [])
     setArticulos(art || [])
     setColores(cols || [])
+    setVariantes(vars_ || [])
     setLoading(false)
   }
 
@@ -210,9 +213,16 @@ export default function Moldes() {
           asigna el articulo que corresponde a cada cavidad.
         </p>
         <p style={{ fontSize: '13px', color: '#666', marginBottom: '20px', lineHeight: 1.55 }}>
-          <b>Variantes de color:</b> si la misma cavidad corre el mismo componente en varios colores, agrega
-          una linea por color. Los articulos del <b>mismo color</b> salen juntos en un disparo; los de
-          <b> distinto color</b> se corren por separado, con purga entre uno y otro.
+          <b>Una cavidad puede tener varias lineas.</b> Agrega una por cada color y por cada variante de
+          codigo que corra en esa misma cavidad. Salen juntos en un disparo los articulos del <b>mismo color
+          y la misma variante</b>; los de <b>distinto color</b> se corren por separado con purga, y los de
+          <b>distinta variante de codigo</b> tambien por separado pero sin purga.
+        </p>
+        <p style={{ fontSize: '13px', color: '#666', marginBottom: '20px', lineHeight: 1.55 }}>
+          <b>Ojo con esto:</b> si las 4 cavidades sacan el mismo codigo, ese codigo va en <b>las 4 lineas</b>,
+          no en una. De ahi sale cuantas piezas entrega cada disparo, y de ahi salen los shots que necesita
+          una orden. Capturar una sola cavidad por codigo multiplica los shots calculados y el plan de
+          maquina se va al doble o al cuadruple de lo real.
         </p>
         {(() => {
           const activas = [...new Set(moldeCavidades.cavidades.filter(c => c.activa !== false).map(c => c.numero_cavidad))].length
@@ -228,6 +238,78 @@ export default function Moldes() {
             </div>
           )
         })()}
+        {(() => {
+          // Agrupa las lineas por corrida (color + variante). Cada grupo es un
+          // disparo distinto, y dentro del grupo cada codigo aporta las
+          // cavidades que tenga asignadas.
+          //
+          // El aviso importante: si una corrida no cubre todas las cavidades
+          // del molde, o falta capturar lineas o hay cavidades tapadas. Ese es
+          // el error de captura que multiplica los shots de las ordenes.
+          const nominal = moldeCavidades.molde.num_cavidades
+            || [...new Set(moldeCavidades.cavidades.map(c => c.numero_cavidad))].length
+          const grupos = new Map()
+          moldeCavidades.cavidades
+            .filter(c => c.articulo_id && !c._borrar && c.activa !== false)
+            .forEach(c => {
+              const art = articulos.find(x => x.id === c.articulo_id)
+              if (!art) return
+              const k = `${art.color_id ?? 'sc'}|${art.variante_codigo_id ?? 'sv'}`
+              if (!grupos.has(k)) grupos.set(k, { color_id: art.color_id ?? null, variante_codigo_id: art.variante_codigo_id ?? null, porArt: new Map() })
+              const g = grupos.get(k)
+              g.porArt.set(art.id, (g.porArt.get(art.id) || 0) + 1)
+            })
+          if (grupos.size === 0) return null
+          const lista = [...grupos.values()].map(g => ({
+            ...g,
+            color: colores.find(x => x.id === g.color_id) || null,
+            variante: variantes.find(x => x.id === g.variante_codigo_id) || null,
+            cubiertas: [...g.porArt.values()].reduce((a, b) => a + b, 0),
+          }))
+          return (
+            <div style={styles.corridasCaja}>
+              <p style={styles.corridasTit}>
+                Corridas de este molde ({lista.length}) &middot; el molde tiene {nominal} cavidades
+              </p>
+              <p style={styles.corridasSub}>
+                Cada renglon es un disparo distinto: no salen juntos aunque compartan molde.
+              </p>
+              {lista.map((g, i) => (
+                <div key={i} style={styles.corridaFila}>
+                  <span style={{ minWidth: 150 }}>
+                    {g.color
+                      ? <span style={styles.chip}><span style={{ width: 11, height: 11, borderRadius: 3, border: '1px solid #cbd5e1', background: g.color.hex || '#fff' }} />{g.color.clave}</span>
+                      : <span style={styles.chipVacio}>sin color</span>}
+                    {g.variante
+                      ? <span style={styles.chipVar}>{g.variante.clave}</span>
+                      : <span style={styles.chipVacio}>sin variante</span>}
+                  </span>
+                  <span style={{ flex: 1, fontSize: 12.5, color: '#334155' }}>
+                    {[...g.porArt.entries()].map(([artId, cav]) => {
+                      const a = articulos.find(x => x.id === artId)
+                      return `${a ? a.codigo_interno : artId}: ${cav} ${cav === 1 ? 'cavidad' : 'cavidades'} (${cav} ${cav === 1 ? 'pieza' : 'piezas'} por disparo)`
+                    }).join('  ·  ')}
+                  </span>
+                  <span style={{ minWidth: 130, textAlign: 'right' }}>
+                    {g.cubiertas === nominal
+                      ? <span style={styles.chipOk}>{g.cubiertas} de {nominal} cavidades</span>
+                      : <span style={styles.chipAlerta}>{g.cubiertas} de {nominal} cavidades</span>}
+                  </span>
+                </div>
+              ))}
+              {lista.some(g => g.cubiertas !== nominal) && (
+                <div style={styles.avisoCav}>
+                  <b>Hay corridas que no cubren las {nominal} cavidades del molde.</b> Si es porque hay
+                  cavidades tapadas, esta bien y el plan ya lo considera. Si no, faltan lineas por capturar:
+                  cuando las {nominal} cavidades sacan el mismo codigo, ese codigo debe aparecer en las {nominal} lineas.
+                  Capturado a medias, el sistema cree que cada disparo entrega menos piezas y calcula de mas los
+                  shots de cada orden.
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
         <div style={styles.tabla}>
           <div style={styles.tablaHeader}>
             <span style={{ flex: 1 }}>Cavidad</span>
@@ -242,6 +324,7 @@ export default function Moldes() {
                   const key = c._key || c.id
                   const art = articulos.find(x => x.id === c.articulo_id)
                   const col = colores.find(x => x.id === art?.color_id)
+                  const vr = variantes.find(x => x.id === art?.variante_codigo_id)
                   return (
                     <div key={key} style={{ ...styles.tablaFila, borderBottom: 'none', opacity: c.activa === false ? 0.45 : 1 }}>
                       <span style={{ flex: 1, fontWeight: '600' }}>{i === 0 ? `#${num}` : ''}</span>
@@ -257,6 +340,7 @@ export default function Moldes() {
                             {col.clave}
                           </span>
                         )}
+                        {vr && <span style={styles.chipVar}>{vr.clave}</span>}
                       </span>
                       <span style={{ width: '90px', textAlign: 'right' }}>
                         {filas.length > 1 && (
@@ -406,6 +490,15 @@ export default function Moldes() {
 }
 
 const styles = {
+  corridasCaja: { background: '#fff', border: '1px solid #eef2f7', borderRadius: '10px', padding: '14px 16px', marginBottom: '16px' },
+  corridasTit: { fontSize: '13px', fontWeight: 600, color: '#1a1a2e', margin: '0 0 2px' },
+  corridasSub: { fontSize: '12px', color: '#94a3b8', margin: '0 0 10px' },
+  corridaFila: { display: 'flex', gap: '12px', alignItems: 'center', padding: '7px 0', borderTop: '1px solid #f8fafc' },
+  chip: { display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', color: '#475569', whiteSpace: 'nowrap', marginRight: '6px' },
+  chipVar: { display: 'inline-block', padding: '1px 8px', borderRadius: '20px', fontSize: '10.5px', fontWeight: 600, background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', whiteSpace: 'nowrap' },
+  chipVacio: { display: 'inline-block', fontSize: '11.5px', color: '#cbd5e1', marginRight: '6px', whiteSpace: 'nowrap' },
+  chipOk: { display: 'inline-block', padding: '1px 9px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', whiteSpace: 'nowrap' },
+  chipAlerta: { display: 'inline-block', padding: '1px 9px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', whiteSpace: 'nowrap' },
   avisoCav: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', color: '#92400e', marginBottom: '12px', lineHeight: 1.5 },
   tapadaTag: { fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px', background: '#fef3c7', color: '#b45309' },
   container: { padding: '28px' },
