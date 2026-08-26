@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
-import { familiaSimultanea, moldeDeArticulo as moldeDe, etiquetaColor } from '../../lib/moldeFamilia'
+import { familiaSimultanea, moldeDeArticulo as moldeDe, etiquetaColor, etiquetaVariante } from '../../lib/moldeFamilia'
 import { useAuth } from '../../context/AuthContext'
 import { evaluarSemaforo, cargarDatosSemaforo } from '../../lib/semaforo'
 import PortalImpresion from '../../components/PortalImpresion'
@@ -33,6 +33,7 @@ export default function OrdenesTrabajo() {
   const [moldes, setMoldes] = useState([])
   const [cavidades, setCavidades] = useState([])
   const [colores, setColores] = useState([])
+  const [variantes, setVariantes] = useState([])
   const [normas, setNormas] = useState([])
   const [ubicaciones, setUbicaciones] = useState([])
   const [datosSem, setDatosSem] = useState(null)
@@ -58,7 +59,9 @@ export default function OrdenesTrabajo() {
 
   const cargar = async () => {
     setLoading(true)
-    const [o, oa, a, m, mo, cav, col, n, u, ds, cli, ac] = await Promise.all([
+    // El orden de las variables sigue el orden de las consultas: la nueva va
+    // al final de las dos listas para no desplazar nada.
+    const [o, oa, a, m, mo, cav, col, n, u, ds, cli, ac, vc] = await Promise.all([
       supabase.from('ordenes_trabajo').select('*, maq:maquinas(clave, nombre, tipo), mol:moldes(clave)').eq('empresa_id', perfil.empresa_id).order('created_at', { ascending: false }),
       supabase.from('ot_articulos').select('*'),
       supabase.from('articulos').select('*').eq('empresa_id', perfil.empresa_id).eq('origen', 'fabricado').eq('activo', true).order('codigo_interno'),
@@ -71,10 +74,12 @@ export default function OrdenesTrabajo() {
       cargarDatosSemaforo(supabase, perfil.empresa_id),
       supabase.from('clientes').select('id, nombre').eq('activo', true),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id').eq('activo', true),
+      supabase.from('variantes_codigo').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
     ])
     setOts(o.data || []); setOtArts(oa.data || []); setArticulos(a.data || []); setMaquinas(m.data || [])
     setMoldes(mo.data || []); setCavidades(cav.data || []); setColores(col.data || []); setNormas(n.data || [])
     setUbicaciones(u.data || []); setDatosSem(ds); setClientes(cli.data || []); setArtCliente(ac.data || [])
+    setVariantes(vc.data || [])
     setLoading(false)
   }
 
@@ -425,7 +430,7 @@ export default function OrdenesTrabajo() {
       {form && (
         <div style={styles.form}>
           <h3 style={styles.formTitulo}>Nueva orden de trabajo</h3>
-          <p style={styles.ayuda}>Solo se listan articulos con <b>semaforo completo</b> ({articulosListos.length} de {articulos.length}). Si el molde produce varios articulos del <b>mismo disparo y mismo color</b> (familiar), se incluyen todos y se calculan por cavidades. Las <b>variantes de color</b> del mismo molde se corren por separado, en su propia OT.</p>
+          <p style={styles.ayuda}>Solo se listan articulos con <b>semaforo completo</b> ({articulosListos.length} de {articulos.length}). Si el molde produce varios articulos del <b>mismo disparo, mismo color y misma variante de codigo</b> (familiar), se incluyen todos y se calculan por cavidades. Las <b>variantes de color</b> se corren por separado con purga entre ellas, y las <b>variantes de codigo</b> tambien por separado pero sin purga: cada una lleva su propia OT.</p>
           <div style={styles.fila}>
             <div style={{ ...styles.campo, flex: 2 }}>
               <label style={styles.label}>Articulo principal *</label>
@@ -433,7 +438,8 @@ export default function OrdenesTrabajo() {
                 <option value="">Selecciona...</option>
                 {articulosListos.map(a => {
                   const col = etiquetaColor(articulos, colores, a.id)
-                  return <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}{col ? ` [${col}]` : ''}</option>
+                  const vr = etiquetaVariante(articulos, variantes, a.id)
+                  return <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}{col ? ` [${col}]` : ''}{vr ? ` [${vr}]` : ''}</option>
                 })}
               </select>
             </div>

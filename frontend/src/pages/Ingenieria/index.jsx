@@ -4,6 +4,7 @@ import Articulos from '../Articulos/index'
 import Maquinas from './Maquinas'
 import Moldes from './Moldes'
 import Colores from './Colores'
+import VariantesCodigo from './VariantesCodigo'
 import Partes from './Partes'
 import RutasFabricacion from './RutasFabricacion'
 import Clientes from './Clientes'
@@ -18,6 +19,7 @@ const secciones = [
   { id: 'maquinas', modulo: 'ing_maquinas', titulo: 'Maquinas' },
   { id: 'moldes', modulo: 'ing_moldes', titulo: 'Moldes' },
   { id: 'colores', modulo: 'ing_colores', titulo: 'Colores' },
+  { id: 'variantes_codigo', modulo: 'ing_variantes_codigo', titulo: 'Variantes de codigo' },
   { id: 'partes', modulo: 'ing_partes', titulo: 'Partes equivalentes' },
   { id: 'rutas', modulo: 'ing_rutas', titulo: 'Rutas de Fabricacion' },
   { id: 'bom', modulo: 'ing_bom', titulo: 'BOM (Lista de Materiales)' },
@@ -56,6 +58,7 @@ export default function GrupoIngenieria() {
         {seccion === 'maquinas' && <Maquinas />}
         {seccion === 'moldes' && <Moldes />}
         {seccion === 'colores' && <Colores />}
+        {seccion === 'variantes_codigo' && <VariantesCodigo />}
         {seccion === 'partes' && <Partes />}
         {seccion === 'rutas' && <RutasFabricacion />}
         {seccion === 'bom' && <BOM />}

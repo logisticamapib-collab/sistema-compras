@@ -28,7 +28,7 @@ const formVacio = {
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
-  clasificacion_abc: '', abc_criterio: '', color_id: '', parte_id: '',
+  clasificacion_abc: '', abc_criterio: '', color_id: '', variante_codigo_id: '', parte_id: '',
   familia_resina_id: '', tipo_material: '',
 }
 
@@ -61,6 +61,7 @@ export default function Articulos() {
   })
   const [formCliente, setFormCliente] = useState({ cliente_id: '', codigo_cliente: '', precio: '' })
   const [colores, setColores] = useState([])
+  const [variantes, setVariantes] = useState([])
   const [partes, setPartes] = useState([])
   const [familias, setFamilias] = useState([])
   const [form, setForm] = useState(formVacio)
@@ -74,7 +75,7 @@ export default function Articulos() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }, { data: cols }, { data: prts }, { data: fams }] = await Promise.all([
+    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }, { data: cols }, { data: prts }, { data: fams }, { data: vars_ }] = await Promise.all([
       supabase.from('articulos').select('*, categorias(nombre), sites(nombre, codigo)').eq('empresa_id', perfil.empresa_id).order('codigo_interno'),
       supabase.from('categorias').select('*').eq('empresa_id', perfil.empresa_id),
       supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
@@ -84,9 +85,11 @@ export default function Articulos() {
       supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
       supabase.from('partes').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
       supabase.from('familias_resina').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden').order('clave'),
+      supabase.from('variantes_codigo').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
     ])
     setArticulos(a || [])
     setColores(cols || [])
+    setVariantes(vars_ || [])
     setPartes(prts || [])
     setFamilias(fams || [])
     setCategorias(c || [])
@@ -149,6 +152,7 @@ export default function Articulos() {
       site_id: articulo.site_id?.toString() || '',
       clasificacion_abc: articulo.clasificacion_abc || '',
       color_id: articulo.color_id?.toString() || '',
+      variante_codigo_id: articulo.variante_codigo_id?.toString() || '',
       parte_id: articulo.parte_id?.toString() || '',
       familia_resina_id: articulo.familia_resina_id?.toString() || '',
       tipo_material: articulo.tipo_material || '',
@@ -221,6 +225,7 @@ export default function Articulos() {
       // describe el MATERIAL: va en la resina y en sus derivados de molino,
       // no en la pieza, cuyo material sale de su lista de materiales.
       color_id: esPieza && form.color_id ? parseInt(form.color_id) : null,
+      variante_codigo_id: esPieza && form.variante_codigo_id ? parseInt(form.variante_codigo_id) : null,
       parte_id: esPieza && form.parte_id ? parseInt(form.parte_id) : null,
       familia_resina_id: llevaResina && form.familia_resina_id ? parseInt(form.familia_resina_id) : null,
       abc_criterio: criterioABC,
@@ -556,6 +561,19 @@ export default function Articulos() {
                   <span style={styles.ayudaCampo}>
                     Si dos articulos comparten molde pero tienen distinto color, el sistema los corre por
                     separado con purga entre ellos, no como co-productos del mismo disparo.
+                  </span>
+                </div>
+                <div style={styles.campo}>
+                  <label style={styles.label}>Variante de codigo</label>
+                  <select style={styles.input} value={form.variante_codigo_id}
+                    onChange={e => setForm({ ...form, variante_codigo_id: e.target.value })}>
+                    <option value="">Sin variante / no aplica</option>
+                    {variantes.map(v => <option key={v.id} value={v.id}>{v.clave} - {v.nombre}</option>)}
+                  </select>
+                  <span style={styles.ayudaCampo}>
+                    Solo si el cliente pide esta MISMA pieza con otro codigo porque la manda a otro pais o
+                    plataforma. Distingue corridas que comparten molde y color pero se programan aparte.
+                    A diferencia del color, cambiar de codigo no cuesta purga.
                   </span>
                 </div>
                 <div style={styles.campo}>

@@ -364,8 +364,10 @@ export default function ProgramacionProduccion() {
     const filas = data || []
     const actual = filas.filter(r => r.escenario === 'actual')
     const sugerido = filas.filter(r => r.escenario === 'sugerido')
+    // min_variante casi siempre es cero: cambiar de codigo es cambiar papeles.
+    // Solo suma cuando ademas cambia el empaque y alguien capturo lo que cuesta.
     const tot = (rs) => rs.reduce((a, r) => ({
-      min: a.min + (Number(r.min_purga) || 0) + (Number(r.min_molde) || 0),
+      min: a.min + (Number(r.min_purga) || 0) + (Number(r.min_molde) || 0) + (Number(r.min_variante) || 0),
       kg: a.kg + (Number(r.kg_purga) || 0),
     }), { min: 0, kg: 0 })
     setSeq({ actual, sugerido, totActual: tot(actual), totSugerido: tot(sugerido) })
@@ -637,7 +639,7 @@ export default function ProgramacionProduccion() {
                             {r.ot_folio} &middot; {r.articulo_codigo}
                           </div>
                           <div style={{ fontSize: '11.5px', color: '#64748b' }}>
-                            {r.molde_clave || 'sin molde'} &middot; {r.color_clave || 'sin color'} &middot; {ddmm(r.fecha_programada)}
+                            {r.molde_clave || 'sin molde'} &middot; {r.color_clave || 'sin color'}{r.variante_clave ? ` \u00b7 ${r.variante_clave}` : ''} &middot; {ddmm(r.fecha_programada)}
                           </div>
                         </span>
                         <span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -645,6 +647,11 @@ export default function ProgramacionProduccion() {
                           {Number(r.min_purga) > 0 && (
                             <span style={r.es_retroceso ? styles.seqTagRojo : styles.seqTagAmbar}>
                               {Number(r.min_purga).toLocaleString('es-MX', { maximumFractionDigits: 0 })} min
+                            </span>
+                          )}
+                          {r.cambio_variante && (
+                            <span style={styles.seqTagMolde} title="Cambia el codigo: solo se cambia la documentacion del puesto">
+                              codigo{Number(r.min_variante) > 0 ? ` ${Number(r.min_variante)} min` : ''}
                             </span>
                           )}
                         </span>
