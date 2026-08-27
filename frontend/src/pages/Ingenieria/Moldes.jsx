@@ -24,6 +24,12 @@ export default function Moldes() {
   const [error, setError] = useState('')
   const [colores, setColores] = useState([])
   const [variantes, setVariantes] = useState([])
+  // articulo_id -> molde_id, de todos los moldes. Un articulo pertenece a un
+  // solo molde: puede ocupar varias cavidades de ese molde, pero no vivir en
+  // dos. De las cavidades de un articulo sale cuantas piezas entrega cada
+  // disparo, y de ahi los shots de una orden; repetido en dos moldes esa
+  // cuenta deja de tener un solo significado.
+  const [moldeDeArt, setMoldeDeArt] = useState(new Map())
   const [exito, setExito] = useState('')
 
   const puedeCrear = tienePermiso('ing_moldes', 'crear')
@@ -34,13 +40,14 @@ export default function Moldes() {
   const cargarDatos = async () => {
     setLoading(true)
     // El orden de las variables DEBE seguir el orden de las consultas.
-    const [{ data: mol }, { data: sit }, { data: maq }, { data: art }, { data: cols }, { data: vars_ }] = await Promise.all([
+    const [{ data: mol }, { data: sit }, { data: maq }, { data: art }, { data: cols }, { data: vars_ }, { data: asig }] = await Promise.all([
       supabase.from('moldes').select('*, site:sites(nombre), maq:maquinas(clave)').eq('empresa_id', perfil.empresa_id).order('clave'),
       supabase.from('sites').select('id, nombre, codigo').eq('empresa_id', perfil.empresa_id).order('nombre'),
       supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
       supabase.from('articulos').select('id, codigo_interno, descripcion, color_id, variante_codigo_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
       supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
       supabase.from('variantes_codigo').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
+      supabase.from('molde_cavidades').select('molde_id, articulo_id').not('articulo_id', 'is', null),
     ])
     setMoldes(mol || [])
     setSites(sit || [])
@@ -48,6 +55,9 @@ export default function Moldes() {
     setArticulos(art || [])
     setColores(cols || [])
     setVariantes(vars_ || [])
+    const mapa = new Map()
+    for (const x of asig || []) mapa.set(x.articulo_id, x.molde_id)
+    setMoldeDeArt(mapa)
     setLoading(false)
   }
 
@@ -192,14 +202,19 @@ export default function Moldes() {
       }
     } catch (err) {
       setLoading(false)
-      setError(err.message?.includes('duplicate') || err.message?.includes('unq')
-        ? 'Ese articulo ya esta asignado a esa cavidad. Cada color debe capturarse una sola vez por cavidad.'
-        : 'No se pudo guardar: ' + err.message)
+      setError(err.message?.includes('ya esta asignado al molde')
+        ? err.message
+        : (err.message?.includes('duplicate') || err.message?.includes('unq')
+          ? 'Ese articulo ya esta asignado a esa cavidad. Cada color debe capturarse una sola vez por cavidad.'
+          : 'No se pudo guardar: ' + err.message))
       return
     }
     setLoading(false)
     setExito('Cavidades actualizadas correctamente')
     setMoldeCavidades(null)
+    // El mapa de articulo -> molde acaba de cambiar: hay que releerlo o el
+    // siguiente molde ofreceria articulos que ya se ocuparon.
+    await cargarDatos()
     setTimeout(() => setExito(''), 3000)
   }
 
@@ -217,6 +232,13 @@ export default function Moldes() {
           codigo que corra en esa misma cavidad. Salen juntos en un disparo los articulos del <b>mismo color
           y la misma variante</b>; los de <b>distinto color</b> se corren por separado con purga, y los de
           <b>distinta variante de codigo</b> tambien por separado pero sin purga.
+        </p>
+        <p style={{ fontSize: '13px', color: '#666', marginBottom: '20px', lineHeight: 1.55 }}>
+          <b>Solo aparecen los articulos libres y los de este molde.</b> Un articulo pertenece a un solo
+          molde: si no encuentras un codigo en la lista es porque ya esta asignado a otro. Quitalo de ahi
+          primero. Cuando son dos moldes que hacen la misma pieza, cada uno lleva su propio codigo y se
+          ligan por el catalogo de <b>Partes equivalentes</b>, que es lo que hace que el MRP los netee
+          juntos y el FIFO los ordene como una sola fila.
         </p>
         <p style={{ fontSize: '13px', color: '#666', marginBottom: '20px', lineHeight: 1.55 }}>
           <b>Ojo con esto:</b> si las 4 cavidades sacan el mismo codigo, ese codigo va en <b>las 4 lineas</b>,
@@ -332,7 +354,15 @@ export default function Moldes() {
                         <select style={{ ...styles.input, flex: 1 }} value={c.articulo_id || ''}
                           onChange={e => actualizarCavidad(key, e.target.value)}>
                           <option value="">Sin asignar</option>
-                          {articulos.map(a => <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>)}
+                          {articulos
+                            .filter(a =>
+                              // libre, o ya es de ESTE molde (puede ocupar varias
+                              // cavidades), o es el valor actual del renglon para
+                              // que el selector nunca se quede en blanco.
+                              !moldeDeArt.has(a.id)
+                              || moldeDeArt.get(a.id) === moldeCavidades.molde.id
+                              || a.id === c.articulo_id)
+                            .map(a => <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>)}
                         </select>
                         {col && (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', color: '#475569', whiteSpace: 'nowrap' }}>
