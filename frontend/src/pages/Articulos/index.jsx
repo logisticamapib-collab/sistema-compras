@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
+import { exportarExcel, imprimirTablaPDF, imprimirFichaPDF, abrirVentanaFicha, fallaEnVentana } from '../../lib/exportar'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
@@ -377,6 +377,229 @@ export default function Articulos() {
     // Usuario normal: solo su site, articulos compartidos (sin site), o donde su site sea destino de transferencia
     return !a.site_id || a.site_id === perfil.site_id || (sitesDestinoPorArticulo[a.id] || []).includes(perfil.site_id)
   })
+
+  // ---------------- Ficha del articulo ----------------
+  //
+  // Junta en un solo papel lo que hoy vive repartido en seis pantallas: de que
+  // molde sale, en que maquina corre, su ruta, su lista de materiales, como se
+  // empaca, a quien se le vende y con que otros codigos es intercambiable.
+  //
+  // Cubre la FAMILIA completa, no solo el codigo: si de ese disparo salen la
+  // izquierda y la derecha, las dos van en la misma ficha, porque en el piso se
+  // corren juntas y separarlas obliga a imprimir dos papeles de una sola
+  // corrida.
+  //
+  // Los datos se consultan al momento en vez de cargarlos con la pantalla: son
+  // siete consultas que casi nunca se ocupan y encarecerian cada entrada al
+  // modulo.
+  const imprimirFichaArticulo = async (art) => {
+    // La ventana se abre AQUI, dentro del clic. Abrirla despues de esperar las
+    // consultas la bloquea el navegador por no venir de un gesto del usuario.
+    const w = abrirVentanaFicha(`Preparando la ficha de ${art.codigo_interno}...`)
+    if (!w) return
+
+    try {
+      // 1) El molde del articulo y todas las cavidades de ese molde: de ahi
+      //    sale la familia y cuantas piezas entrega cada disparo.
+      const { data: cavPropias } = await supabase
+        .from('molde_cavidades').select('molde_id').eq('articulo_id', art.id).limit(1)
+      const moldeId = cavPropias?.[0]?.molde_id || null
+
+      let cavMolde = []
+      let molde = null
+      if (moldeId) {
+        const [rCav, rMol] = await Promise.all([
+          supabase.from('molde_cavidades').select('*').eq('molde_id', moldeId).order('numero_cavidad'),
+          supabase.from('moldes').select('*, site:sites(nombre), maq:maquinas(clave, nombre)').eq('id', moldeId).maybeSingle(),
+        ])
+        cavMolde = rCav.data || []
+        molde = rMol.data || null
+      }
+
+      // 2) Familia del disparo: mismo molde, mismo color, misma variante.
+      const idsMolde = [...new Set(cavMolde.filter(c => c.articulo_id).map(c => c.articulo_id))]
+      let artsMolde = []
+      if (idsMolde.length) {
+        const { data } = await supabase.from('articulos')
+          .select('id, codigo_interno, descripcion, color_id, variante_codigo_id, parte_id, unidad_medida')
+          .in('id', idsMolde)
+        artsMolde = data || []
+      }
+      const mismo = (x, y) => (x ?? null) === (y ?? null)
+      const familia = idsMolde.length
+        ? artsMolde.filter(x => mismo(x.color_id, art.color_id) && mismo(x.variante_codigo_id, art.variante_codigo_id))
+        : [{ id: art.id, codigo_interno: art.codigo_interno, descripcion: art.descripcion, parte_id: art.parte_id }]
+      const idsFam = familia.map(x => x.id)
+      const cavDe = (aid) => cavMolde.filter(c => c.articulo_id === aid && c.activa !== false).length
+
+      // 3) Todo lo que cuelga de la familia. El orden de las variables sigue el
+      //    orden de las consultas.
+      // Consultas planas y los nombres se resuelven en JS, como en el resto
+      // del sistema. Los embebidos de PostgREST se vuelven ambiguos en cuanto
+      // una tabla tiene dos llaves al mismo destino -- bom apunta dos veces a
+      // articulos y la solicitud de maquina alterna dos veces a maquinas -- y
+      // ese error solo se ve en tiempo de ejecucion.
+      // El orden de las variables sigue el orden de las consultas.
+      const [rRutas, rBom, rNormas, rCli, rAlt, rEquiv, rMaq] = await Promise.all([
+        supabase.from('rutas_fabricacion').select('*').in('articulo_id', idsFam).order('secuencia'),
+        supabase.from('bom').select('*').in('articulo_padre_id', idsFam),
+        supabase.from('normas_empaque').select('*').in('articulo_id', idsFam),
+        supabase.from('articulo_cliente').select('*').in('articulo_id', idsFam),
+        supabase.from('solicitudes_maquina_alterna').select('*')
+          .in('articulo_id', idsFam).eq('registrar_como_alterna', true).eq('estatus', 'aprobada'),
+        art.parte_id
+          ? supabase.from('articulos').select('id, codigo_interno, descripcion').eq('parte_id', art.parte_id)
+          : Promise.resolve({ data: [] }),
+        supabase.from('maquinas').select('id, clave, nombre').eq('empresa_id', perfil.empresa_id),
+      ])
+      const maquinas = rMaq.data || []
+      const nomMaq = (id) => maquinas.find(m => m.id === id)
+      const nomArt = (id) => articulos.find(x => x.id === id) || artsMolde.find(x => x.id === id)
+      const nomCli = (id) => clientes.find(c => c.id === id)
+
+      // Variantes de codigo hermanas: mismo molde, otras corridas.
+      const hermanas = new Map()
+      artsMolde.filter(x => !idsFam.includes(x.id)).forEach(x => {
+        const k = `${x.color_id ?? 'sc'}|${x.variante_codigo_id ?? 'sv'}`
+        if (!hermanas.has(k)) hermanas.set(k, { color_id: x.color_id, variante_codigo_id: x.variante_codigo_id, codigos: [] })
+        hermanas.get(k).codigos.push(`${x.codigo_interno} (${cavDe(x.id)} cav)`)
+      })
+
+      const cod = (id) => articulos.find(x => x.id === id)?.codigo_interno || familia.find(x => x.id === id)?.codigo_interno || id
+      const nomColor = (id) => colores.find(c => c.id === id)?.clave || ''
+      const nomVar = (id) => variantes.find(v => v.id === id)?.clave || ''
+      const parte = partes.find(pp => pp.id === art.parte_id)
+      const varios = familia.length > 1
+      const colArt = varios ? [{ label: 'Articulo', get: r => cod(r.articulo_id ?? r.articulo_padre_id) }] : []
+
+      imprimirFichaPDF(
+        `Articulo ${art.codigo_interno}`,
+        art.descripcion,
+        [
+          ['Codigo', art.codigo_interno],
+          ['Descripcion', art.descripcion],
+          ['Categoria', art.categorias?.nombre || '-'],
+          ['Origen', art.origen], ['Unidad', art.unidad_medida],
+          ['Tipo de proceso', art.tipo_proceso || '-'],
+          ['Color', nomColor(art.color_id) || '-'],
+          ['Variante de codigo', nomVar(art.variante_codigo_id) || '-'],
+          ['Parte equivalente', parte ? parte.clave : '-'],
+          ['Familia de resina', familias.find(f => f.id === art.familia_resina_id)?.clave || '-'],
+          ['Planta', art.sites?.nombre || 'Compartido'],
+          ['Costo estandar', `${art.tipo_moneda || ''} ${art.costo ?? 0}`],
+          ['Peso pieza / colada (g)', `${art.peso_pieza_g ?? '-'} / ${art.peso_colada_g ?? '-'}`],
+          ['Scrap aprobado', `${art.pct_scrap_aprobado ?? 0}%`],
+          ['Admite molido', art.admite_molido ? `si, hasta ${art.pct_molido_max ?? 0}%` : 'no'],
+          ['SNP / stock minimo', `${art.snp ?? 0} / ${art.stock_minimo ?? 0}`],
+          ['Clasificacion ABC', art.clasificacion_abc || '-'],
+          ['Estatus', art.activo ? 'Activo' : 'Inactivo'],
+        ],
+        [
+          {
+            titulo: molde ? `Molde ${molde.clave} — que sale de cada disparo` : 'Molde',
+            columnas: [
+              { label: 'Articulo', get: r => r.codigo_interno },
+              { label: 'Descripcion', get: r => r.descripcion },
+              { label: 'Color', get: r => nomColor(r.color_id) },
+              { label: 'Variante', get: r => nomVar(r.variante_codigo_id) },
+              { label: 'Cavidades', get: r => cavDe(r.id) },
+              { label: 'Piezas por disparo', get: r => cavDe(r.id) },
+            ],
+            filas: moldeId ? familia : [],
+            vacio: 'Este articulo no tiene molde ni cavidades asignadas.',
+          },
+          {
+            titulo: 'Otras corridas del mismo molde',
+            columnas: [
+              { label: 'Color', get: r => nomColor(r.color_id) || 'sin color' },
+              { label: 'Variante', get: r => nomVar(r.variante_codigo_id) || 'sin variante' },
+              { label: 'Codigos', get: r => r.codigos.join(', ') },
+            ],
+            filas: [...hermanas.values()],
+            vacio: 'El molde no corre otros colores ni otras variantes de codigo.',
+          },
+          {
+            titulo: 'Ruta de fabricacion',
+            columnas: [
+              ...colArt,
+              { label: 'Sec', get: r => r.secuencia },
+              { label: 'Operacion', get: r => r.tipo_operacion },
+              { label: 'Maquina', get: r => nomMaq(r.maquina_principal_id)?.clave || '' },
+              { label: 'Molde', get: r => r.molde_id === moldeId ? (molde?.clave || '') : '' },
+              { label: 'Personal', get: r => r.personal_requerido },
+              { label: 'Tiempo est. (seg)', get: r => r.tiempo_estandar_seg },
+            ],
+            filas: rRutas.data || [],
+            vacio: 'Sin ruta capturada. Sin tiempo estandar no hay plan de maquina ni costo.',
+          },
+          {
+            titulo: 'Maquinas alternas aprobadas',
+            columnas: [
+              ...colArt,
+              { label: 'Maquina', get: r => nomMaq(r.maquina_solicitada_id)?.clave || '' },
+              { label: 'Nombre', get: r => nomMaq(r.maquina_solicitada_id)?.nombre || '' },
+              { label: 'Aprobada por cliente', get: r => r.aprobada_por_cliente ? 'si' : 'no' },
+              { label: 'Vigencia', get: r => r.doc_vigencia || '-' },
+            ],
+            filas: rAlt.data || [],
+            vacio: 'Solo puede correr en su maquina principal.',
+          },
+          {
+            titulo: 'Lista de materiales',
+            columnas: [
+              ...(varios ? [{ label: 'Articulo', get: r => cod(r.articulo_padre_id) }] : []),
+              { label: 'Componente', get: r => nomArt(r.componente_articulo_id)?.codigo_interno || '' },
+              { label: 'Descripcion', get: r => nomArt(r.componente_articulo_id)?.descripcion || '' },
+              { label: 'Tipo', get: r => r.tipo_componente },
+              { label: 'Cantidad por pieza', get: r => r.cantidad_por_unidad },
+              { label: 'Unidad', get: r => r.unidad_medida },
+            ],
+            filas: rBom.data || [],
+            vacio: 'Sin lista de materiales.',
+          },
+          {
+            titulo: 'Normas de empaque',
+            columnas: [
+              ...colArt,
+              { label: 'Norma', get: r => r.nombre },
+              { label: 'Tipo', get: r => r.tipo },
+              { label: 'Piezas por empaque', get: r => r.piezas_por_empaque },
+              { label: 'Piezas por tarima', get: r => r.piezas_por_tarima },
+              { label: 'Aprobada por cliente', get: r => r.aprobada_cliente ? 'si' : 'no' },
+              { label: 'Vigente', get: r => r.activa ? 'si' : 'no' },
+            ],
+            filas: rNormas.data || [],
+            vacio: 'Sin norma de empaque capturada.',
+          },
+          {
+            titulo: 'Clientes',
+            columnas: [
+              ...colArt,
+              { label: 'Cliente', get: r => nomCli(r.cliente_id)?.nombre || '' },
+              { label: 'Codigo del cliente', get: r => r.codigo_cliente || '' },
+              { label: 'Precio', get: r => r.precio },
+              { label: 'Vigente', get: r => r.activo ? 'si' : 'no' },
+            ],
+            filas: rCli.data || [],
+            vacio: 'Sin clientes asignados.',
+          },
+          {
+            titulo: parte ? `Partes equivalentes — ${parte.clave}` : 'Partes equivalentes',
+            columnas: [
+              { label: 'Codigo', get: r => r.codigo_interno },
+              { label: 'Descripcion', get: r => r.descripcion },
+              { label: 'Es este', get: r => r.id === art.id ? 'si' : '' },
+            ],
+            filas: (rEquiv.data || []),
+            vacio: 'Este codigo no tiene equivalentes: se planea y se surte solo.',
+          },
+        ],
+        w,
+      )
+    } catch (e) {
+      fallaEnVentana(w, 'No se pudo armar la ficha: ' + (e?.message || e))
+    }
+  }
 
   const colsArt = [{ label: 'Codigo', get: a => a.codigo_interno }, { label: 'Descripcion', get: a => a.descripcion }, { label: 'Categoria', get: a => a.categorias?.nombre || '' }, { label: 'Tipo', get: a => a.origen }, { label: 'Unidad', get: a => a.unidad_medida }, { label: 'Moneda', get: a => a.tipo_moneda }, { label: 'Costo', get: a => a.costo }, { label: 'Site', get: a => a.sites?.nombre || 'Compartido' }, { label: 'Estatus', get: a => a.activo ? 'Activo' : 'Inactivo' }]
 
@@ -886,6 +1109,10 @@ export default function Articulos() {
                 </span>
               </span>
               <span style={{ flex: 3, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                <button style={styles.botonAccion} title="Ficha imprimible: molde, maquina, ruta, BOM, empaque, clientes y equivalentes"
+                  onClick={() => imprimirFichaArticulo(a)}>
+                  Ficha
+                </button>
                 {a.origen === 'fabricado' ? (
                   <button style={styles.botonAccion} onClick={() => abrirClientes(a)}>
                     Clientes

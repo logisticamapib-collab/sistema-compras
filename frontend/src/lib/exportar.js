@@ -59,8 +59,14 @@ export function imprimirTablaPDF(titulo, columnas, filas) {
 // detalle, no una lista.
 // datos:  [[etiqueta, valor], ...]
 // tablas: [{ titulo, columnas, filas, vacio }]
-export function imprimirFichaPDF(titulo, subtitulo, datos, tablas) {
-  const w = window.open('', '_blank', 'width=1024,height=720')
+//
+// `ventana` es opcional y existe por una razon concreta: el navegador solo
+// deja abrir una ventana durante el gesto del usuario. Si la ficha necesita
+// consultar datos antes de armarse, hay que abrir la ventana en el clic con
+// abrirVentanaFicha(), esperar los datos, y pasarla aqui. Abrirla despues del
+// await la bloquea el navegador.
+export function imprimirFichaPDF(titulo, subtitulo, datos, tablas, ventana) {
+  const w = ventana || window.open('', '_blank', 'width=1024,height=720')
   if (!w) { alert('Permite las ventanas emergentes para descargar el PDF.'); return }
   const fecha = new Date().toLocaleString('es-MX')
   const campos = (datos || []).map(([k, v]) =>
@@ -97,4 +103,24 @@ export function imprimirFichaPDF(titulo, subtitulo, datos, tablas) {
     </body></html>`)
   w.document.close(); w.focus()
   setTimeout(() => { w.print() }, 350)
+}
+
+// Abre la ventana de la ficha durante el clic y le pone un aviso mientras se
+// preparan los datos. Devuelve null si el navegador la bloqueo.
+export function abrirVentanaFicha(mensaje = 'Preparando la ficha...') {
+  const w = window.open('', '_blank', 'width=1024,height=720')
+  if (!w) { alert('Permite las ventanas emergentes para poder imprimir la ficha.'); return null }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(mensaje)}</title></head>
+    <body style="font-family:Arial,sans-serif;color:#64748b;padding:40px">${esc(mensaje)}</body></html>`)
+  return w
+}
+
+// Si algo falla despues de haber abierto la ventana, hay que decirlo ahi
+// dentro: dejarla en blanco parece que el sistema se colgo.
+export function fallaEnVentana(w, mensaje) {
+  if (!w) return
+  w.document.open()
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>No se pudo armar la ficha</title></head>
+    <body style="font-family:Arial,sans-serif;color:#dc2626;padding:40px">${esc(mensaje)}</body></html>`)
+  w.document.close()
 }
