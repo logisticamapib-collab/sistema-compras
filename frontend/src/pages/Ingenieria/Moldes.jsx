@@ -1,7 +1,27 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
+import { exportarExcel, exportarExcelHojas, imprimirTablaPDF, imprimirFichaPDF } from '../../lib/exportar'
+import CargaMasivaCatalogo from '../../components/CargaMasivaCatalogo'
+
+const ESTADOS_MOLDE = ['disponible', 'en_produccion', 'en_reparacion', 'en_mantenimiento', 'en_maquila', 'fuera_servicio']
+
+// Las columnas del reporte y las de la plantilla se llaman IGUAL a proposito:
+// el archivo que baja es el que se vuelve a subir, sin rearmar encabezados.
+const COLS_REP_MOLDES = [
+  { label: 'clave', get: m => m.clave },
+  { label: 'nombre', get: m => m.nombre },
+  { label: 'num_cavidades', get: m => m.num_cavidades },
+  { label: 'estado', get: m => m.estado },
+  { label: 'ubicacion_fisica', get: m => m.ubicacion_fisica },
+  { label: 'site', get: m => m.site?.nombre || '' },
+  { label: 'maquina_asignada', get: m => m.maq?.clave || '' },
+  { label: 'periodicidad_mtto_dias', get: m => m.periodicidad_mtto_dias },
+  { label: 'shots_alerta_min', get: m => m.shots_alerta_min },
+  { label: 'shots_alerta_max', get: m => m.shots_alerta_max },
+  { label: 'shots_acumulados', get: m => m.shots_acumulados },
+  { label: 'activo', get: m => m.activo ? 'si' : 'no' },
+]
 
 const formVacio = {
   clave: '', nombre: '', num_cavidades: 1,
@@ -30,6 +50,11 @@ export default function Moldes() {
   // disparo, y de ahi los shots de una orden; repetido en dos moldes esa
   // cuenta deja de tener un solo significado.
   const [moldeDeArt, setMoldeDeArt] = useState(new Map())
+  // Todas las cavidades de todos los moldes: alimenta el mapa de arriba y el
+  // reporte, que necesita el detalle y no solo el articulo.
+  const [cavidadesTodas, setCavidadesTodas] = useState([])
+  const [mostrarCarga, setMostrarCarga] = useState(false)
+  const [vistaCarga, setVistaCarga] = useState('moldes')
   const [exito, setExito] = useState('')
 
   const puedeCrear = tienePermiso('ing_moldes', 'crear')
@@ -47,7 +72,7 @@ export default function Moldes() {
       supabase.from('articulos').select('id, codigo_interno, descripcion, color_id, variante_codigo_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
       supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
       supabase.from('variantes_codigo').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
-      supabase.from('molde_cavidades').select('molde_id, articulo_id').not('articulo_id', 'is', null),
+      supabase.from('molde_cavidades').select('id, molde_id, numero_cavidad, articulo_id, activa'),
     ])
     setMoldes(mol || [])
     setSites(sit || [])
@@ -55,14 +80,197 @@ export default function Moldes() {
     setArticulos(art || [])
     setColores(cols || [])
     setVariantes(vars_ || [])
+    setCavidadesTodas(asig || [])
     const mapa = new Map()
-    for (const x of asig || []) mapa.set(x.articulo_id, x.molde_id)
+    for (const x of asig || []) if (x.articulo_id != null) mapa.set(x.articulo_id, x.molde_id)
     setMoldeDeArt(mapa)
     setLoading(false)
   }
 
   const moldesFiltrados = moldes.filter(m => !filtroMol || (`${m.clave} ${m.nombre}`).toLowerCase().includes(filtroMol.toLowerCase()))
   const colsMol = [{ label: 'Clave', get: m => m.clave }, { label: 'Nombre', get: m => m.nombre }, { label: 'Cavidades', get: m => m.num_cavidades }, { label: 'Shots acum.', get: m => m.shots_acumulados }, { label: 'Estado', get: m => m.estado }, { label: 'Site', get: m => m.site?.nombre || '' }, { label: 'Maquina PPAP', get: m => m.maq?.clave || '' }, { label: 'Ubicacion', get: m => m.ubicacion_fisica || '' }, { label: 'Estatus', get: m => m.activo ? 'Activo' : 'Inactivo' }]
+  const artDe = (id) => articulos.find(a => a.id === id)
+  const molDe = (id) => moldes.find(m => m.id === id)
+  const claveColor = (a) => colores.find(c => c.id === a?.color_id)?.clave || ''
+  const claveVar = (a) => variantes.find(v => v.id === a?.variante_codigo_id)?.clave || ''
+
+  // Cavidades de un molde, ordenadas y con el articulo resuelto.
+  const cavidadesDe = (moldeId) => cavidadesTodas
+    .filter(c => c.molde_id === moldeId)
+    .sort((a, b) => a.numero_cavidad - b.numero_cavidad || (a.id - b.id))
+
+  const COLS_REP_CAV = [
+    { label: 'molde', get: c => molDe(c.molde_id)?.clave || '' },
+    { label: 'numero_cavidad', get: c => c.numero_cavidad },
+    { label: 'articulo', get: c => artDe(c.articulo_id)?.codigo_interno || '' },
+    { label: 'descripcion', get: c => artDe(c.articulo_id)?.descripcion || '' },
+    { label: 'color', get: c => claveColor(artDe(c.articulo_id)) },
+    { label: 'variante_codigo', get: c => claveVar(artDe(c.articulo_id)) },
+    { label: 'estado_cavidad', get: c => c.activa === false ? 'tapada' : 'activa' },
+  ]
+
+  // Un molde y sus cavidades son dos niveles distintos: aplanarlos repetiria
+  // el encabezado del molde en cada renglon. Por eso van en dos hojas.
+  const descargarReporte = () => {
+    const ids = new Set(moldesFiltrados.map(m => m.id))
+    // Cuantas cavidades quedaron sin nadie: es el dato que se pierde al no
+    // llevar los renglones vacios a la hoja de Cavidades.
+    const sinAsignar = (m) => {
+      const suyas = cavidadesTodas.filter(c => c.molde_id === m.id)
+      const conArt = new Set(suyas.filter(c => c.articulo_id != null).map(c => c.numero_cavidad))
+      let n = 0
+      for (let i = 1; i <= (m.num_cavidades || 0); i++) if (!conArt.has(i)) n++
+      return n
+    }
+    const colsMoldes = [...COLS_REP_MOLDES, { label: 'cavidades_sin_asignar', get: sinAsignar }]
+    exportarExcelHojas('moldes_y_cavidades', [
+      { nombre: 'Moldes', columnas: colsMoldes, filas: moldesFiltrados },
+      {
+        nombre: 'Cavidades', columnas: COLS_REP_CAV,
+        // Solo las asignadas: con los renglones vacios adentro, volver a subir
+        // este mismo archivo marcaria cada uno como "articulo vacio". El hueco
+        // no se pierde, se ve en la hoja de Moldes y con detalle en la ficha.
+        filas: cavidadesTodas
+          .filter(c => ids.has(c.molde_id) && c.articulo_id != null)
+          .sort((a, b) => (molDe(a.molde_id)?.clave || '').localeCompare(molDe(b.molde_id)?.clave || '')
+            || a.numero_cavidad - b.numero_cavidad),
+      },
+    ])
+  }
+
+  // Ficha de un molde: lo que se pega en el tooling o se le entrega al auditor.
+  const imprimirFicha = (m) => {
+    const cavs = cavidadesDe(m.id)
+    // Corridas: agrupadas por color + variante. Cada grupo es un disparo
+    // distinto y de ahi salen las piezas por shot de cada codigo.
+    const grupos = new Map()
+    cavs.filter(c => c.articulo_id && c.activa !== false).forEach(c => {
+      const a = artDe(c.articulo_id); if (!a) return
+      const k = `${a.color_id ?? 'sc'}|${a.variante_codigo_id ?? 'sv'}`
+      if (!grupos.has(k)) grupos.set(k, { color: claveColor(a), variante: claveVar(a), porArt: new Map() })
+      const g = grupos.get(k)
+      g.porArt.set(a.id, (g.porArt.get(a.id) || 0) + 1)
+    })
+    const corridas = [...grupos.values()].map(g => ({
+      color: g.color || 'sin color',
+      variante: g.variante || 'sin variante',
+      codigos: [...g.porArt.entries()].map(([id, n]) => `${artDe(id)?.codigo_interno || id} (${n} pz/disparo)`).join(', '),
+      cubre: [...g.porArt.values()].reduce((x, y) => x + y, 0),
+    }))
+    imprimirFichaPDF(
+      `Molde ${m.clave}${m.nombre ? ' — ' + m.nombre : ''}`,
+      `Ficha de molde y asignacion de cavidades`,
+      [
+        ['Clave', m.clave], ['Nombre', m.nombre || '-'],
+        ['Cavidades', m.num_cavidades], ['Estado', m.estado || '-'],
+        ['Planta', m.site?.nombre || '-'], ['Maquina asignada', m.maq?.clave || '-'],
+        ['Ubicacion fisica', m.ubicacion_fisica || '-'],
+        ['Shots acumulados', m.shots_acumulados ?? 0],
+        ['Alerta de shots', `${m.shots_alerta_min ?? '-'} / ${m.shots_alerta_max ?? '-'}`],
+        ['Periodicidad mtto (dias)', m.periodicidad_mtto_dias ?? '-'],
+        ['Ultimo mantenimiento', m.fecha_ultimo_mtto || '-'],
+        ['Estatus', m.activo ? 'Activo' : 'Inactivo'],
+      ],
+      [
+        {
+          titulo: 'Cavidades', columnas: [
+            { label: 'Cavidad', get: c => `#${c.numero_cavidad}` },
+            { label: 'Articulo', get: c => artDe(c.articulo_id)?.codigo_interno || 'sin asignar' },
+            { label: 'Descripcion', get: c => artDe(c.articulo_id)?.descripcion || '' },
+            { label: 'Color', get: c => claveColor(artDe(c.articulo_id)) },
+            { label: 'Variante', get: c => claveVar(artDe(c.articulo_id)) },
+            { label: 'Estado', get: c => c.activa === false ? 'TAPADA' : 'activa' },
+          ], filas: cavs, vacio: 'Este molde no tiene cavidades capturadas.',
+        },
+        {
+          titulo: `Corridas separadas (${corridas.length})`, columnas: [
+            { label: 'Color', get: c => c.color },
+            { label: 'Variante', get: c => c.variante },
+            { label: 'Codigos del disparo', get: c => c.codigos },
+            { label: 'Cavidades', get: c => `${c.cubre} de ${m.num_cavidades}` },
+          ], filas: corridas,
+          vacio: 'Sin articulos asignados: el molde no tiene corridas definidas.',
+        },
+      ],
+    )
+  }
+
+  // Reglas que solo este catalogo conoce. Se pide una nueva por archivo para
+  // que lo ya visto arranque limpio y no se contamine entre cargas.
+  const crearValidadorCavidades = () => {
+    const triplesArchivo = new Set()
+    // articulo -> molde, arrancando con lo que ya hay en la base y creciendo
+    // con lo que trae el propio archivo.
+    const moldeDeArtArchivo = new Map(moldeDeArt)
+    const triplesSistema = new Set(
+      cavidadesTodas.filter(c => c.articulo_id != null)
+        .map(c => `${c.molde_id}|${c.numero_cavidad}|${c.articulo_id}`)
+    )
+
+    return (payload) => {
+      const err = []
+      const { molde_id: mid, numero_cavidad: cav, articulo_id: aid } = payload
+      if (!mid || !aid) return err   // el error de referencia ya lo puso el componente
+
+      const m = molDe(mid)
+      if (cav == null || !Number.isInteger(cav) || cav < 1) {
+        err.push('numero_cavidad debe ser un entero de 1 en adelante')
+      } else if (m && m.num_cavidades && cav > m.num_cavidades) {
+        err.push(`el molde ${m.clave} tiene ${m.num_cavidades} cavidades: la ${cav} no existe`)
+      }
+
+      // Un articulo pertenece a un solo molde. Se revisa contra la base y
+      // contra lo que va trayendo el archivo, porque la base todavia no lo sabe.
+      const yaEn = moldeDeArtArchivo.get(aid)
+      if (yaEn != null && yaEn !== mid) {
+        err.push(`el articulo ya esta asignado al molde ${molDe(yaEn)?.clave || yaEn}`)
+      } else {
+        moldeDeArtArchivo.set(aid, mid)
+      }
+
+      const triple = `${mid}|${cav}|${aid}`
+      if (triplesArchivo.has(triple)) err.push('ese articulo ya viene en esa misma cavidad en el archivo')
+      else triplesArchivo.add(triple)
+      if (triplesSistema.has(triple)) err.push('ese articulo ya esta asignado a esa cavidad')
+
+      return err
+    }
+  }
+
+  // Despues de una carga masiva hay que dejar la tabla como la deja la pantalla:
+  // cada molde con sus renglones de cavidad, y sin renglones vacios en las
+  // cavidades que ya tienen articulo. Sin esto la pantalla de cavidades sale en
+  // blanco tras cargar moldes, y con renglones fantasma tras cargar cavidades.
+  const reconciliarCavidades = async () => {
+    const { data: mol } = await supabase.from('moldes').select('id, num_cavidades').eq('empresa_id', perfil.empresa_id)
+    const { data: cav } = await supabase.from('molde_cavidades').select('id, molde_id, numero_cavidad, articulo_id')
+    const porMolde = new Map()
+    for (const c of cav || []) {
+      if (!porMolde.has(c.molde_id)) porMolde.set(c.molde_id, [])
+      porMolde.get(c.molde_id).push(c)
+    }
+
+    const faltantes = []
+    for (const m of mol || []) {
+      const suyas = porMolde.get(m.id) || []
+      const nums = new Set(suyas.map(c => c.numero_cavidad))
+      for (let i = 1; i <= (m.num_cavidades || 0); i++) {
+        if (!nums.has(i)) faltantes.push({ molde_id: m.id, numero_cavidad: i })
+      }
+    }
+    if (faltantes.length) await supabase.from('molde_cavidades').insert(faltantes)
+
+    // Renglon vacio de una cavidad que ya tiene articulo: sobra.
+    const sobran = []
+    for (const [, suyas] of porMolde) {
+      const conArt = new Set(suyas.filter(c => c.articulo_id != null).map(c => c.numero_cavidad))
+      suyas.filter(c => c.articulo_id == null && conArt.has(c.numero_cavidad)).forEach(c => sobran.push(c.id))
+    }
+    if (sobran.length) await supabase.from('molde_cavidades').delete().in('id', sobran)
+
+    await cargarDatos()
+  }
+
   const abrirNuevo = () => { setEditando(null); setForm(formVacio); setMostrarForm(true); setError('') }
   const abrirEditar = (m) => {
     setEditando(m)
@@ -221,7 +429,10 @@ export default function Moldes() {
   if (moldeCavidades) {
     return (
       <div style={styles.container}>
-        <button style={styles.botonVolver} onClick={() => setMoldeCavidades(null)}>&larr; Volver a moldes</button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <button style={styles.botonVolver} onClick={() => setMoldeCavidades(null)}>&larr; Volver a moldes</button>
+          <button style={styles.botonAccion} onClick={() => imprimirFicha(moldeCavidades.molde)}>Imprimir ficha del molde</button>
+        </div>
         <h2 style={styles.titulo}>Cavidades: {moldeCavidades.molde.clave}</h2>
         <p style={{ fontSize: '13px', color: '#666', marginBottom: '6px', lineHeight: 1.55 }}>
           Asigna que articulo produce cada cavidad. Si el molde produce piezas espejo (izquierda / derecha),
@@ -414,11 +625,99 @@ export default function Moldes() {
       <div style={styles.encabezado}>
         <h2 style={styles.titulo}>Moldes</h2>
         {puedeCrear && (
-          <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
-            {mostrarForm ? 'Cancelar' : '+ Nuevo molde'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button style={styles.botonSec} onClick={() => { setMostrarCarga(!mostrarCarga); setMostrarForm(false) }}>
+              {mostrarCarga ? 'Cerrar carga masiva' : 'Carga masiva'}
+            </button>
+            <button style={styles.boton} onClick={() => mostrarForm ? setMostrarForm(false) : abrirNuevo()}>
+              {mostrarForm ? 'Cancelar' : '+ Nuevo molde'}
+            </button>
+          </div>
         )}
       </div>
+
+      {mostrarCarga && puedeCrear && (
+        <div style={styles.cargaCaja}>
+          <div style={styles.cargaTabs}>
+            {[['moldes', 'Moldes'], ['cavidades', 'Cavidades']].map(([id, n]) => (
+              <button key={id} style={vistaCarga === id ? styles.cargaTabAct : styles.cargaTab}
+                onClick={() => setVistaCarga(id)}>{n}</button>
+            ))}
+          </div>
+          <p style={styles.cargaAyuda}>
+            Primero los <b>moldes</b>, despues las <b>cavidades</b>: una cavidad no se puede asignar a un molde
+            que todavia no existe. El reporte de Excel que baja de esta pantalla trae exactamente estas dos
+            hojas con los mismos encabezados, asi que sirve de respaldo y se puede volver a subir sin rearmar nada.
+          </p>
+
+          {vistaCarga === 'moldes' && (
+            <CargaMasivaCatalogo
+              titulo="Moldes"
+              tabla="moldes"
+              columnas={[
+                { campo: 'clave', req: true, upper: true, ayuda: 'Ej: BK007. Identifica al molde y no puede repetirse.' },
+                { campo: 'nombre', ayuda: 'Nombre o descripcion del molde.' },
+                { campo: 'num_cavidades', tipo: 'num', req: true, ayuda: 'Cuantas cavidades tiene fisicamente. Se crean solas para asignarlas despues.' },
+                { campo: 'estado', tipo: 'lista', opciones: ESTADOS_MOLDE, ayuda: ESTADOS_MOLDE.join(' / ') + '. Vacio = disponible.' },
+                { campo: 'ubicacion_fisica', ayuda: 'Rack, estante, area donde se guarda.' },
+                { campo: 'site_id', columna: 'site', tipo: 'ref', ref: { lista: sites, por: 'nombre', etiqueta: 'site' }, ayuda: 'Nombre de la planta. Vacio si no aplica.' },
+                { campo: 'maquina_asignada_id', columna: 'maquina_asignada', tipo: 'ref', ref: { lista: maquinas, por: 'clave', etiqueta: 'maquina' }, ayuda: 'Clave de la maquina donde se corrio el PPAP.' },
+                { campo: 'periodicidad_mtto_dias', tipo: 'num', ayuda: 'Dias entre mantenimientos preventivos.' },
+                { campo: 'shots_alerta_min', tipo: 'num', ayuda: 'Disparos a los que se avisa que se acerca el preventivo.' },
+                { campo: 'shots_alerta_max', tipo: 'num', ayuda: 'Disparos a los que ya se vencio.' },
+                { campo: 'shots_acumulados', tipo: 'num', ayuda: 'Disparos que ya trae el molde. Sirve para migrar desde otro sistema.' },
+              ]}
+              dedupe={[{ campo: 'clave', etiqueta: 'Clave' }]}
+              ejemplos={[
+                ['BK007', 'Tapa frontal familiar', 4, 'disponible', 'Rack A-12', '', '', 90, 250000, 300000, 0],
+                ['BK012', 'Clip lateral', 8, 'en_produccion', 'Rack B-03', '', '', 180, 400000, 500000, 125000],
+              ]}
+              notas={[
+                'Los moldes se dan de alta como Activos.',
+                'Al cargarlos se crean sus renglones de cavidad vacios, listos para asignar articulos en la hoja de Cavidades.',
+                'shots_acumulados solo se usa para migrar: de ahi en adelante los cuenta el sistema con cada reporte de produccion.',
+              ]}
+              existentes={moldes}
+              camposBase={{ empresa_id: perfil.empresa_id, activo: true }}
+              empresaId={perfil.empresa_id}
+              puedeCargar={puedeCrear}
+              onCargado={reconciliarCavidades}
+              onCerrar={() => setMostrarCarga(false)}
+            />
+          )}
+
+          {vistaCarga === 'cavidades' && (
+            <CargaMasivaCatalogo
+              titulo="Cavidades"
+              tabla="molde_cavidades"
+              columnas={[
+                { campo: 'molde_id', columna: 'molde', tipo: 'ref', req: true, ref: { lista: moldes, por: 'clave', etiqueta: 'molde' }, ayuda: 'Clave del molde. Tiene que existir ya.' },
+                { campo: 'numero_cavidad', tipo: 'num', req: true, ayuda: 'Numero de cavidad, de 1 al numero de cavidades del molde.' },
+                { campo: 'articulo_id', columna: 'articulo', tipo: 'ref', req: true, ref: { lista: articulos, por: 'codigo_interno', etiqueta: 'articulo' }, ayuda: 'Codigo del articulo que sale de esa cavidad.' },
+              ]}
+              ejemplos={[
+                ['BK007', 1, 'QG1HA005A0000L10'],
+                ['BK007', 2, 'QG1HA005A0000L10'],
+                ['BK007', 3, 'QG1HA005A0000L10'],
+                ['BK007', 4, 'QG1HA005A0000L10'],
+              ]}
+              notas={[
+                'Un renglon por cavidad y por articulo. Si las 4 cavidades sacan el MISMO codigo, van los 4 renglones con ese codigo: de ahi sale cuantas piezas entrega cada disparo.',
+                'Si el molde saca izquierda y derecha, pon el codigo que corresponde a cada cavidad.',
+                'Si la misma cavidad corre varios colores o varias variantes de codigo, agrega un renglon por cada uno.',
+                'Un articulo pertenece a UN SOLO molde. Si ya esta en otro, la fila se rechaza y te dice en cual.',
+                'Solo agrega lo que falta: lo que ya estaba capturado se respeta y se reporta como repetido.',
+              ]}
+              crearValidador={crearValidadorCavidades}
+              camposBase={{ activa: true }}
+              empresaId={perfil.empresa_id}
+              puedeCargar={puedeCrear}
+              onCargado={reconciliarCavidades}
+              onCerrar={() => setMostrarCarga(false)}
+            />
+          )}
+        </div>
+      )}
 
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
@@ -477,7 +776,10 @@ export default function Moldes() {
       <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' }}>
         <input style={{ padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', width: '260px' }} value={filtroMol} onChange={e => setFiltroMol(e.target.value)} placeholder="Filtrar por clave o nombre..." />
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
-          <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('moldes', colsMol, moldesFiltrados)}>Excel</button>
+          <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }}
+            title="Dos hojas: los moldes y el detalle de que articulo va en cada cavidad. Es el mismo formato de la plantilla de carga."
+            onClick={descargarReporte}>Excel: moldes + cavidades</button>
+          <button style={{ padding: '9px 14px', backgroundColor: '#fff', color: '#16a34a', border: '1px solid #16a34a', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('moldes', colsMol, moldesFiltrados)}>Excel: solo moldes</button>
           <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => imprimirTablaPDF('Moldes', colsMol, moldesFiltrados)}>PDF</button>
         </div>
       </div>
@@ -508,6 +810,7 @@ export default function Moldes() {
               </span>
               <span style={{ flex: 2 }}>
                 <button style={styles.botonAccion} onClick={() => abrirCavidades(m)}>Cavidades</button>
+                <button style={{ ...styles.botonAccion, marginLeft: '6px' }} title="Ficha imprimible del molde con sus cavidades y sus corridas" onClick={() => imprimirFicha(m)}>Ficha</button>
                 {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => abrirEditar(m)}>Editar</button>}
                 {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => toggleActivo(m)}>{m.activo ? 'Desactivar' : 'Activar'}</button>}
               </span>
@@ -543,6 +846,12 @@ const styles = {
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', width: '100%', boxSizing: 'border-box' },
   botones: { display: 'flex', justifyContent: 'flex-end' },
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
+  botonSec: { padding: '9px 20px', backgroundColor: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
+  cargaCaja: { backgroundColor: '#f8fafc', border: '1px solid #eef2f7', borderRadius: '10px', padding: '16px', marginBottom: '20px' },
+  cargaTabs: { display: 'flex', gap: '4px', borderBottom: '1px solid #e2e8f0', marginBottom: '10px' },
+  cargaTab: { padding: '7px 16px', border: 'none', background: 'transparent', fontSize: '13.5px', color: '#64748b', cursor: 'pointer', borderBottom: '2px solid transparent' },
+  cargaTabAct: { padding: '7px 16px', border: 'none', background: 'transparent', fontSize: '13.5px', color: '#2563eb', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid #2563eb' },
+  cargaAyuda: { fontSize: '12.5px', color: '#64748b', margin: '0 0 12px', lineHeight: 1.6, maxWidth: '900px' },
   botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },

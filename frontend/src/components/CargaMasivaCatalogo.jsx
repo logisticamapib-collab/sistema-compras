@@ -18,7 +18,20 @@ import { supabase } from '../lib/supabase'
 // celda vacia borra un dato bueno y nadie se entera.
 //
 // Especificacion de una columna:
-//   { campo, req, tipo: 'texto'|'num'|'bool'|'lista', opciones, upper, ayuda }
+//   { campo, columna, req, tipo, opciones, upper, ayuda, ref }
+//
+//   campo    nombre del campo en la base
+//   columna  encabezado en el Excel; por omision es el mismo que campo. Sirve
+//            para que el usuario escriba "molde" y la base reciba "molde_id".
+//   tipo     'texto' | 'num' | 'bool' | 'lista' | 'ref'
+//   ref      solo para tipo 'ref': { lista, por, etiqueta }. Resuelve el texto
+//            que escribio el usuario contra un catalogo y guarda el id. Nunca
+//            se le piden ids internos a quien llena la plantilla.
+//
+// Reglas propias de cada catalogo: la prop crearValidador. Devuelve una
+// funcion (payload, filaCruda, numeroDeFila) => [errores]. Se pide una nueva
+// por cada archivo para que el estado que acumule -- lo ya visto, por ejemplo
+// -- arranque limpio y no se contamine entre cargas.
 
 const boolCel = (v) => ['si', 'sí', 'x', '1', 'true', 'verdadero', 'y', 'yes'].includes(String(v ?? '').trim().toLowerCase())
 const numCel = (v) => { const n = parseFloat(String(v ?? '').replace(',', '.')); return isNaN(n) ? null : n }
@@ -33,6 +46,11 @@ export default function CargaMasivaCatalogo({
   ejemplos = [],     // filas de ejemplo para la plantilla
   notas = [],        // lineas extra para la hoja de Instrucciones
   existentes = [],   // registros ya en el sistema, para detectar duplicados
+  crearValidador,    // () => (payload, cruda, n) => [errores]  reglas del catalogo
+  // Campos fijos que lleva cada renglon. No todas las tablas tienen las
+  // mismas columnas de control: molde_cavidades, por ejemplo, no tiene
+  // empresa_id y su bandera se llama `activa`, no `activo`.
+  camposBase,
   empresaId,
   puedeCargar = false,
   onCargado,
@@ -43,7 +61,9 @@ export default function CargaMasivaCatalogo({
   const [proc, setProc] = useState(false)
   const [resultado, setResultado] = useState(null)
 
-  const cols = columnas.map(c => c.campo)
+  // Encabezados de la plantilla. `columna` permite que el usuario escriba
+  // "molde" mientras la base recibe "molde_id".
+  const cols = columnas.map(c => c.columna || c.campo)
 
   const descargarPlantilla = () => {
     const wb = XLSX.utils.book_new()
@@ -59,11 +79,12 @@ export default function CargaMasivaCatalogo({
       [''],
       ['Columna', 'Que va aqui'],
       ...columnas.map(c => [
-        c.campo + (c.req ? ' (obligatorio)' : ''),
+        (c.columna || c.campo) + (c.req ? ' (obligatorio)' : ''),
         c.ayuda || (c.tipo === 'bool' ? 'escribe si / no'
           : c.tipo === 'num' ? 'numero'
             : c.tipo === 'lista' ? (c.opciones || []).join(' / ')
-              : 'texto'),
+              : c.tipo === 'ref' ? `${c.ref?.etiqueta || 'catalogo'} existente, por ${c.ref?.por || 'clave'}`
+                : 'texto'),
       ]),
       ...(notas.length ? [[''], ['NOTAS'], ...notas.map(n => [n])] : []),
     ]
@@ -98,21 +119,39 @@ export default function CargaMasivaCatalogo({
     // vistos: por cada campo de dedupe, lo que ya salio en ESTE archivo.
     const vistos = {}
     dedupe.forEach(d => { vistos[d.campo] = new Set() })
+    // Validador propio del catalogo, nuevo por archivo.
+    const validarCatalogo = crearValidador ? crearValidador() : null
 
     const out = rows.map((r, i) => {
       const err = []
-      const payload = { empresa_id: empresaId, activo: true }
+      const payload = { ...(camposBase || { empresa_id: empresaId, activo: true }) }
 
       for (const c of columnas) {
-        const crudo = r[c.campo]
+        const crudo = r[c.columna || c.campo]
+
+        if (c.tipo === 'ref') {
+          // Se busca por texto contra el catalogo, sin importar mayusculas ni
+          // espacios de mas. Si no esta, se dice cual no se encontro.
+          const v = txt(crudo)
+          if (!v) {
+            if (c.req) err.push(`${c.columna || c.campo} vacio`)
+            payload[c.campo] = null
+          } else {
+            const enc = (c.ref?.lista || []).find(x => norm(x[c.ref.por]) === norm(v))
+            if (!enc) err.push(`${c.ref?.etiqueta || c.columna || c.campo} "${v}" no existe`)
+            payload[c.campo] = enc ? enc.id : null
+          }
+          continue
+        }
+
         if (c.tipo === 'bool') {
           payload[c.campo] = boolCel(crudo)
           continue
         }
         if (c.tipo === 'num') {
           const n = numCel(crudo)
-          if (c.req && n == null) err.push(`${c.campo} vacio o no numerico`)
-          else if (txt(crudo) && n == null) err.push(`${c.campo} no es un numero`)
+          if (c.req && n == null) err.push(`${c.columna || c.campo} vacio o no numerico`)
+          else if (txt(crudo) && n == null) err.push(`${c.columna || c.campo} no es un numero`)
           payload[c.campo] = n ?? (c.defecto ?? null)
           continue
         }
@@ -120,10 +159,10 @@ export default function CargaMasivaCatalogo({
         if (c.upper) v = v.toUpperCase()
         if (c.tipo === 'lista' && v) {
           const op = (c.opciones || []).find(o => norm(o) === norm(v))
-          if (!op) err.push(`${c.campo} debe ser: ${(c.opciones || []).join(' / ')}`)
+          if (!op) err.push(`${c.columna || c.campo} debe ser: ${(c.opciones || []).join(' / ')}`)
           else v = op
         }
-        if (c.req && !v) err.push(`${c.campo} vacio`)
+        if (c.req && !v) err.push(`${c.columna || c.campo} vacio`)
         payload[c.campo] = v || null
       }
 
@@ -136,7 +175,14 @@ export default function CargaMasivaCatalogo({
         if (existentes.some(x => norm(x[d.campo]) === v)) err.push(`${d.etiqueta} ya existe en el sistema`)
       }
 
-      const etiqueta = txt(r[columnas.find(c => c.req)?.campo]) || txt(r[cols[0]])
+      // Reglas que solo el catalogo conoce: rango de una cavidad contra su
+      // molde, un articulo que ya vive en otro molde, y demas.
+      if (validarCatalogo) {
+        for (const e of (validarCatalogo(payload, r, i + 2) || [])) err.push(e)
+      }
+
+      const colReq = columnas.find(c => c.req)
+      const etiqueta = txt(r[colReq ? (colReq.columna || colReq.campo) : cols[0]]) || txt(r[cols[0]])
       return { n: i + 2, payload, errores: err, etiqueta }
     })
     setFilas(out)
