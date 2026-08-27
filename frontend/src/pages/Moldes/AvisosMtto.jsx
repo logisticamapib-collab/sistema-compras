@@ -93,7 +93,8 @@ export default function AvisosMtto() {
         empresa_id: perfil.empresa_id, folio, molde_id: a.molde_id, tipo_id: tipo?.id || null,
         motivo_origen: 'interno', causa: a.causa_probable || 'molde', maquina_id: a.maquina_id,
         turno_id: a.turno_id, operador_id: a.operador_id, descripcion: `Desde aviso ${a.folio}: ${a.descripcion || ''}`.trim(),
-        reinicia_contador: !!tipo?.reinicia_contador, shots_al_abrir: Number(molde?.shots_acumulados || 0),
+        reinicia_contador: !!tipo?.reinicia_contador, reinicia_calendario: !!tipo?.reinicia_calendario,
+        shots_al_abrir: Number(molde?.shots_acumulados || 0),
         estatus: 'en_proceso', fecha_inicio: new Date().toISOString(), aviso_id: a.id, creado_por: perfil.id,
       }).select().single()
       if (e1) throw e1

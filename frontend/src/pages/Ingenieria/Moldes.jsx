@@ -25,7 +25,7 @@ const COLS_REP_MOLDES = [
 
 const formVacio = {
   clave: '', nombre: '', num_cavidades: 1,
-  shots_alerta_min: '', shots_alerta_max: '', ubicacion_fisica: '',
+  shots_alerta_min: '', shots_alerta_max: '', periodicidad_mtto_dias: '', ubicacion_fisica: '',
   site_id: '', maquina_asignada_id: ''
 }
 
@@ -277,6 +277,7 @@ export default function Moldes() {
     setForm({
       clave: m.clave, nombre: m.nombre || '', num_cavidades: m.num_cavidades,
       shots_alerta_min: m.shots_alerta_min || '', shots_alerta_max: m.shots_alerta_max || '',
+      periodicidad_mtto_dias: m.periodicidad_mtto_dias || '',
       ubicacion_fisica: m.ubicacion_fisica || '',
       site_id: m.site_id?.toString() || '', maquina_asignada_id: m.maquina_asignada_id?.toString() || '',
     })
@@ -293,6 +294,7 @@ export default function Moldes() {
       clave: form.clave, nombre: form.nombre, num_cavidades: parseInt(form.num_cavidades),
       shots_alerta_min: form.shots_alerta_min ? parseInt(form.shots_alerta_min) : null,
       shots_alerta_max: form.shots_alerta_max ? parseInt(form.shots_alerta_max) : null,
+      periodicidad_mtto_dias: form.periodicidad_mtto_dias ? parseInt(form.periodicidad_mtto_dias) : null,
       ubicacion_fisica: form.ubicacion_fisica,
       site_id: form.site_id ? parseInt(form.site_id) : null,
       maquina_asignada_id: form.maquina_asignada_id ? parseInt(form.maquina_asignada_id) : null,
@@ -739,15 +741,35 @@ export default function Moldes() {
               <input style={styles.input} type="number" min="1" value={form.num_cavidades} onChange={e => setForm({ ...form, num_cavidades: e.target.value })} />
             </div>
           </div>
+          <div style={styles.bloquePrev}>
+            <p style={styles.bloqueTit}>Mantenimiento preventivo</p>
+            <p style={styles.bloqueAyuda}>
+              Son <b>dos gatillos independientes</b> y se dispara el que llegue primero. Los <b>disparos</b> miden
+              desgaste por uso; el <b>calendario</b> cubre lo que se degrada aunque el molde no corra — corrosion,
+              grasa seca, correderas pegadas, o-rings del enfriamiento. Un molde parado seis meses no acumula un
+              solo disparo y de todas formas necesita servicio antes de volver a montarse.
+              {' '}El calendario cuenta desde el ultimo mantenimiento cerrado con un tipo que reinicie el reloj;
+              eso se configura en <b>Moldes → Tipos de mantenimiento</b>.
+            </p>
+            <div style={styles.fila}>
+              <div style={styles.campo}>
+                <label style={styles.label}>Shots: aviso temprano</label>
+                <input style={styles.input} type="number" value={form.shots_alerta_min} onChange={e => setForm({ ...form, shots_alerta_min: e.target.value })} placeholder="Ej: 450000" />
+                <span style={styles.ayudaCampo}>A estos disparos el molde empieza a aparecer en alerta en los reportes. Todavia no vence.</span>
+              </div>
+              <div style={styles.campo}>
+                <label style={styles.label}>Shots: vencimiento</label>
+                <input style={styles.input} type="number" value={form.shots_alerta_max} onChange={e => setForm({ ...form, shots_alerta_max: e.target.value })} placeholder="Ej: 500000" />
+                <span style={styles.ayudaCampo}>A estos disparos el calendario ya te deja generar la orden preventiva por shots.</span>
+              </div>
+              <div style={styles.campo}>
+                <label style={styles.label}>Periodicidad (dias)</label>
+                <input style={styles.input} type="number" min="1" value={form.periodicidad_mtto_dias} onChange={e => setForm({ ...form, periodicidad_mtto_dias: e.target.value })} placeholder="Ej: 90" />
+                <span style={styles.ayudaCampo}>Dias entre preventivos por calendario. Vacio = este molde solo se controla por disparos.</span>
+              </div>
+            </div>
+          </div>
           <div style={styles.fila}>
-            <div style={styles.campo}>
-              <label style={styles.label}>Shots alerta minimo</label>
-              <input style={styles.input} type="number" value={form.shots_alerta_min} onChange={e => setForm({ ...form, shots_alerta_min: e.target.value })} placeholder="Ej: 450000" />
-            </div>
-            <div style={styles.campo}>
-              <label style={styles.label}>Shots alerta maximo</label>
-              <input style={styles.input} type="number" value={form.shots_alerta_max} onChange={e => setForm({ ...form, shots_alerta_max: e.target.value })} placeholder="Ej: 500000" />
-            </div>
             <div style={styles.campo}>
               <label style={styles.label}>Site (planta a la que pertenece)</label>
               <select style={styles.input} value={form.site_id} onChange={e => setForm({ ...form, site_id: e.target.value, maquina_asignada_id: '' })}>
@@ -852,6 +874,10 @@ const styles = {
   cargaTab: { padding: '7px 16px', border: 'none', background: 'transparent', fontSize: '13.5px', color: '#64748b', cursor: 'pointer', borderBottom: '2px solid transparent' },
   cargaTabAct: { padding: '7px 16px', border: 'none', background: 'transparent', fontSize: '13.5px', color: '#2563eb', fontWeight: 600, cursor: 'pointer', borderBottom: '2px solid #2563eb' },
   cargaAyuda: { fontSize: '12.5px', color: '#64748b', margin: '0 0 12px', lineHeight: 1.6, maxWidth: '900px' },
+  bloquePrev: { backgroundColor: '#f8fafc', border: '1px solid #eef2f7', borderRadius: '8px', padding: '14px 16px', marginBottom: '16px' },
+  bloqueTit: { fontSize: '13px', fontWeight: 600, color: '#1a1a2e', margin: '0 0 4px' },
+  bloqueAyuda: { fontSize: '12px', color: '#64748b', margin: '0 0 12px', lineHeight: 1.6, maxWidth: '900px' },
+  ayudaCampo: { fontSize: '11px', color: '#94a3b8', lineHeight: 1.5, marginTop: '3px', display: 'block' },
   botonAccion: { padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#444', border: '1px solid #e2e8f0', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
   tabla: { backgroundColor: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   tablaHeader: { display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' },

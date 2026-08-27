@@ -18,7 +18,7 @@ export default function TiposMtto() {
   const puedeEditar = tienePermiso('mol_tipos', 'editar') || tienePermiso('mol_tipos', 'crear')
   const [tipos, setTipos] = useState([])
   const [param, setParam] = useState(null)
-  const [nuevo, setNuevo] = useState({ nombre: '', clase: 'correctivo', reinicia_contador: false })
+  const [nuevo, setNuevo] = useState({ nombre: '', clase: 'correctivo', reinicia_contador: false, reinicia_calendario: false })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -40,7 +40,7 @@ export default function TiposMtto() {
     if (!nuevo.nombre.trim()) { setError('Captura el nombre del tipo.'); return }
     const { error: e } = await supabase.from('mtto_tipos').insert({ empresa_id: perfil.empresa_id, ...nuevo })
     if (e) { setError(e.message); return }
-    setNuevo({ nombre: '', clase: 'correctivo', reinicia_contador: false }); setExito('Tipo agregado.'); cargar()
+    setNuevo({ nombre: '', clase: 'correctivo', reinicia_contador: false, reinicia_calendario: false }); setExito('Tipo agregado.'); cargar()
   }
   const toggle = async (t, campo) => {
     await supabase.from('mtto_tipos').update({ [campo]: !t[campo] }).eq('id', t.id)
@@ -56,7 +56,8 @@ export default function TiposMtto() {
   if (loading) return <p style={{ padding: '28px', color: '#666' }}>Cargando...</p>
   const colsExp = [
     { label: 'Nombre', get: t => t.nombre }, { label: 'Clase', get: t => t.clase || '' },
-    { label: 'Reinicia contador', get: t => t.reinicia_contador ? 'Si' : 'No' },
+    { label: 'Reinicia shots', get: t => t.reinicia_contador ? 'Si' : 'No' },
+    { label: 'Reinicia calendario', get: t => t.reinicia_calendario ? 'Si' : 'No' },
   ]
   return (
     <div style={styles.container} className="aparecer">
@@ -70,13 +71,20 @@ export default function TiposMtto() {
 
       <div style={styles.tarjeta}>
         <h3 style={styles.h3}>Tipos de mantenimiento</h3>
+        <p style={{ fontSize: '12.5px', color: '#64748b', margin: '0 0 12px', lineHeight: 1.6, maxWidth: '860px' }}>
+          El preventivo de un molde tiene <b>dos relojes independientes</b> y cada tipo decide cual de los dos
+          pone en cero al cerrarse. <b>Reinicia shots</b> borra los disparos acumulados. <b>Reinicia calendario</b>
+          mueve la fecha del ultimo mantenimiento, que es de donde arranca la cuenta de la periodicidad en dias.
+          Un correctivo menor normalmente no hace ninguna de las dos; un preventivo completo hace las dos.
+        </p>
         <div style={styles.tabla}>
-          <div style={styles.th}><span style={{ flex: 2 }}>Nombre</span><span style={{ flex: 1.4 }}>Clase</span><span style={{ flex: 1, textAlign: 'center' }}>Reinicia shots</span><span style={{ flex: 1, textAlign: 'center' }}>Activo</span></div>
+          <div style={styles.th}><span style={{ flex: 2 }}>Nombre</span><span style={{ flex: 1.4 }}>Clase</span><span style={{ flex: 1, textAlign: 'center' }}>Reinicia shots</span><span style={{ flex: 1, textAlign: 'center' }}>Reinicia calendario</span><span style={{ flex: 1, textAlign: 'center' }}>Activo</span></div>
           {tipos.map(t => (
             <div key={t.id} style={styles.tr}>
               <span style={{ flex: 2, fontWeight: 500 }}>{t.nombre}</span>
               <span style={{ flex: 1.4, color: '#64748b' }}>{(CLASES.find(c => c.v === t.clase) || {}).l || t.clase}</span>
               <span style={{ flex: 1, textAlign: 'center' }}><input type="checkbox" checked={!!t.reinicia_contador} disabled={!puedeEditar} onChange={() => toggle(t, 'reinicia_contador')} /></span>
+              <span style={{ flex: 1, textAlign: 'center' }}><input type="checkbox" checked={!!t.reinicia_calendario} disabled={!puedeEditar} onChange={() => toggle(t, 'reinicia_calendario')} /></span>
               <span style={{ flex: 1, textAlign: 'center' }}><input type="checkbox" checked={!!t.activo} disabled={!puedeEditar} onChange={() => toggle(t, 'activo')} /></span>
             </div>
           ))}
@@ -86,6 +94,7 @@ export default function TiposMtto() {
             <Campo label="Nuevo tipo"><input style={styles.input} value={nuevo.nombre} onChange={e => setNuevo({ ...nuevo, nombre: e.target.value })} placeholder="Ej. Pulido de cavidad" /></Campo>
             <Campo label="Clase"><select style={styles.input} value={nuevo.clase} onChange={e => setNuevo({ ...nuevo, clase: e.target.value })}>{CLASES.map(c => <option key={c.v} value={c.v}>{c.l}</option>)}</select></Campo>
             <label style={styles.check}><input type="checkbox" checked={nuevo.reinicia_contador} onChange={e => setNuevo({ ...nuevo, reinicia_contador: e.target.checked })} /> Reinicia shots</label>
+            <label style={styles.check}><input type="checkbox" checked={nuevo.reinicia_calendario} onChange={e => setNuevo({ ...nuevo, reinicia_calendario: e.target.checked })} /> Reinicia calendario</label>
             <button style={styles.boton} onClick={agregar}>Agregar</button>
           </div>
         )}

@@ -59,7 +59,8 @@ export default function CalendarioMtto() {
         empresa_id: perfil.empresa_id, folio, molde_id: m.id, tipo_id: tipo?.id || null,
         motivo_origen: 'interno', causa: clase === 'preventivo_shots' ? 'desgaste_shots' : null,
         descripcion: clase === 'preventivo_shots' ? `Preventivo por shots (${fmt(m.shots_acumulados)})` : 'Preventivo por calendario',
-        reinicia_contador: !!tipo?.reinicia_contador, shots_al_abrir: Number(m.shots_acumulados || 0),
+        reinicia_contador: !!tipo?.reinicia_contador, reinicia_calendario: !!tipo?.reinicia_calendario,
+        shots_al_abrir: Number(m.shots_acumulados || 0),
         estatus: 'programada', fecha_programada: hoy(), creado_por: perfil.id,
       })
       if (e) throw e

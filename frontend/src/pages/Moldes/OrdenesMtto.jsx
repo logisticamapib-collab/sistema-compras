@@ -58,7 +58,7 @@ export default function OrdenesMtto() {
     setLoading(true)
     const emp = perfil.empresa_id
     const [o, mo, ti, cl, mq, tu, us, ar, al, ex, lo] = await Promise.all([
-      supabase.from('molde_mtto').select('*, molde:moldes(clave), tipo:mtto_tipos(nombre, clase, reinicia_contador), cliente:clientes(nombre), maquina:maquinas(clave)').eq('empresa_id', emp).order('id', { ascending: false }),
+      supabase.from('molde_mtto').select('*, molde:moldes(clave), tipo:mtto_tipos(nombre, clase, reinicia_contador, reinicia_calendario), cliente:clientes(nombre), maquina:maquinas(clave)').eq('empresa_id', emp).order('id', { ascending: false }),
       supabase.from('moldes').select('*').eq('empresa_id', emp).order('clave'),
       supabase.from('mtto_tipos').select('*').eq('empresa_id', emp).eq('activo', true),
       supabase.from('clientes').select('id, nombre').eq('empresa_id', emp),
@@ -104,7 +104,10 @@ export default function OrdenesMtto() {
         es_cobrable: f.motivo_origen === 'cliente' && !!f.es_cobrable, monto_cobrado: f.es_cobrable && f.monto_cobrado !== '' ? Number(f.monto_cobrado) : null,
         causa: f.causa || null, maquina_id: f.maquina_id ? Number(f.maquina_id) : null,
         operador_id: f.operador_id || null, turno_id: f.turno_id ? Number(f.turno_id) : null, supervisor_id: f.supervisor_id || null,
-        descripcion: f.descripcion || null, reinicia_contador: !!tipo?.reinicia_contador,
+        // Las dos banderas se copian a la orden al crearla, no se leen del
+        // tipo al cerrarla: si alguien cambia el tipo a media orden, la orden
+        // debe cerrarse con la regla que tenia cuando se abrio.
+        descripcion: f.descripcion || null, reinicia_contador: !!tipo?.reinicia_contador, reinicia_calendario: !!tipo?.reinicia_calendario,
         es_externo: !!f.es_externo, proveedor_id: f.es_externo && f.proveedor_id ? Number(f.proveedor_id) : null,
         costo_externo: f.es_externo && f.costo_externo !== '' ? Number(f.costo_externo) : null, fecha_envio_ext: f.es_externo ? new Date().toISOString().split('T')[0] : null,
         shots_al_abrir: Number(molde?.shots_acumulados || 0), estatus: 'en_proceso', fecha_inicio: new Date().toISOString(), creado_por: perfil.id,
@@ -121,7 +124,7 @@ export default function OrdenesMtto() {
 
   const abrirDetalle = async (o) => {
     setError(''); setExito('')
-    const { data: mm } = await supabase.from('molde_mtto').select('*, molde:moldes(clave, shots_acumulados), tipo:mtto_tipos(nombre, clase, reinicia_contador), cliente:clientes(nombre), maquina:maquinas(clave)').eq('id', o.id).single()
+    const { data: mm } = await supabase.from('molde_mtto').select('*, molde:moldes(clave, shots_acumulados), tipo:mtto_tipos(nombre, clase, reinicia_contador, reinicia_calendario), cliente:clientes(nombre), maquina:maquinas(clave)').eq('id', o.id).single()
     const { data: insu } = await supabase.from('molde_mtto_insumos').select('*').eq('mtto_id', o.id).order('id')
     const { data: fr } = await supabase.from('molde_mtto_firmas').select('*').eq('mtto_id', o.id)
     setFirmas(fr || [])
@@ -183,7 +186,13 @@ export default function OrdenesMtto() {
   const liberar = async (efectiva) => {
     await supabase.from('molde_mtto').update({ estatus: 'cerrada', tryout_efectiva: efectiva, fecha_fin: new Date().toISOString() }).eq('id', sel.id)
     const patchMolde = { estado: 'disponible' }
-    if (sel.reinicia_contador) { patchMolde.shots_acumulados = 0; patchMolde.fecha_ultimo_mtto = new Date().toISOString().split('T')[0] }
+    // Dos decisiones distintas, dos banderas. Borrar los disparos acumulados no
+    // es lo mismo que declarar hecho el preventivo del calendario: un
+    // correctivo mayor puede reiniciar shots sin que se haya hecho la
+    // inspeccion completa, y un preventivo de calendario puede moverlo el
+    // reloj sin tocar el contador.
+    if (sel.reinicia_contador) patchMolde.shots_acumulados = 0
+    if (sel.reinicia_calendario) patchMolde.fecha_ultimo_mtto = new Date().toISOString().split('T')[0]
     await supabase.from('moldes').update(patchMolde).eq('id', sel.molde_id)
   }
 
@@ -193,7 +202,7 @@ export default function OrdenesMtto() {
     setProc(true)
     try {
       await liberar(true)
-      setExito(`Orden ${sel.folio} cerrada. Molde disponible.${sel.reinicia_contador ? ' Contador de shots reiniciado.' : ''}`)
+      setExito(`Orden ${sel.folio} cerrada. Molde disponible.${sel.reinicia_contador ? ' Contador de shots reiniciado.' : ''}${sel.reinicia_calendario ? ' Reloj del preventivo por calendario reiniciado.' : ''}`)
       await cargar(); await abrirDetalle(sel)
     } catch (err) { setError('Error al cerrar: ' + err.message) }
     setProc(false)
@@ -223,7 +232,7 @@ export default function OrdenesMtto() {
           setExito('Try-out NO efectivo: la orden regresa a proceso (reincidencia). Repara y reenvia a try-out.')
         } else {
           await liberar(true)
-          setExito(`Try-out aprobado. Orden ${sel.folio} cerrada y molde liberado.${sel.reinicia_contador ? ' Shots reiniciados.' : ''}`)
+          setExito(`Try-out aprobado. Orden ${sel.folio} cerrada y molde liberado.${sel.reinicia_contador ? ' Shots reiniciados.' : ''}${sel.reinicia_calendario ? ' Calendario reiniciado.' : ''}`)
         }
       } else {
         setExito(`Firma registrada (${area}: ${decision}).`)
@@ -269,7 +278,7 @@ export default function OrdenesMtto() {
         <div style={styles.tarjeta}>
           <div style={styles.fila}>
             <Campo label="Molde *"><select style={styles.input} value={form.molde_id} onChange={e => setForm({ ...form, molde_id: e.target.value })}><option value="">Selecciona...</option>{moldes.map(m => <option key={m.id} value={m.id}>{m.clave} - {m.nombre} ({(m.estado || 'disponible').replace(/_/g, ' ')})</option>)}</select></Campo>
-            <Campo label="Tipo *"><select style={styles.input} value={form.tipo_id} onChange={e => setForm({ ...form, tipo_id: e.target.value })}><option value="">Selecciona...</option>{tipos.map(t => <option key={t.id} value={t.id}>{t.nombre} {t.reinicia_contador ? '(reinicia shots)' : ''}</option>)}</select></Campo>
+            <Campo label="Tipo *"><select style={styles.input} value={form.tipo_id} onChange={e => setForm({ ...form, tipo_id: e.target.value })}><option value="">Selecciona...</option>{tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}{t.reinicia_contador || t.reinicia_calendario ? ` (reinicia ${[t.reinicia_contador && 'shots', t.reinicia_calendario && 'calendario'].filter(Boolean).join(' y ')})` : ''}</option>)}</select></Campo>
           </div>
           <div style={styles.fila}>
             <Campo label="Motivo"><select style={styles.input} value={form.motivo_origen} onChange={e => setForm({ ...form, motivo_origen: e.target.value })}><option value="interno">Interno</option><option value="cliente">Solicitado por cliente</option></select></Campo>
@@ -376,7 +385,7 @@ export default function OrdenesMtto() {
             </div>
           </div>
         )}
-        <p style={styles.hint}>Shots al abrir: {fmt(sel.shots_al_abrir)} · {sel.reinicia_contador ? 'Al cerrar (try-out aprobado) se reinicia el contador de shots.' : 'Este tipo NO reinicia el contador.'}</p>
+        <p style={styles.hint}>Shots al abrir: {fmt(sel.shots_al_abrir)} · {sel.reinicia_contador ? 'Al cerrar se reinicia el contador de shots.' : 'No reinicia el contador de shots.'} · {sel.reinicia_calendario ? 'Al cerrar se mueve la fecha del ultimo mantenimiento y arranca de nuevo la periodicidad.' : 'No mueve el reloj del preventivo por calendario.'}</p>
         {sel.es_cobrable && !sel.facturado && puedeEditar && (<div style={styles.botones}><button style={styles.botonSec} onClick={marcarFacturado} disabled={proc}>Marcar como facturado</button></div>)}
       </div>
     )
