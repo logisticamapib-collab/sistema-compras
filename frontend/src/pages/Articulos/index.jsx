@@ -23,6 +23,9 @@ const formVacio = {
   origen: 'comprado', es_consigna: false,
   lead_time_dias: '', moq: '', tiempo_transito_dias: '', stock_minimo: '', snp: '',
   dias_inventario_seguridad: '', multiplo_lote: '', costo: '',
+  // articulo_wip_origen_id ya no se captura: el BOM dice de que esta hecho un
+  // articulo y es lo que el MRP explota. Se sigue leyendo y reescribiendo al
+  // editar para no borrar lo que ya se habia capturado, pero no se ofrece.
   tipo_proceso: 'solo_inyeccion', articulo_wip_origen_id: '',
   se_maquila: false, maquilador_id: '', precio_maquila: '',
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
@@ -126,11 +129,12 @@ export default function Articulos() {
   const cargarVistaCompleta = async () => {
     setCargandoVista(true)
     // El orden de las variables sigue el orden de las consultas.
-    const [rCav, rMol, rCli, rProv] = await Promise.all([
+    const [rCav, rMol, rCli, rProv, rBom] = await Promise.all([
       supabase.from('molde_cavidades').select('molde_id, articulo_id, numero_cavidad, activa').not('articulo_id', 'is', null),
       supabase.from('moldes').select('id, clave, nombre, num_cavidades').eq('empresa_id', perfil.empresa_id),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id, codigo_cliente, precio, activo'),
       supabase.from('articulo_proveedor').select('articulo_id, proveedor_id, codigo_proveedor, precio, activo'),
+      supabase.from('bom').select('articulo_padre_id, componente_articulo_id, cantidad_por_unidad, unidad_medida'),
     ])
     const porArt = {}
     for (const c of rCav.data || []) {
@@ -138,11 +142,19 @@ export default function Articulos() {
       const e = porArt[c.articulo_id] || (porArt[c.articulo_id] = { molde_id: c.molde_id, cav: 0 })
       e.cav += 1
     }
+    // De que esta hecho cada articulo. Es lo que el MRP explota para replicar
+    // la cantidad del padre a sus componentes; sin esto, planea el padre y
+    // nunca pide sus partes.
+    const bomDeArt = {}
+    for (const b of rBom.data || []) {
+      (bomDeArt[b.articulo_padre_id] = bomDeArt[b.articulo_padre_id] || []).push(b)
+    }
     setDatosVista({
       moldeDeArt: porArt,
       moldes: rMol.data || [],
       cli: rCli.data || [],
       prov: rProv.data || [],
+      bom: bomDeArt,
     })
     setCargandoVista(false)
   }
@@ -661,6 +673,11 @@ export default function Articulos() {
       { label: 'Pz por disparo', get: a => cavDe(a) || '', w: 95 },
       { label: 'Color', get: a => nom(colores, a.color_id, 'clave'), w: 80 },
       { label: 'Variante', get: a => nom(variantes, a.variante_codigo_id, 'clave'), w: 90 },
+      { label: 'Lista de materiales', get: a => {
+          const b = d?.bom?.[a.id] || []
+          if (!b.length) return a.origen === 'fabricado' ? 'SIN BOM' : ''
+          return b.map(x => `${articulos.find(y => y.id === x.componente_articulo_id)?.codigo_interno || '?'} x${x.cantidad_por_unidad}`).join(', ')
+        }, w: 240 },
       { label: 'Parte equivalente', get: a => nom(partes, a.parte_id, 'clave'), w: 120 },
       { label: 'Familia resina', get: a => nom(familias, a.familia_resina_id, 'clave'), w: 110 },
       { label: 'Site', get: a => a.sites?.nombre || 'Compartido', w: 110 },
@@ -694,6 +711,13 @@ export default function Articulos() {
   const sinMolde = datosVista
     ? articulosFiltrados.filter(a => a.origen === 'fabricado' && REQUIERE_MOLDE.includes(a.tipo_proceso)
         && !datosVista.moldeDeArt[a.id])
+    : []
+
+  // Un fabricado sin lista de materiales calla igual que uno sin molde: el MRP
+  // planea el padre y nunca pide sus componentes, y nadie se entera hasta que
+  // falta el material.
+  const sinBom = datosVista
+    ? articulosFiltrados.filter(a => a.origen === 'fabricado' && !(datosVista.bom?.[a.id]?.length))
     : []
 
   const colsArt = [{ label: 'Codigo', get: a => a.codigo_interno }, { label: 'Descripcion', get: a => a.descripcion }, { label: 'Categoria', get: a => a.categorias?.nombre || '' }, { label: 'Tipo', get: a => a.origen }, { label: 'Unidad', get: a => a.unidad_medida }, { label: 'Moneda', get: a => a.tipo_moneda }, { label: 'Costo', get: a => a.costo }, { label: 'Site', get: a => a.sites?.nombre || 'Compartido' }, { label: 'Estatus', get: a => a.activo ? 'Activo' : 'Inactivo' }]
@@ -1066,15 +1090,14 @@ export default function Articulos() {
                   </select>
                 </div>
                 {['inyeccion_y_ensamble', 'doble_inyeccion'].includes(form.tipo_proceso) && (
-                  <div style={styles.campo}>
-                    <label style={styles.label}>Articulo WIP de origen</label>
-                    <select style={styles.input} value={form.articulo_wip_origen_id}
-                      onChange={e => setForm({ ...form, articulo_wip_origen_id: e.target.value })}>
-                      <option value="">Selecciona el articulo WIP previo</option>
-                      {articulos.filter(a => a.id !== articuloEditando?.id).map(a => (
-                        <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>
-                      ))}
-                    </select>
+                  <div style={{ ...styles.campo, flex: 2 }}>
+                    <span style={styles.ayudaCampo}>
+                      Este tipo es para cuando el <b>mismo codigo</b> se inyecta y se ensambla en un solo flujo,
+                      sin un codigo WIP intermedio en inventario: por eso lleva molde propio. Si el WIP es
+                      <b> otro codigo</b> que se guarda y despues se ensambla, son dos articulos: el WIP como
+                      solo inyeccion con su molde, y este como <b>solo ensamble</b>, ligados por la
+                      <b> lista de materiales</b>. De ahi es de donde el MRP replica la cantidad.
+                    </span>
                   </div>
                 )}
                 <div style={styles.campo}>
@@ -1196,6 +1219,19 @@ export default function Articulos() {
         </div>
       )}
 
+      {vistaCompleta && sinBom.length > 0 && (
+        <div style={styles.avisoSinBom}>
+          <b>{sinBom.length} articulo(s) fabricados sin lista de materiales.</b> El MRP explota el BOM para
+          replicar la cantidad del padre a sus componentes: sin el, se planea el articulo y nunca se piden sus
+          partes. Un ensamble sin BOM no va a jalar su pieza inyectada, y una pieza inyectada sin BOM no va a
+          jalar su resina. Capturalo en <b>Ingenieria &rarr; BOM</b>.
+          <div style={{ marginTop: 6, fontWeight: 600 }}>
+            {sinBom.slice(0, 25).map(a => a.codigo_interno).join(', ')}
+            {sinBom.length > 25 ? ` … y ${sinBom.length - 25} mas` : ''}
+          </div>
+        </div>
+      )}
+
       {vistaCompleta ? (
         <div style={styles.tabla}>
           <div style={styles.vcEncab}>
@@ -1229,6 +1265,7 @@ export default function Articulos() {
                             ...styles.vcTd,
                             ...(c.label === 'Codigo' ? { fontWeight: 600, color: '#2563eb' } : {}),
                             ...(c.label === 'Molde' && falta ? { color: '#b91c1c', fontWeight: 700 } : {}),
+                            ...(c.label === 'Lista de materiales' && c.get(a) === 'SIN BOM' ? { color: '#b45309', fontWeight: 700 } : {}),
                           }}>
                             {c.label === 'Molde' && falta ? 'SIN MOLDE' : c.get(a)}
                           </td>
@@ -1565,6 +1602,7 @@ const styles = {
   vcTd: { padding: '8px 10px', borderBottom: '1px solid #f1f5f9', color: '#334155', whiteSpace: 'nowrap' },
   vcTrMal: { background: '#fff7f7' },
   vcPie: { fontSize: '11.5px', color: '#94a3b8', padding: '10px 16px', margin: 0 },
+  avisoSinBom: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 14px', fontSize: '12.5px', color: '#92400e', marginBottom: '14px', lineHeight: 1.6 },
   avisoSinMolde: { background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12.5px', color: '#7f1d1d', marginBottom: '14px', lineHeight: 1.6 },
   btnExcel: { padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
   btnPdf: { padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },

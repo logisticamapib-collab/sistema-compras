@@ -10,7 +10,7 @@ import { useAuth } from '../../context/AuthContext'
 
 const UNIDADES = ['PZA', 'KG', 'LT', 'MT', 'CJ', 'RLL', 'PAR', 'JGO', 'SRV', 'TON', 'GR', 'ML', 'CM', 'M2', 'M3']
 const TIPOS_PROCESO = ['solo_inyeccion', 'solo_ensamble', 'inyeccion_y_ensamble', 'doble_inyeccion']
-const COLS_ART = ['codigo_interno', 'descripcion', 'origen', 'unidad_medida', 'categoria', 'es_consigna', 'tipo_proceso', 'articulo_wip_origen', 'peso_pieza_g', 'peso_colada_g', 'peso_purga_g', 'pct_scrap_aprobado', 'admite_molido', 'pct_molido_max', 'lead_time_dias', 'moq', 'tiempo_transito_dias', 'stock_minimo', 'snp', 'dias_inventario_seguridad', 'multiplo_lote', 'costo', 'tipo_moneda', 'iva_porcentaje', 'se_maquila', 'maquilador', 'precio_maquila', 'site']
+const COLS_ART = ['codigo_interno', 'descripcion', 'origen', 'unidad_medida', 'categoria', 'es_consigna', 'tipo_proceso', 'peso_pieza_g', 'peso_colada_g', 'peso_purga_g', 'pct_scrap_aprobado', 'admite_molido', 'pct_molido_max', 'lead_time_dias', 'moq', 'tiempo_transito_dias', 'stock_minimo', 'snp', 'dias_inventario_seguridad', 'multiplo_lote', 'costo', 'tipo_moneda', 'iva_porcentaje', 'se_maquila', 'maquilador', 'precio_maquila', 'site']
 const COLS_BOM = ['articulo_padre', 'componente', 'tipo_componente', 'cantidad_por_unidad', 'unidad_medida']
 
 const boolCel = (v) => ['si', 'sí', 'x', '1', 'true', 'verdadero', 'y', 'yes'].includes(String(v ?? '').trim().toLowerCase())
@@ -47,8 +47,8 @@ export default function CargaMasiva() {
 
   // ---------- PLANTILLAS ----------
   const descargarPlantillaArt = () => {
-    const ej1 = ['RES-001', 'Resina PP natural', 'comprado', 'KG', 'Resina', 'no', '', '', '', '', '', '', 'no', '', 7, 100, 2, 50, '', '', '', 28, 'MXN', 16, 'no', '', '', '']
-    const ej2 = ['PT-0001', 'Tapa frontal negra', 'fabricado', 'PZA', 'Inyección', '', 'solo_inyeccion', '', 20, 3, 50, 3, 'si', 15, '', '', '', 500, '', '', '', '', 'MXN', 16, 'no', '', '', '']
+    const ej1 = ['RES-001', 'Resina PP natural', 'comprado', 'KG', 'Resina', 'no', '', '', '', '', '', 'no', '', 7, 100, 2, 50, '', '', '', 28, 'MXN', 16, 'no', '', '', '']
+    const ej2 = ['PT-0001', 'Tapa frontal negra', 'fabricado', 'PZA', 'Inyección', '', 'solo_inyeccion', 20, 3, 50, 3, 'si', 15, '', '', '', 500, '', '', '', '', 'MXN', 16, 'no', '', '', '']
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.aoa_to_sheet([COLS_ART, ej1, ej2])
     ws['!cols'] = COLS_ART.map(() => ({ wch: 16 }))
@@ -62,7 +62,7 @@ export default function CargaMasiva() {
       ['categoria (por nombre)', (cats.map(c => c.nombre).join(' / ')) || '(no hay categorias dadas de alta)'],
       ['maquilador (por nombre, solo si se_maquila=si)', (maquiladores.map(m => m.nombre).join(' / ')) || '(sin proveedores)'],
       ['site (por nombre, opcional)', (sites.map(s => s.nombre).join(' / ')) || '(sin sites)'],
-      ['articulo_wip_origen (por codigo, solo inyeccion+ensamble / doble)', 'codigo de un articulo WIP existente'],
+      ['De que esta hecho un articulo', 'se captura en el BOM, no aqui. Es lo que el MRP explota para replicar la cantidad a los componentes.'],
       ['Campos si/no', 'es_consigna, admite_molido, se_maquila  ->  escribe si / no'],
       ['Pesos (peso_pieza_g, peso_colada_g, peso_purga_g)', 'en GRAMOS, solo para fabricados de inyeccion'],
       ['Comprado: llena lead_time_dias, moq, tiempo_transito_dias, costo, es_consigna.'],
@@ -143,8 +143,6 @@ export default function CargaMasiva() {
       if (seMaq && txt(r.maquilador) && !maq) err.push(`maquilador "${txt(r.maquilador)}" no existe`)
       const site = txt(r.site) ? siteByName(r.site) : null
       if (txt(r.site) && !site) err.push(`site "${txt(r.site)}" no existe`)
-      const wip = txt(r.articulo_wip_origen) ? artByCode(r.articulo_wip_origen) : null
-      if (txt(r.articulo_wip_origen) && !wip) err.push('articulo_wip_origen no existe')
 
       const payload = {
         empresa_id: emp, codigo_interno: cod, descripcion: desc, unidad_medida: um,
@@ -161,7 +159,6 @@ export default function CargaMasiva() {
         multiplo_lote: numCel(r.multiplo_lote) ?? 0,
         costo: numCel(r.costo) ?? 0, costo_inicial: numCel(r.costo) ?? 0,
         tipo_proceso: esFab ? tp : null,
-        articulo_wip_origen_id: esFab ? (wip?.id || null) : null,
         peso_pieza_g: esFab ? numCel(r.peso_pieza_g) : null,
         peso_colada_g: esFab ? numCel(r.peso_colada_g) : null,
         peso_purga_g: esFab ? numCel(r.peso_purga_g) : null,
