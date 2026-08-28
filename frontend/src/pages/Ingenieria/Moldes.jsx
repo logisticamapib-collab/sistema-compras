@@ -404,6 +404,35 @@ export default function Moldes() {
     setTimeout(() => setExito(''), 4000)
   }
 
+  // Asigna una variante de codigo a un articulo desde aqui mismo. Antes habia
+  // que ir a otro menu, capturarla y volver; y como el eje es invisible hasta
+  // que estorba, casi nadie hacia ese viaje.
+  const asignarVariante = async (articuloId, valor) => {
+    setError(''); setExito('')
+    let vid = valor
+    if (valor === '__nueva__') {
+      const clave = window.prompt('Clave corta de la variante (ej. EU0, UK0, BR):')
+      if (!clave || !clave.trim()) return
+      const nombre = window.prompt('Nombre o motivo (ej. Plataforma Europa):', clave.trim().toUpperCase())
+      if (nombre === null) return
+      const { data, error: e } = await supabase.from('variantes_codigo').insert({
+        empresa_id: perfil.empresa_id, clave: clave.trim().toUpperCase(),
+        nombre: (nombre || clave).trim(), minutos_cambio: 0, activo: true,
+      }).select('id').single()
+      if (e) {
+        setError(e.message.includes('duplicate') ? `Ya existe una variante con la clave ${clave.trim().toUpperCase()}` : e.message)
+        return
+      }
+      vid = data.id
+    }
+    const { error: e2 } = await supabase.from('articulos')
+      .update({ variante_codigo_id: vid ? Number(vid) : null }).eq('id', articuloId)
+    if (e2) { setError(e2.message); return }
+    setExito('Variante asignada. La corrida se recalculo.')
+    await cargarDatos()
+    setTimeout(() => setExito(''), 3000)
+  }
+
   const agregarVariante = (numeroCavidad) => {
     setMoldeCavidades(prev => ({
       ...prev,
@@ -530,9 +559,21 @@ export default function Moldes() {
           // disparo distinto, y dentro del grupo cada codigo aporta las
           // cavidades que tenga asignadas.
           //
-          // El aviso importante: si una corrida no cubre todas las cavidades
-          // del molde, o falta capturar lineas o hay cavidades tapadas. Ese es
-          // el error de captura que multiplica los shots de las ordenes.
+          // Hay DOS cosas distintas que revisar en cada corrida y confundirlas
+          // fue un defecto real:
+          //
+          //   cubiertas = cuantas cavidades DISTINTAS quedan ocupadas.
+          //               Si son menos que las del molde, o faltan lineas o hay
+          //               cavidades tapadas.
+          //   piezas    = la SUMA de cavidades de todos los codigos del grupo,
+          //               o sea cuantas piezas cree el sistema que entrega cada
+          //               disparo. Si pasa de las cavidades del molde, esos
+          //               codigos NO pueden estar saliendo juntos: les falta
+          //               distinguirse con una variante de codigo.
+          //
+          // Antes se comparaba la suma contra el nominal, asi que un molde de 4
+          // cavidades con 4 codigos correctamente capturados daba 16 y gritaba
+          // en falso.
           const nominal = moldeCavidades.molde.num_cavidades
             || [...new Set(moldeCavidades.cavidades.map(c => c.numero_cavidad))].length
           const grupos = new Map()
@@ -542,17 +583,21 @@ export default function Moldes() {
               const art = articulos.find(x => x.id === c.articulo_id)
               if (!art) return
               const k = `${art.color_id ?? 'sc'}|${art.variante_codigo_id ?? 'sv'}`
-              if (!grupos.has(k)) grupos.set(k, { color_id: art.color_id ?? null, variante_codigo_id: art.variante_codigo_id ?? null, porArt: new Map() })
+              if (!grupos.has(k)) grupos.set(k, { color_id: art.color_id ?? null, variante_codigo_id: art.variante_codigo_id ?? null, porArt: new Map(), cavs: new Set() })
               const g = grupos.get(k)
               g.porArt.set(art.id, (g.porArt.get(art.id) || 0) + 1)
+              g.cavs.add(c.numero_cavidad)
             })
           if (grupos.size === 0) return null
           const lista = [...grupos.values()].map(g => ({
             ...g,
             color: colores.find(x => x.id === g.color_id) || null,
             variante: variantes.find(x => x.id === g.variante_codigo_id) || null,
-            cubiertas: [...g.porArt.values()].reduce((a, b) => a + b, 0),
+            cubiertas: g.cavs.size,
+            piezas: [...g.porArt.values()].reduce((a, b) => a + b, 0),
           }))
+          const sobrecargadas = lista.filter(g => g.piezas > nominal)
+          const incompletas = lista.filter(g => g.piezas <= nominal && g.cubiertas < nominal)
           return (
             <div style={styles.corridasCaja}>
               <p style={styles.corridasTit}>
@@ -577,14 +622,47 @@ export default function Moldes() {
                       return `${a ? a.codigo_interno : artId}: ${cav} ${cav === 1 ? 'cavidad' : 'cavidades'} (${cav} ${cav === 1 ? 'pieza' : 'piezas'} por disparo)`
                     }).join('  ·  ')}
                   </span>
-                  <span style={{ minWidth: 130, textAlign: 'right' }}>
-                    {g.cubiertas === nominal
-                      ? <span style={styles.chipOk}>{g.cubiertas} de {nominal} cavidades</span>
-                      : <span style={styles.chipAlerta}>{g.cubiertas} de {nominal} cavidades</span>}
+                  <span style={{ minWidth: 190, textAlign: 'right' }}>
+                    {g.piezas > nominal
+                      ? <span style={styles.chipMal}>{g.piezas} pz por disparo · el molde da {nominal}</span>
+                      : g.cubiertas === nominal
+                        ? <span style={styles.chipOk}>{g.cubiertas} de {nominal} cavidades</span>
+                        : <span style={styles.chipAlerta}>{g.cubiertas} de {nominal} cavidades</span>}
                   </span>
                 </div>
               ))}
-              {lista.some(g => g.cubiertas !== nominal) && (
+
+              {sobrecargadas.length > 0 && (
+                <div style={styles.avisoMal}>
+                  <b>Estos codigos no pueden estar saliendo juntos.</b> El molde tiene {nominal} cavidades, pero
+                  la corrida de abajo pide mas piezas por disparo que eso. Pasa cuando varios codigos ocupan las
+                  MISMAS cavidades porque se corren <b>uno a la vez</b>: el sistema no tiene como saberlo si los
+                  tres se ven iguales. Dales una <b>variante de codigo</b> distinta y cada uno pasa a ser su
+                  propia corrida.
+                  {sobrecargadas.map((g, i) => (
+                    <div key={i} style={{ marginTop: 10 }}>
+                      {[...g.porArt.keys()].map(artId => {
+                        const a = articulos.find(x => x.id === artId)
+                        return (
+                          <div key={artId} style={styles.sepFila}>
+                            <span style={{ flex: 1, fontWeight: 600, fontSize: 12.5 }}>{a?.codigo_interno || artId}</span>
+                            <span style={{ fontSize: 12, color: '#7c2d12' }}>variante:</span>
+                            <select style={styles.sepSelect} value={a?.variante_codigo_id || ''}
+                              disabled={!puedeEditar}
+                              onChange={e => asignarVariante(artId, e.target.value)}>
+                              <option value="">sin variante</option>
+                              {variantes.map(v => <option key={v.id} value={v.id}>{v.clave} - {v.nombre}</option>)}
+                              <option value="__nueva__">+ crear una nueva...</option>
+                            </select>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {incompletas.length > 0 && (
                 <div style={styles.avisoCav}>
                   <b>Hay corridas que no cubren las {nominal} cavidades del molde.</b> Si es porque hay
                   cavidades tapadas, esta bien y el plan ya lo considera. Si no, faltan lineas por capturar:
@@ -964,6 +1042,10 @@ const styles = {
   chipVar: { display: 'inline-block', padding: '1px 8px', borderRadius: '20px', fontSize: '10.5px', fontWeight: 600, background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', whiteSpace: 'nowrap' },
   chipVacio: { display: 'inline-block', fontSize: '11.5px', color: '#cbd5e1', marginRight: '6px', whiteSpace: 'nowrap' },
   chipOk: { display: 'inline-block', padding: '1px 9px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', whiteSpace: 'nowrap' },
+  chipMal: { display: 'inline-block', padding: '1px 9px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', whiteSpace: 'nowrap' },
+  avisoMal: { background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12.5px', color: '#7f1d1d', marginTop: '12px', lineHeight: 1.6 },
+  sepFila: { display: 'flex', alignItems: 'center', gap: '10px', padding: '5px 0', borderTop: '1px solid #fee2e2' },
+  sepSelect: { padding: '5px 9px', borderRadius: '6px', border: '1px solid #fca5a5', fontSize: '12.5px', background: '#fff', minWidth: '230px' },
   chipAlerta: { display: 'inline-block', padding: '1px 9px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', whiteSpace: 'nowrap' },
   avisoCav: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', color: '#92400e', marginBottom: '12px', lineHeight: 1.5 },
   tapadaTag: { fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px', background: '#fef3c7', color: '#b45309' },

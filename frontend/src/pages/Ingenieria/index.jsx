@@ -19,7 +19,12 @@ const secciones = [
   { id: 'maquinas', modulo: 'ing_maquinas', titulo: 'Maquinas' },
   { id: 'moldes', modulo: 'ing_moldes', titulo: 'Moldes' },
   { id: 'colores', modulo: 'ing_colores', titulo: 'Colores' },
-  { id: 'variantes_codigo', modulo: 'ing_variantes_codigo', titulo: 'Variantes de codigo' },
+  // Variantes de codigo salio del menu: el catalogo se administra desde donde
+  // se usa -- el panel de corridas en Moldes y el alta de articulos dejan
+  // crearla en el momento -- y una pantalla aparte era un viaje de ida y
+  // vuelta por algo que se resuelve donde estas parado. Para volver a
+  // mostrarla, descomenta el renglon de abajo; la pantalla sigue ahi.
+  // { id: 'variantes_codigo', modulo: 'ing_variantes_codigo', titulo: 'Variantes de codigo' },
   { id: 'partes', modulo: 'ing_partes', titulo: 'Partes equivalentes' },
   { id: 'rutas', modulo: 'ing_rutas', titulo: 'Rutas de Fabricacion' },
   { id: 'bom', modulo: 'ing_bom', titulo: 'BOM (Lista de Materiales)' },
