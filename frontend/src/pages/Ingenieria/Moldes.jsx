@@ -61,10 +61,13 @@ export default function Moldes() {
   // dentro del aviso rojo, asi que en cuanto se resolvia el aviso ya no habia
   // forma de corregir una asignacion equivocada.
   const [corridaAbierta, setCorridaAbierta] = useState(null)
+  // Molde desplegado en la lista para ver de un vistazo que inyecta.
+  const [moldeAbierto, setMoldeAbierto] = useState(null)
   const [exito, setExito] = useState('')
 
   const puedeCrear = tienePermiso('ing_moldes', 'crear')
   const puedeEditar = tienePermiso('ing_moldes', 'editar')
+  const puedeEliminar = tienePermiso('ing_moldes', 'eliminar')
 
   useEffect(() => { cargarDatos() }, [])
 
@@ -277,6 +280,59 @@ export default function Moldes() {
     if (sobran.length) await supabase.from('molde_cavidades').delete().in('id', sobran)
 
     await cargarDatos()
+  }
+
+  // Que inyecta un molde, agrupado por corrida. Solo lectura: es la vista
+  // rapida de la lista, editar se hace entrando a Cavidades.
+  const queInyecta = (moldeId) => {
+    const grupos = new Map()
+    cavidadesTodas
+      .filter(c => c.molde_id === moldeId && c.articulo_id != null && c.activa !== false)
+      .forEach(c => {
+        const a = artDe(c.articulo_id); if (!a) return
+        const k = `${a.color_id ?? 'sc'}|${a.variante_codigo_id ?? 'sv'}`
+        if (!grupos.has(k)) grupos.set(k, { color: claveColor(a), variante: claveVar(a), porArt: new Map() })
+        grupos.get(k).porArt.set(a.id, (grupos.get(k).porArt.get(a.id) || 0) + 1)
+      })
+    return [...grupos.values()]
+  }
+
+  // Eliminar un molde. El candado vive en la base: un disparador rechaza el
+  // borrado si el molde tiene movimientos propios -- avisos, mantenimientos,
+  // transferencias, ordenes de trabajo, maquilas, maquina alterna, vales o
+  // contenedores. Tener articulos en las cavidades NO cuenta como historia:
+  // eso solo dice con que molde se fabrican, y se desliga.
+  const eliminarMolde = async (m) => {
+    setError(''); setExito('')
+    const arts = queInyecta(m.id).flatMap(g => [...g.porArt.keys()])
+    const codigos = [...new Set(arts)].map(id => artDe(id)?.codigo_interno).filter(Boolean)
+
+    const aviso = codigos.length
+      ? `Eliminar el molde "${m.clave}"?\n\nEsta accion va a DESVINCULAR los articulos de cada cavidad. `
+        + `${codigos.length} articulo(s) se quedaran sin molde asignado.\n\nConfirma que desea proceder.`
+      : `Eliminar el molde "${m.clave}"?\n\nNo tiene articulos asignados en sus cavidades.\n\nConfirma que desea proceder.`
+    if (!window.confirm(aviso)) return
+
+    const { data, error: e } = await supabase.rpc('eliminar_molde', {
+      p_empresa_id: perfil.empresa_id, p_molde_id: m.id,
+    })
+    if (e) { setError(e.message); await cargarDatos(); return }
+
+    // La base devuelve los codigos que quedaron sin molde: se avisan por
+    // nombre porque sin molde no se pueden programar.
+    const sinMolde = (data || []).map(x => x.codigo_interno)
+    if (sinMolde.length) {
+      window.alert(
+        `El molde ${m.clave} se elimino.\n\n`
+        + `Los articulos ${sinMolde.join(', ')} acaban de quedarse SIN MOLDE ASIGNADO.\n\n`
+        + `No se van a poder programar hasta que se les asigne uno. Entra al molde que corresponda `
+        + `y agregalos a sus cavidades.`
+      )
+    }
+    setExito(`Molde ${m.clave} eliminado.${sinMolde.length ? ` ${sinMolde.length} articulo(s) quedaron sin molde.` : ''}`)
+    setMoldeAbierto(null)
+    await cargarDatos()
+    setTimeout(() => setExito(''), 6000)
   }
 
   const abrirNuevo = () => { setEditando(null); setForm(formVacio); setMostrarForm(true); setError('') }
@@ -1155,8 +1211,13 @@ export default function Moldes() {
           const cercaDeAlerta = m.shots_alerta_max && m.shots_acumulados >= m.shots_alerta_max
           const enRangoAlerta = m.shots_alerta_min && m.shots_acumulados >= m.shots_alerta_min && !cercaDeAlerta
           return (
-            <div key={m.id} style={styles.tablaFila} className="fila-hover">
-              <span style={{ flex: 1, fontWeight: '600', color: '#2563eb', fontSize: '13px' }}>{m.clave}</span>
+            <div key={m.id}>
+            <div style={{ ...styles.tablaFila, cursor: 'pointer' }} className="fila-hover"
+              onClick={e => { if (e.target.tagName !== 'BUTTON') setMoldeAbierto(moldeAbierto === m.id ? null : m.id) }}>
+              <span style={{ flex: 1, fontWeight: '600', color: '#2563eb', fontSize: '13px' }}>
+                <span style={{ color: '#94a3b8', marginRight: 6 }}>{moldeAbierto === m.id ? '▾' : '▸'}</span>
+                {m.clave}
+              </span>
               <span style={{ flex: 2, fontSize: '14px' }}>{m.nombre}</span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{m.num_cavidades}</span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{m.shots_acumulados?.toLocaleString('es-MX') || 0}</span>
@@ -1170,7 +1231,51 @@ export default function Moldes() {
                 <button style={{ ...styles.botonAccion, marginLeft: '6px' }} title="Ficha imprimible del molde con sus cavidades y sus corridas" onClick={() => imprimirFicha(m)}>Ficha</button>
                 {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => abrirEditar(m)}>Editar</button>}
                 {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => toggleActivo(m)}>{m.activo ? 'Desactivar' : 'Activar'}</button>}
+                {puedeEliminar && (
+                  <button style={{ ...styles.botonAccion, marginLeft: '6px', color: '#dc2626', borderColor: '#fecaca', backgroundColor: '#fef2f2' }}
+                    title="Solo se puede si el molde no tiene movimientos propios"
+                    onClick={() => eliminarMolde(m)}>Eliminar</button>
+                )}
               </span>
+            </div>
+
+            {moldeAbierto === m.id && (() => {
+              const corridas = queInyecta(m.id)
+              return (
+                <div style={styles.vistaRapida}>
+                  {corridas.length === 0
+                    ? <p style={{ margin: 0, fontSize: 12.5, color: '#94a3b8' }}>
+                        Este molde no tiene articulos asignados en sus cavidades. Entra a <b>Cavidades</b> para asignarlos.
+                      </p>
+                    : (
+                      <>
+                        <p style={styles.vistaRapidaTit}>
+                          Inyecta {corridas.length === 1 ? 'una corrida' : `${corridas.length} corridas por separado`}
+                          {' '}&middot; el molde tiene {m.num_cavidades} cavidades
+                        </p>
+                        {corridas.map((g, i) => (
+                          <div key={i} style={styles.vrFila}>
+                            <span style={{ minWidth: 140 }}>
+                              {g.color ? <span style={styles.chip}>{g.color}</span> : <span style={styles.chipVacio}>sin color</span>}
+                              {g.variante ? <span style={styles.chipVar}>{g.variante}</span> : <span style={styles.chipVacio}>sin variante</span>}
+                            </span>
+                            <span style={{ flex: 1, fontSize: 12.5, color: '#334155' }}>
+                              {[...g.porArt.entries()].map(([id, n]) => {
+                                const a = artDe(id)
+                                return `${a?.codigo_interno || id}${a?.descripcion ? ' — ' + a.descripcion : ''} (${n} pz/disparo)`
+                              }).join('   ·   ')}
+                            </span>
+                          </div>
+                        ))}
+                        <p style={styles.vistaRapidaPie}>
+                          Cada renglon es un disparo distinto: no salen juntos aunque compartan molde.
+                          Para cambiar algo, entra a <b>Cavidades</b>.
+                        </p>
+                      </>
+                    )}
+                </div>
+              )
+            })()}
             </div>
           )
         })}
@@ -1198,6 +1303,10 @@ const styles = {
   sepSelect: { padding: '5px 9px', borderRadius: '6px', border: '1px solid #fca5a5', fontSize: '12.5px', background: '#fff', minWidth: '230px' },
   chipAlerta: { display: 'inline-block', padding: '1px 9px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', whiteSpace: 'nowrap' },
   avisoCav: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', color: '#92400e', marginBottom: '12px', lineHeight: 1.5 },
+  vistaRapida: { background: '#f8fafc', borderBottom: '1px solid #e2e8f0', padding: '12px 20px 14px 40px' },
+  vistaRapidaTit: { fontSize: '12.5px', fontWeight: 600, color: '#334155', margin: '0 0 8px' },
+  vistaRapidaPie: { fontSize: '11.5px', color: '#94a3b8', margin: '8px 0 0' },
+  vrFila: { display: 'flex', gap: '12px', alignItems: 'center', padding: '5px 0', borderTop: '1px solid #eef2f7' },
   tapadaTag: { fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '20px', background: '#fef3c7', color: '#b45309' },
   container: { padding: '28px' },
   encabezado: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },

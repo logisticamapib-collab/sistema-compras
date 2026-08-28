@@ -32,6 +32,10 @@ const formVacio = {
   familia_resina_id: '', tipo_material: '',
 }
 
+// Los procesos que no se pueden programar sin molde. Misma lista que usa
+// Ordenes de Trabajo para rechazar la OT; si cambia alla, cambia aqui.
+const REQUIERE_MOLDE = ['solo_inyeccion', 'inyeccion_y_ensamble', 'doble_inyeccion']
+
 export default function Articulos() {
   const { perfil, tienePermiso } = useAuth()
   const [articulos, setArticulos] = useState([])
@@ -62,6 +66,13 @@ export default function Articulos() {
   const [formCliente, setFormCliente] = useState({ cliente_id: '', codigo_cliente: '', precio: '' })
   const [colores, setColores] = useState([])
   const [variantes, setVariantes] = useState([])
+  // Vista completa: todo lo del articulo en un renglon, solo lectura. Los
+  // datos que no hacen falta para la lista normal -- molde, codigo del
+  // cliente -- se traen la primera vez que se abre, no en cada entrada al
+  // modulo.
+  const [vistaCompleta, setVistaCompleta] = useState(false)
+  const [datosVista, setDatosVista] = useState(null)
+  const [cargandoVista, setCargandoVista] = useState(false)
   const [partes, setPartes] = useState([])
   const [familias, setFamilias] = useState([])
   const [form, setForm] = useState(formVacio)
@@ -110,6 +121,35 @@ export default function Articulos() {
     const mc = {}; (ac || []).forEach(x => { (mc[x.articulo_id] = mc[x.articulo_id] || new Set()).add(x.cliente_id) })
     setArtProv(mp); setArtCli(mc)
     setLoading(false)
+  }
+
+  const cargarVistaCompleta = async () => {
+    setCargandoVista(true)
+    // El orden de las variables sigue el orden de las consultas.
+    const [rCav, rMol, rCli, rProv] = await Promise.all([
+      supabase.from('molde_cavidades').select('molde_id, articulo_id, numero_cavidad, activa').not('articulo_id', 'is', null),
+      supabase.from('moldes').select('id, clave, nombre, num_cavidades').eq('empresa_id', perfil.empresa_id),
+      supabase.from('articulo_cliente').select('articulo_id, cliente_id, codigo_cliente, precio, activo'),
+      supabase.from('articulo_proveedor').select('articulo_id, proveedor_id, codigo_proveedor, precio, activo'),
+    ])
+    const porArt = {}
+    for (const c of rCav.data || []) {
+      if (c.activa === false) continue
+      const e = porArt[c.articulo_id] || (porArt[c.articulo_id] = { molde_id: c.molde_id, cav: 0 })
+      e.cav += 1
+    }
+    setDatosVista({
+      moldeDeArt: porArt,
+      moldes: rMol.data || [],
+      cli: rCli.data || [],
+      prov: rProv.data || [],
+    })
+    setCargandoVista(false)
+  }
+
+  const abrirVistaCompleta = async () => {
+    setVistaCompleta(true)
+    if (!datosVista) await cargarVistaCompleta()
   }
 
   const abrirNuevo = () => {
@@ -601,6 +641,61 @@ export default function Articulos() {
     }
   }
 
+  // Columnas de la vista completa. Se usan igual en pantalla, en Excel y en
+  // PDF para que los tres digan exactamente lo mismo.
+  const colsVista = (() => {
+    const d = datosVista
+    const molDe = (a) => d?.moldes.find(m => m.id === d?.moldeDeArt[a.id]?.molde_id)
+    const cavDe = (a) => d?.moldeDeArt[a.id]?.cav || 0
+    const clisDe = (a) => (d?.cli || []).filter(x => x.articulo_id === a.id)
+    const provsDe = (a) => (d?.prov || []).filter(x => x.articulo_id === a.id)
+    const nom = (lista, id, campo = 'nombre') => lista.find(x => x.id === id)?.[campo] || ''
+    return [
+      { label: 'Codigo', get: a => a.codigo_interno, w: 160 },
+      { label: 'Descripcion', get: a => a.descripcion, w: 220 },
+      { label: 'Origen', get: a => a.origen, w: 90 },
+      { label: 'Tipo de proceso', get: a => a.tipo_proceso || '', w: 130 },
+      { label: 'Categoria', get: a => a.categorias?.nombre || '', w: 120 },
+      { label: 'Molde', get: a => molDe(a)?.clave || '', w: 90 },
+      { label: 'Cavidades', get: a => cavDe(a) || '', w: 80 },
+      { label: 'Pz por disparo', get: a => cavDe(a) || '', w: 95 },
+      { label: 'Color', get: a => nom(colores, a.color_id, 'clave'), w: 80 },
+      { label: 'Variante', get: a => nom(variantes, a.variante_codigo_id, 'clave'), w: 90 },
+      { label: 'Parte equivalente', get: a => nom(partes, a.parte_id, 'clave'), w: 120 },
+      { label: 'Familia resina', get: a => nom(familias, a.familia_resina_id, 'clave'), w: 110 },
+      { label: 'Site', get: a => a.sites?.nombre || 'Compartido', w: 110 },
+      { label: 'UM', get: a => a.unidad_medida, w: 60 },
+      { label: 'Moneda', get: a => a.tipo_moneda, w: 70 },
+      { label: 'Costo', get: a => a.costo ?? '', w: 90 },
+      { label: 'IVA %', get: a => a.iva_porcentaje ?? '', w: 60 },
+      { label: 'Clientes', get: a => clisDe(a).map(x => nom(clientes, x.cliente_id)).filter(Boolean).join(', '), w: 180 },
+      { label: 'Codigo del cliente', get: a => clisDe(a).map(x => x.codigo_cliente).filter(Boolean).join(', '), w: 160 },
+      { label: 'Proveedores', get: a => provsDe(a).map(x => nom(proveedores, x.proveedor_id)).filter(Boolean).join(', '), w: 180 },
+      { label: 'Maquilador', get: a => a.se_maquila ? nom(proveedores, a.maquilador_id) : '', w: 150 },
+      { label: 'Consigna', get: a => a.es_consigna ? 'Si' : '', w: 80 },
+      { label: 'Lead time', get: a => a.lead_time_dias ?? '', w: 80 },
+      { label: 'MOQ', get: a => a.moq ?? '', w: 70 },
+      { label: 'Transito', get: a => a.tiempo_transito_dias ?? '', w: 75 },
+      { label: 'SNP', get: a => a.snp ?? '', w: 70 },
+      { label: 'Stock minimo', get: a => a.stock_minimo ?? '', w: 100 },
+      { label: 'Multiplo de lote', get: a => a.multiplo_lote ?? '', w: 110 },
+      { label: 'Dias de seguridad', get: a => a.dias_inventario_seguridad ?? '', w: 120 },
+      { label: 'ABC', get: a => a.clasificacion_abc || '', w: 55 },
+      { label: 'Peso pieza (g)', get: a => a.peso_pieza_g ?? '', w: 100 },
+      { label: 'Peso colada (g)', get: a => a.peso_colada_g ?? '', w: 110 },
+      { label: 'Scrap aprobado %', get: a => a.pct_scrap_aprobado ?? '', w: 120 },
+      { label: 'Admite molido', get: a => a.admite_molido ? `Si (${a.pct_molido_max ?? 0}%)` : 'No', w: 110 },
+      { label: 'Estatus', get: a => a.activo ? 'Activo' : 'Inactivo', w: 80 },
+    ]
+  })()
+
+  // Fabricados de inyeccion sin molde: no se pueden programar. Se cuentan
+  // sobre lo filtrado para que el aviso hable de lo que estas viendo.
+  const sinMolde = datosVista
+    ? articulosFiltrados.filter(a => a.origen === 'fabricado' && REQUIERE_MOLDE.includes(a.tipo_proceso)
+        && !datosVista.moldeDeArt[a.id])
+    : []
+
   const colsArt = [{ label: 'Codigo', get: a => a.codigo_interno }, { label: 'Descripcion', get: a => a.descripcion }, { label: 'Categoria', get: a => a.categorias?.nombre || '' }, { label: 'Tipo', get: a => a.origen }, { label: 'Unidad', get: a => a.unidad_medida }, { label: 'Moneda', get: a => a.tipo_moneda }, { label: 'Costo', get: a => a.costo }, { label: 'Site', get: a => a.sites?.nombre || 'Compartido' }, { label: 'Estatus', get: a => a.activo ? 'Activo' : 'Inactivo' }]
 
   if (mostrarProveedores && articuloSeleccionado) {
@@ -1073,11 +1168,76 @@ export default function Articulos() {
           </select>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }} className="no-imprimir">
-          <button style={styles.btnExcel} onClick={() => exportarExcel('articulos', colsArt, articulosFiltrados)}>Excel</button>
-          <button style={styles.btnPdf} onClick={() => imprimirTablaPDF('Articulos', colsArt, articulosFiltrados)}>PDF</button>
+          <button style={vistaCompleta ? styles.btnVistaOn : styles.btnVista}
+            title="Todos los datos de cada articulo en un solo renglon, solo lectura"
+            onClick={() => vistaCompleta ? setVistaCompleta(false) : abrirVistaCompleta()}>
+            {vistaCompleta ? 'Volver a la lista' : 'Vista completa'}
+          </button>
+          <button style={styles.btnExcel}
+            onClick={() => exportarExcel(vistaCompleta ? 'articulos_vista_completa' : 'articulos',
+              vistaCompleta ? colsVista : colsArt, articulosFiltrados)}>Excel</button>
+          <button style={styles.btnPdf}
+            onClick={() => imprimirTablaPDF(vistaCompleta ? 'Articulos — vista completa' : 'Articulos',
+              vistaCompleta ? colsVista : colsArt, articulosFiltrados)}>PDF</button>
         </div>
       </div>
 
+      {/* Aviso: un fabricado de inyeccion sin molde no se puede programar. Se
+          cuenta sobre lo filtrado para que hable de lo que estas viendo. */}
+      {vistaCompleta && sinMolde.length > 0 && (
+        <div style={styles.avisoSinMolde}>
+          <b>{sinMolde.length} articulo(s) de inyeccion sin molde asignado.</b> Sin molde no se puede levantar
+          su orden de trabajo: el sistema no sabe cuantas piezas entrega cada disparo ni en que maquina corre.
+          Asignalos en <b>Ingenieria &rarr; Moldes &rarr; Cavidades</b>.
+          <div style={{ marginTop: 6, fontWeight: 600 }}>
+            {sinMolde.slice(0, 25).map(a => a.codigo_interno).join(', ')}
+            {sinMolde.length > 25 ? ` … y ${sinMolde.length - 25} mas` : ''}
+          </div>
+        </div>
+      )}
+
+      {vistaCompleta ? (
+        <div style={styles.tabla}>
+          {cargandoVista ? (
+            <p style={{ padding: '20px', color: '#666' }}>Cargando la vista completa...</p>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={styles.vcTabla}>
+                <thead>
+                  <tr>{colsVista.map(c => (
+                    <th key={c.label} style={{ ...styles.vcTh, minWidth: c.w }}>{c.label}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  {articulosFiltrados.length === 0 ? (
+                    <tr><td style={styles.vcTd} colSpan={colsVista.length}>No hay articulos que cumplan el filtro.</td></tr>
+                  ) : articulosFiltrados.map(a => {
+                    const falta = a.origen === 'fabricado' && REQUIERE_MOLDE.includes(a.tipo_proceso)
+                      && datosVista && !datosVista.moldeDeArt[a.id]
+                    return (
+                      <tr key={a.id} style={falta ? styles.vcTrMal : undefined}>
+                        {colsVista.map(c => (
+                          <td key={c.label} style={{
+                            ...styles.vcTd,
+                            ...(c.label === 'Codigo' ? { fontWeight: 600, color: '#2563eb' } : {}),
+                            ...(c.label === 'Molde' && falta ? { color: '#b91c1c', fontWeight: 700 } : {}),
+                          }}>
+                            {c.label === 'Molde' && falta ? 'SIN MOLDE' : c.get(a)}
+                          </td>
+                        ))}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p style={styles.vcPie}>
+            {articulosFiltrados.length} articulo(s) &middot; solo lectura. Para cambiar algo, vuelve a la lista y
+            entra a Editar. Excel y PDF salen con estas mismas columnas y el mismo filtro.
+          </p>
+        </div>
+      ) : (
       <div style={styles.tabla}>
         <div style={styles.tablaHeader}>
           <span style={{ flex: 1 }}>Codigo</span>
@@ -1142,6 +1302,7 @@ export default function Articulos() {
           ))
         )}
       </div>
+      )}
     </div>
   )
 }
@@ -1381,6 +1542,14 @@ function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente
 const btnBase = { padding: '9px 14px', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }
 const styles = {
   ayudaCampo: { fontSize: '11px', color: '#64748b', lineHeight: 1.4 },
+  btnVista: { padding: '9px 14px', backgroundColor: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
+  btnVistaOn: { padding: '9px 14px', backgroundColor: '#2563eb', color: '#fff', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
+  vcTabla: { borderCollapse: 'collapse', width: '100%', fontSize: '12px' },
+  vcTh: { textAlign: 'left', padding: '9px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontSize: '10.5px', fontWeight: 600, textTransform: 'uppercase', whiteSpace: 'nowrap', position: 'sticky', top: 0 },
+  vcTd: { padding: '8px 10px', borderBottom: '1px solid #f1f5f9', color: '#334155', whiteSpace: 'nowrap' },
+  vcTrMal: { background: '#fff7f7' },
+  vcPie: { fontSize: '11.5px', color: '#94a3b8', padding: '10px 16px', margin: 0 },
+  avisoSinMolde: { background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12.5px', color: '#7f1d1d', marginBottom: '14px', lineHeight: 1.6 },
   btnExcel: { padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
   btnPdf: { padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
   filaCheckbox: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' },
