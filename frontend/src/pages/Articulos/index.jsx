@@ -1198,6 +1198,14 @@ export default function Articulos() {
 
       {vistaCompleta ? (
         <div style={styles.tabla}>
+          <div style={styles.vcEncab}>
+            <button style={styles.botonVolverVista} onClick={() => setVistaCompleta(false)}>
+              &larr; Volver a la lista normal
+            </button>
+            <span style={styles.vcEncabTit}>
+              Vista completa &middot; {articulosFiltrados.length} articulo(s) &middot; solo lectura
+            </span>
+          </div>
           {cargandoVista ? (
             <p style={{ padding: '20px', color: '#666' }}>Cargando la vista completa...</p>
           ) : (
@@ -1232,10 +1240,15 @@ export default function Articulos() {
               </table>
             </div>
           )}
-          <p style={styles.vcPie}>
-            {articulosFiltrados.length} articulo(s) &middot; solo lectura. Para cambiar algo, vuelve a la lista y
-            entra a Editar. Excel y PDF salen con estas mismas columnas y el mismo filtro.
-          </p>
+          <div style={styles.vcEncab}>
+            <button style={styles.botonVolverVista} onClick={() => setVistaCompleta(false)}>
+              &larr; Volver a la lista normal
+            </button>
+            <span style={styles.vcPie}>
+              {articulosFiltrados.length} articulo(s) &middot; solo lectura. Para cambiar algo, vuelve a la lista y
+              entra a Editar. Excel y PDF salen con estas mismas columnas y el mismo filtro.
+            </span>
+          </div>
         </div>
       ) : (
       <div style={styles.tabla}>
@@ -1544,6 +1557,9 @@ const styles = {
   ayudaCampo: { fontSize: '11px', color: '#64748b', lineHeight: 1.4 },
   btnVista: { padding: '9px 14px', backgroundColor: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
   btnVistaOn: { padding: '9px 14px', backgroundColor: '#2563eb', color: '#fff', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
+  vcEncab: { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap' },
+  vcEncabTit: { fontSize: '12.5px', color: '#64748b', fontWeight: 500 },
+  botonVolverVista: { padding: '6px 14px', backgroundColor: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap' },
   vcTabla: { borderCollapse: 'collapse', width: '100%', fontSize: '12px' },
   vcTh: { textAlign: 'left', padding: '9px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontSize: '10.5px', fontWeight: 600, textTransform: 'uppercase', whiteSpace: 'nowrap', position: 'sticky', top: 0 },
   vcTd: { padding: '8px 10px', borderBottom: '1px solid #f1f5f9', color: '#334155', whiteSpace: 'nowrap' },
@@ -1572,7 +1588,7 @@ const styles = {
   campo: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 },
   label: { fontSize: '12px', fontWeight: '500', color: '#444' },
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none' },
-  buscador: { marginBottom: '16px', display: 'flex', gap: '10px', alignItems: 'center' },
+  buscador: { marginBottom: '16px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' },
   selectSite: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '13px', backgroundColor: '#fff' },
   inputBusqueda: { padding: '9px 14px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', width: '300px' },
   botones: { display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' },
