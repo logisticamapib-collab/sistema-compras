@@ -57,6 +57,10 @@ export default function Moldes() {
   const [vistaCarga, setVistaCarga] = useState('moldes')
   // Asistente para asignar un codigo a varias cavidades de un jalon.
   const [asistente, setAsistente] = useState(null)   // { articulo_id, cavs: Set }
+  // Corrida abierta para corregir variantes. Antes el selector solo existia
+  // dentro del aviso rojo, asi que en cuanto se resolvia el aviso ya no habia
+  // forma de corregir una asignacion equivocada.
+  const [corridaAbierta, setCorridaAbierta] = useState(null)
   const [exito, setExito] = useState('')
 
   const puedeCrear = tienePermiso('ing_moldes', 'crear')
@@ -73,7 +77,9 @@ export default function Moldes() {
       supabase.from('maquinas').select('id, clave, nombre, site_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
       supabase.from('articulos').select('id, codigo_interno, descripcion, color_id, variante_codigo_id').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
       supabase.from('colores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden_secuencia'),
-      supabase.from('variantes_codigo').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
+      // Todas, no solo las activas: un articulo puede seguir apuntando a una
+      // desactivada y el selector no debe quedarse en blanco.
+      supabase.from('variantes_codigo').select('*').eq('empresa_id', perfil.empresa_id).order('clave'),
       supabase.from('molde_cavidades').select('id, molde_id, numero_cavidad, articulo_id, activa'),
     ])
     setMoldes(mol || [])
@@ -433,6 +439,47 @@ export default function Moldes() {
     setTimeout(() => setExito(''), 3000)
   }
 
+  const renombrarVariante = async (v) => {
+    setError(''); setExito('')
+    const clave = window.prompt('Clave de la variante:', v.clave)
+    if (clave === null || !clave.trim()) return
+    const nombre = window.prompt('Nombre o motivo:', v.nombre || '')
+    if (nombre === null) return
+    const { error: e } = await supabase.from('variantes_codigo')
+      .update({ clave: clave.trim().toUpperCase(), nombre: (nombre || clave).trim() }).eq('id', v.id)
+    if (e) {
+      setError(e.message.includes('duplicate') ? `Ya existe otra variante con la clave ${clave.trim().toUpperCase()}` : e.message)
+      return
+    }
+    // Renombrar no desacomoda nada: los articulos apuntan al id, no al texto.
+    setExito('Variante renombrada.')
+    await cargarDatos()
+    setTimeout(() => setExito(''), 3000)
+  }
+
+  const eliminarVariante = async (v, enUso) => {
+    setError(''); setExito('')
+    if (enUso > 0) {
+      setError(`No se puede eliminar ${v.clave}: la usan ${enUso} articulo(s). Quitasela a esos articulos primero, o desactivala para que deje de ofrecerse sin perder lo capturado.`)
+      return
+    }
+    if (!window.confirm(`Eliminar la variante ${v.clave}?\n\nNo la esta usando ningun articulo, asi que no se pierde nada.`)) return
+    const { error: e } = await supabase.from('variantes_codigo').delete().eq('id', v.id)
+    if (e) { setError(e.message); return }
+    setExito('Variante eliminada.')
+    await cargarDatos()
+    setTimeout(() => setExito(''), 3000)
+  }
+
+  const alternarActivoVariante = async (v) => {
+    setError(''); setExito('')
+    const { error: e } = await supabase.from('variantes_codigo').update({ activo: !v.activo }).eq('id', v.id)
+    if (e) { setError(e.message); return }
+    setExito(v.activo ? 'Variante desactivada: deja de ofrecerse, pero lo capturado no se toca.' : 'Variante reactivada.')
+    await cargarDatos()
+    setTimeout(() => setExito(''), 4000)
+  }
+
   const agregarVariante = (numeroCavidad) => {
     setMoldeCavidades(prev => ({
       ...prev,
@@ -629,8 +676,44 @@ export default function Moldes() {
                         ? <span style={styles.chipOk}>{g.cubiertas} de {nominal} cavidades</span>
                         : <span style={styles.chipAlerta}>{g.cubiertas} de {nominal} cavidades</span>}
                   </span>
+                  {puedeEditar && (
+                    <button style={{ ...styles.botonAccion, fontSize: '11.5px' }}
+                      onClick={() => setCorridaAbierta(corridaAbierta === i ? null : i)}>
+                      {corridaAbierta === i ? 'Cerrar' : 'Variantes'}
+                    </button>
+                  )}
                 </div>
               ))}
+
+              {/* Corregir la variante de cualquier corrida, no solo de las que
+                  estan mal. Antes esto vivia dentro del aviso rojo y desaparecia
+                  en cuanto el aviso se resolvia, asi que una asignacion
+                  equivocada quedaba sin arreglo. */}
+              {puedeEditar && corridaAbierta != null && lista[corridaAbierta] && (
+                <div style={styles.editVar}>
+                  <p style={styles.editVarTit}>Variante de codigo de cada articulo de esta corrida</p>
+                  <p style={styles.corridasSub}>
+                    Dos articulos con la MISMA variante y el mismo color se consideran del mismo disparo.
+                    Cambiala aqui si te equivocaste; el cambio se guarda al momento.
+                  </p>
+                  {[...lista[corridaAbierta].porArt.keys()].map(artId => {
+                    const a = articulos.find(x => x.id === artId)
+                    return (
+                      <div key={artId} style={styles.sepFila}>
+                        <span style={{ flex: 1, fontWeight: 600, fontSize: 12.5 }}>{a?.codigo_interno || artId}</span>
+                        <select style={styles.sepSelectN} value={a?.variante_codigo_id || ''}
+                          onChange={e => asignarVariante(artId, e.target.value)}>
+                          <option value="">sin variante</option>
+                          {variantes
+                            .filter(v => v.activo || v.id === a?.variante_codigo_id)
+                            .map(v => <option key={v.id} value={v.id}>{v.clave} - {v.nombre}{v.activo ? '' : ' (inactiva)'}</option>)}
+                          <option value="__nueva__">+ crear una nueva...</option>
+                        </select>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
 
               {sobrecargadas.length > 0 && (
                 <div style={styles.avisoMal}>
@@ -662,6 +745,26 @@ export default function Moldes() {
                 </div>
               )}
 
+              {(() => {
+                // Un codigo sin variante en un molde donde los demas si la
+                // tienen corre solo por accidente: es el unico de su grupo. El
+                // dia que alguien agregue otro sin variante, se juntan y el
+                // sistema creera que salen del mismo disparo.
+                const sinVar = lista.filter(g => g.variante_codigo_id == null)
+                const conVar = lista.filter(g => g.variante_codigo_id != null)
+                if (sinVar.length === 0 || conVar.length === 0) return null
+                const codigos = sinVar.flatMap(g => [...g.porArt.keys()])
+                  .map(id => articulos.find(x => x.id === id)?.codigo_interno).filter(Boolean)
+                return (
+                  <div style={styles.avisoCav}>
+                    <b>Hay codigos sin variante en un molde donde los demas si la tienen:</b> {codigos.join(', ')}.
+                    Hoy funciona porque son los unicos de su grupo, pero el dia que se agregue otro codigo sin
+                    variante a este molde los dos se van a considerar del mismo disparo. Asignales la suya con el
+                    boton <b>Variantes</b> de su corrida.
+                  </div>
+                )
+              })()}
+
               {incompletas.length > 0 && (
                 <div style={styles.avisoCav}>
                   <b>Hay corridas que no cubren las {nominal} cavidades del molde.</b> Si es porque hay
@@ -671,6 +774,49 @@ export default function Moldes() {
                   shots de cada orden.
                 </div>
               )}
+              {(() => {
+                // Administrar el catalogo desde donde se usa. Se listan solo
+                // las variantes que aparecen en ESTE molde: administrar todo el
+                // catalogo desde la pantalla de un molde seria pasarse.
+                const usadasAqui = [...new Set(lista.map(g => g.variante_codigo_id).filter(x => x != null))]
+                if (!puedeEditar || usadasAqui.length === 0) return null
+                return (
+                  <div style={styles.adminVar}>
+                    <p style={styles.editVarTit}>Variantes usadas en este molde</p>
+                    {usadasAqui.map(vid => {
+                      const v = variantes.find(x => x.id === vid)
+                      if (!v) return null
+                      const enUso = articulos.filter(a => a.variante_codigo_id === vid).length
+                      return (
+                        <div key={vid} style={styles.sepFila}>
+                          <span style={{ minWidth: 80, fontWeight: 700, fontSize: 12.5, color: '#1d4ed8' }}>{v.clave}</span>
+                          <span style={{ flex: 1, fontSize: 12.5, color: '#475569' }}>{v.nombre}</span>
+                          <span style={{ fontSize: 11.5, color: '#94a3b8', minWidth: 110 }}>
+                            {enUso} articulo{enUso === 1 ? '' : 's'}{v.activo ? '' : ' · inactiva'}
+                          </span>
+                          <button style={{ ...styles.botonAccion, fontSize: '11.5px' }} onClick={() => renombrarVariante(v)}>Renombrar</button>
+                          <button style={{ ...styles.botonAccion, fontSize: '11.5px' }} onClick={() => alternarActivoVariante(v)}>
+                            {v.activo ? 'Desactivar' : 'Activar'}
+                          </button>
+                          <button
+                            style={enUso > 0
+                              ? { ...styles.botonAccion, fontSize: '11.5px', color: '#cbd5e1', cursor: 'not-allowed' }
+                              : { ...styles.botonAccion, fontSize: '11.5px', color: '#dc2626', borderColor: '#fecaca' }}
+                            title={enUso > 0 ? `La usan ${enUso} articulo(s). Quitasela primero o desactivala.` : 'No la usa ningun articulo'}
+                            onClick={() => eliminarVariante(v, enUso)}>
+                            Eliminar
+                          </button>
+                        </div>
+                      )
+                    })}
+                    <p style={styles.corridasSub}>
+                      Renombrar no desacomoda nada: los articulos apuntan a la variante, no a su texto.
+                      Eliminar solo se puede cuando no la usa ningun articulo; si ya se uso, desactivala para
+                      que deje de ofrecerse sin perder lo capturado.
+                    </p>
+                  </div>
+                )
+              })()}
             </div>
           )
         })()}
@@ -1042,6 +1188,10 @@ const styles = {
   chipVar: { display: 'inline-block', padding: '1px 8px', borderRadius: '20px', fontSize: '10.5px', fontWeight: 600, background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', whiteSpace: 'nowrap' },
   chipVacio: { display: 'inline-block', fontSize: '11.5px', color: '#cbd5e1', marginRight: '6px', whiteSpace: 'nowrap' },
   chipOk: { display: 'inline-block', padding: '1px 9px', borderRadius: '20px', fontSize: '11px', fontWeight: 600, background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', whiteSpace: 'nowrap' },
+  editVar: { background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 14px', marginTop: '12px' },
+  editVarTit: { fontSize: '12.5px', fontWeight: 600, color: '#1a1a2e', margin: '0 0 2px' },
+  adminVar: { background: '#fff', border: '1px dashed #cbd5e1', borderRadius: '8px', padding: '12px 14px', marginTop: '12px' },
+  sepSelectN: { padding: '5px 9px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12.5px', background: '#fff', minWidth: '250px' },
   chipMal: { display: 'inline-block', padding: '1px 9px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', whiteSpace: 'nowrap' },
   avisoMal: { background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12.5px', color: '#7f1d1d', marginTop: '12px', lineHeight: 1.6 },
   sepFila: { display: 'flex', alignItems: 'center', gap: '10px', padding: '5px 0', borderTop: '1px solid #fee2e2' },
