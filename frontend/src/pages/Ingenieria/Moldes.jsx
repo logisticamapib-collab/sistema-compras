@@ -55,6 +55,8 @@ export default function Moldes() {
   const [cavidadesTodas, setCavidadesTodas] = useState([])
   const [mostrarCarga, setMostrarCarga] = useState(false)
   const [vistaCarga, setVistaCarga] = useState('moldes')
+  // Asistente para asignar un codigo a varias cavidades de un jalon.
+  const [asistente, setAsistente] = useState(null)   // { articulo_id, cavs: Set }
   const [exito, setExito] = useState('')
 
   const puedeCrear = tienePermiso('ing_moldes', 'crear')
@@ -352,6 +354,56 @@ export default function Moldes() {
     }))
   }
 
+  // Un molde de 4 cavidades que corre 4 codigos distintos, uno a la vez,
+  // necesita 16 renglones: cada codigo en las 4 cavidades. Capturarlos uno por
+  // uno hace pensar que una cavidad lleva un solo articulo, que es justo lo
+  // contrario de lo que pasa. Este asistente los crea de un jalon.
+  const abrirAsistente = () => {
+    const nums = [...new Set(moldeCavidades.cavidades.map(c => c.numero_cavidad))].sort((a, b) => a - b)
+    setAsistente({ articulo_id: '', cavs: new Set(nums) })   // por omision: todas
+    setError('')
+  }
+
+  const alternarCavAsistente = (num) => {
+    setAsistente(a => {
+      const cavs = new Set(a.cavs)
+      if (cavs.has(num)) cavs.delete(num); else cavs.add(num)
+      return { ...a, cavs }
+    })
+  }
+
+  const aplicarAsistente = () => {
+    const aid = Number(asistente.articulo_id)
+    if (!aid) { setError('Elige el articulo.'); return }
+    if (asistente.cavs.size === 0) { setError('Marca al menos una cavidad.'); return }
+    setError('')
+
+    setMoldeCavidades(prev => {
+      const nuevas = [...prev.cavidades]
+      for (const num of [...asistente.cavs].sort((a, b) => a - b)) {
+        // Si ya esta ese articulo en esa cavidad, no se duplica.
+        if (nuevas.some(c => c.numero_cavidad === num && c.articulo_id === aid && !c._borrar)) continue
+        // Si la cavidad tiene un renglon vacio, se aprovecha en vez de dejar
+        // el fantasma que despues habria que limpiar.
+        const vacia = nuevas.find(c => c.numero_cavidad === num && !c.articulo_id && !c._borrar)
+        if (vacia) {
+          const k = vacia._key || vacia.id
+          const i = nuevas.findIndex(c => (c._key || c.id) === k)
+          nuevas[i] = { ...vacia, articulo_id: aid }
+        } else {
+          nuevas.push({
+            _key: `n${Date.now()}${Math.random()}`, _nuevo: true,
+            molde_id: prev.molde.id, numero_cavidad: num, articulo_id: aid, activa: true,
+          })
+        }
+      }
+      return { ...prev, cavidades: nuevas }
+    })
+    setAsistente(null)
+    setExito('Renglones agregados. Revisa abajo y presiona Guardar cavidades.')
+    setTimeout(() => setExito(''), 4000)
+  }
+
   const agregarVariante = (numeroCavidad) => {
     setMoldeCavidades(prev => ({
       ...prev,
@@ -545,6 +597,65 @@ export default function Moldes() {
           )
         })()}
 
+        {puedeEditar && !asistente && (
+          <div style={{ marginBottom: '12px' }}>
+            <button style={styles.boton} onClick={abrirAsistente}>+ Agregar codigo al molde</button>
+            <span style={{ marginLeft: '10px', fontSize: '12px', color: '#64748b' }}>
+              Eliges el codigo y en que cavidades sale. Es la forma corta cuando un mismo codigo ocupa varias cavidades.
+            </span>
+          </div>
+        )}
+
+        {asistente && (
+          <div style={styles.asistCaja}>
+            <p style={styles.asistTit}>Agregar un codigo al molde {moldeCavidades.molde.clave}</p>
+            <p style={styles.asistAyuda}>
+              Si el molde corre <b>un codigo a la vez</b> y las {moldeCavidades.molde.num_cavidades} cavidades sacan
+              ese mismo codigo, dejalo en <b>todas</b>: eso es lo que le dice al sistema que cada disparo entrega
+              {' '}{moldeCavidades.molde.num_cavidades} piezas de ese codigo. Si el molde saca izquierda y derecha,
+              marca solo las cavidades de ese lado y repite el paso para el otro.
+            </p>
+            <div style={styles.fila}>
+              <div style={{ ...styles.campo, flex: 3 }}>
+                <label style={styles.label}>Articulo</label>
+                <select style={styles.input} value={asistente.articulo_id}
+                  onChange={e => setAsistente(a => ({ ...a, articulo_id: e.target.value }))}>
+                  <option value="">Selecciona el codigo...</option>
+                  {articulos
+                    .filter(a => !moldeDeArt.has(a.id) || moldeDeArt.get(a.id) === moldeCavidades.molde.id)
+                    .map(a => <option key={a.id} value={a.id}>{a.codigo_interno} - {a.descripcion}</option>)}
+                </select>
+              </div>
+            </div>
+            <label style={styles.label}>Sale de estas cavidades</label>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '6px 0 10px' }}>
+              {[...new Set(moldeCavidades.cavidades.map(c => c.numero_cavidad))].sort((a, b) => a - b).map(num => (
+                <label key={num} style={asistente.cavs.has(num) ? styles.cavChipOn : styles.cavChip}>
+                  <input type="checkbox" checked={asistente.cavs.has(num)} onChange={() => alternarCavAsistente(num)} />
+                  #{num}
+                </label>
+              ))}
+              <button style={{ ...styles.botonAccion, fontSize: '11.5px' }}
+                onClick={() => setAsistente(a => ({ ...a, cavs: new Set([...new Set(moldeCavidades.cavidades.map(c => c.numero_cavidad))]) }))}>
+                Todas
+              </button>
+              <button style={{ ...styles.botonAccion, fontSize: '11.5px' }}
+                onClick={() => setAsistente(a => ({ ...a, cavs: new Set() }))}>
+                Ninguna
+              </button>
+            </div>
+            <p style={styles.asistResumen}>
+              {asistente.cavs.size > 0
+                ? `Este codigo quedara en ${asistente.cavs.size} de ${moldeCavidades.molde.num_cavidades} cavidades: cada disparo entrega ${asistente.cavs.size} piezas de el.`
+                : 'Marca al menos una cavidad.'}
+            </p>
+            <div style={styles.botones}>
+              <button style={styles.botonSecGris} onClick={() => { setAsistente(null); setError('') }}>Cancelar</button>
+              <button style={styles.boton} onClick={aplicarAsistente}>Agregar al molde</button>
+            </div>
+          </div>
+        )}
+
         <div style={styles.tabla}>
           <div style={styles.tablaHeader}>
             <span style={{ flex: 1 }}>Cavidad</span>
@@ -595,7 +706,7 @@ export default function Moldes() {
                 })}
                 <div style={{ padding: '2px 0 6px 12px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <button style={{ ...styles.botonAccion, fontSize: '11.5px' }} onClick={() => agregarVariante(num)}>
-                    + Variante de color en la cavidad #{num}
+                    + Otro articulo en esta cavidad
                   </button>
                   {(() => {
                     const tapada = moldeCavidades.cavidades.some(c => c.numero_cavidad === num && c.activa === false)
@@ -868,6 +979,13 @@ const styles = {
   input: { padding: '9px 12px', borderRadius: '7px', border: '1px solid #ddd', fontSize: '14px', outline: 'none', width: '100%', boxSizing: 'border-box' },
   botones: { display: 'flex', justifyContent: 'flex-end' },
   boton: { padding: '9px 20px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '14px', fontWeight: '500', cursor: 'pointer' },
+  asistCaja: { backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '16px', marginBottom: '14px' },
+  asistTit: { fontSize: '14px', fontWeight: 600, color: '#1a1a2e', margin: '0 0 6px' },
+  asistAyuda: { fontSize: '12.5px', color: '#475569', margin: '0 0 12px', lineHeight: 1.6, maxWidth: '880px' },
+  asistResumen: { fontSize: '12.5px', color: '#1d4ed8', fontWeight: 500, margin: '0 0 12px' },
+  cavChip: { display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 11px', borderRadius: '7px', border: '1px solid #cbd5e1', background: '#fff', fontSize: '13px', color: '#475569', cursor: 'pointer' },
+  cavChipOn: { display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 11px', borderRadius: '7px', border: '1px solid #2563eb', background: '#dbeafe', fontSize: '13px', color: '#1d4ed8', fontWeight: 600, cursor: 'pointer' },
+  botonSecGris: { padding: '9px 20px', backgroundColor: '#e2e8f0', color: '#444', border: 'none', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
   botonSec: { padding: '9px 20px', backgroundColor: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '14px', cursor: 'pointer' },
   cargaCaja: { backgroundColor: '#f8fafc', border: '1px solid #eef2f7', borderRadius: '10px', padding: '16px', marginBottom: '20px' },
   cargaTabs: { display: 'flex', gap: '4px', borderBottom: '1px solid #e2e8f0', marginBottom: '10px' },
