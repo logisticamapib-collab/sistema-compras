@@ -123,6 +123,24 @@ export default function Recibos() {
     throw new Error('No se pudo generar un codigo de lote unico, intenta de nuevo')
   }
 
+  // Congela el costo del lote: precio y moneda del documento origen, y la tasa
+  // que decida la politica de la empresa. La base devuelve que tasa uso, de que
+  // fecha, si tuvo que echar mano de una vieja y si el costo queda firme o
+  // provisional.
+  //
+  // Se llama SIEMPRE, incluso en consigna con costo cero: un lote sin costo
+  // congelado hace que el valor del inventario caiga al costo estandar del
+  // articulo, y eso inflaria el inventario con material que no es nuestro.
+  const congelarCosto = async (loteId, costo, moneda, fecha) => {
+    const { data, error: e } = await supabase.rpc('congelar_costo_lote', {
+      p_empresa_id: perfil.empresa_id, p_lote_id: loteId,
+      p_costo_unitario: Number(costo) || 0, p_moneda: moneda || null,
+      p_fecha: fecha || hoy(),
+    })
+    if (e) throw new Error('No se pudo congelar el costo del lote: ' + e.message)
+    return data?.[0] || null
+  }
+
   // --- Seleccion de lineas por documento ---
   const seleccionadas = (docKey) => seleccion[docKey] || {}
   const nSeleccionadas = (docKey) => Object.values(seleccionadas(docKey)).filter(Boolean).length
@@ -230,11 +248,16 @@ export default function Recibos() {
       if (e0) throw e0
       const detalleSeg = []
       const paraEtiquetas = []
+      const avisosCosto = []
       for (const it of items) {
         const l = ocLineas.find(x => x.id === it.lineaId)
         const val = validaCalidad(l.articulo_id, ocActiva.proveedor_id)
         let certUrl = it.file ? await subirCertificado(it.file) : null
         const lote = await insertarLoteRecibo(l.articulo_id, 'compra')
+        // El costo entra con el precio y la moneda de la ORDEN, no con el costo
+        // estandar del articulo: es lo que de verdad se pago.
+        const cong = await congelarCosto(lote.id, l.precio_unitario, ocActiva.moneda, hoy())
+        if (cong) avisosCosto.push({ codigo: artDe(l.articulo_id)?.codigo_interno, ...cong })
         await supabase.from('existencias').insert({ lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant })
         await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, lote_id: lote.id, tipo: 'entrada_inicial', almacen_destino_id: Number(it.almacen_id), ubicacion_destino_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant, motivo: `Recibo ${recibo.folio} / OC ${ocActiva.folio}`, usuario_id: perfil.id })
         await supabase.from('recibo_lineas').insert({ recibo_id: recibo.id, oc_linea_id: l.id, articulo_id: l.articulo_id, cantidad: it.cant, lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, certificado_ref: it.certificado_ref.trim() || null, certificado_url: certUrl, ppap_estado: val.porDesviacion ? 'desviacion' : (requisitoDe(l.articulo_id, ocActiva.proveedor_id)?.requiere_ppap ? 'vigente' : 'no_requiere'), desviacion_id: val.desvId })
@@ -253,7 +276,17 @@ export default function Recibos() {
       const todo = ocLineasDe(ocActiva.id).map(l => { const it = items.find(i => i.lineaId === l.id); return (Number(l.cantidad_recibida || 0) + (it ? it.cant : 0)) >= Number(l.cantidad) })
       await supabase.from('ordenes_compra').update({ estatus: todo.every(Boolean) ? 'recibida' : 'recibida_parcial', fecha_entrega_real: hoy() }).eq('id', ocActiva.id)
       setEtiquetas(construirEtiquetas(paraEtiquetas, { proveedorNombre: provDe(ocActiva.proveedor_id)?.nombre }))
-      setExito(`Recibo ${recibo.folio} registrado. Material RETENIDO, pendiente de liberacion por Calidad.`)
+      // Lo que valga la pena decir del costeo: que se uso una tasa vieja o que
+      // el costo quedo provisional. Callarlo dejaria un numero que parece
+      // definitivo y no lo es.
+      const conTasaVieja = avisosCosto.filter(a => a.estimada)
+      const provisionales = avisosCosto.filter(a => a.firme === false)
+      const sinTasa = avisosCosto.filter(a => a.costo_principal == null)
+      let msg = `Recibo ${recibo.folio} registrado. Material RETENIDO, pendiente de liberacion por Calidad.`
+      if (sinTasa.length) msg += ` OJO: ${sinTasa.length} linea(s) quedaron SIN VALOR en la moneda de la compania porque no hay tipo de cambio capturado.`
+      else if (conTasaVieja.length) msg += ` ${conTasaVieja.length} linea(s) se valuaron con un tipo de cambio anterior al dia de hoy; quedaron marcadas.`
+      if (provisionales.length) msg += ` El costo es PROVISIONAL hasta que se registre la factura del proveedor, segun la politica configurada.`
+      setExito(msg)
       setOcActiva(null); setRec({}); await cargarDatos()
     } catch (err) { setError('Error al recibir: ' + err.message) }
     setProcesando(false)
@@ -281,6 +314,10 @@ export default function Recibos() {
         const l = consLineas.find(x => x.id === it.lineaId)
         let certUrl = it.file ? await subirCertificado(it.file) : null
         const lote = await insertarLoteRecibo(l.articulo_id, 'consigna')
+        // Costo CERO y congelado. Sin esto el lote se valuaria al costo
+        // estandar del articulo e inflaria el inventario con material del
+        // cliente, que no es nuestro.
+        await congelarCosto(lote.id, 0, artDe(l.articulo_id)?.tipo_moneda, hoy())
         await supabase.from('existencias').insert({ lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant })
         await supabase.from('movimientos').insert({ empresa_id: perfil.empresa_id, articulo_id: l.articulo_id, lote_id: lote.id, tipo: 'entrada_inicial', almacen_destino_id: Number(it.almacen_id), ubicacion_destino_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, cantidad: it.cant, motivo: `Recibo consigna ${recibo.folio} / ${consActiva.folio}`, usuario_id: perfil.id })
         await supabase.from('recibo_lineas').insert({ recibo_id: recibo.id, consigna_linea_id: l.id, articulo_id: l.articulo_id, cantidad: it.cant, lote_id: lote.id, almacen_id: Number(it.almacen_id), ubicacion_id: it.ubicacion_id ? Number(it.ubicacion_id) : null, certificado_ref: it.certificado_ref.trim() || null, certificado_url: certUrl, ppap_estado: 'consigna' })
