@@ -34,6 +34,11 @@ export default function Monedas() {
   const [editando, setEditando] = useState(null)
   const [nuevaTasa, setNuevaTasa] = useState({ moneda: '', tasa: '', fecha: new Date().toISOString().split('T')[0], notas: '' })
   const [tab, setTab] = useState('cambio')
+  const [politica, setPolitica] = useState(null)
+  const [tasasPeriodo, setTasasPeriodo] = useState([])
+  const [nuevaPeriodo, setNuevaPeriodo] = useState({
+    moneda: '', anio: new Date().getFullYear(), mes: new Date().getMonth() + 1, tasa: '', notas: '',
+  })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -43,16 +48,20 @@ export default function Monedas() {
   const cargar = async () => {
     setLoading(true)
     // El orden de las variables sigue el orden de las consultas.
-    const [rMon, rEmp, rTc, rArt, rAp] = await Promise.all([
+    const [rMon, rEmp, rTc, rArt, rAp, rPol, rTp] = await Promise.all([
       supabase.from('monedas').select('*').eq('empresa_id', emp).order('clave'),
       supabase.from('empresas').select('id, moneda_principal, dias_vigencia_tipo_cambio').eq('id', emp).maybeSingle(),
       supabase.from('tipos_cambio').select('*').eq('empresa_id', emp).order('fecha', { ascending: false }).limit(200),
       supabase.from('articulos').select('tipo_moneda').eq('empresa_id', emp),
       supabase.from('articulo_proveedor').select('moneda'),
+      supabase.from('politica_moneda').select('*').eq('empresa_id', emp).maybeSingle(),
+      supabase.from('tipos_cambio_periodo').select('*').eq('empresa_id', emp).order('anio', { ascending: false }).order('mes', { ascending: false }).limit(120),
     ])
     setMonedas(rMon.data || [])
     setEmpresa(rEmp.data || null)
     setCambios(rTc.data || [])
+    setPolitica(rPol.data || { empresa_id: emp, congela_en: 'recibo', sin_tasa: 'ultima', revalua_inventario: false })
+    setTasasPeriodo(rTp.data || [])
 
     // Cuantos registros usan cada moneda: se necesita para no dejar borrar una
     // que ya se esta usando.
@@ -131,6 +140,33 @@ export default function Monedas() {
     setTimeout(() => setExito(''), 4000)
   }
 
+  const guardarPolitica = async (patch) => {
+    setError(''); setExito('')
+    const np = { ...politica, ...patch, empresa_id: emp, updated_at: new Date().toISOString(), updated_by: perfil.id }
+    const { error: e } = await supabase.from('politica_moneda').upsert(np, { onConflict: 'empresa_id' })
+    if (e) { setError(e.message); return }
+    setPolitica(np)
+    setExito('Politica guardada. Lo ya congelado no se re-expresa: aplica de aqui en adelante.')
+    setTimeout(() => setExito(''), 6000)
+  }
+
+  const guardarTasaPeriodo = async () => {
+    setError(''); setExito('')
+    if (!nuevaPeriodo.moneda) { setError('Elige la moneda.'); return }
+    const t = Number(nuevaPeriodo.tasa)
+    if (!t || t <= 0) { setError('La tasa debe ser mayor que cero.'); return }
+    const { error: e } = await supabase.from('tipos_cambio_periodo').upsert({
+      empresa_id: emp, moneda: nuevaPeriodo.moneda,
+      anio: parseInt(nuevaPeriodo.anio), mes: parseInt(nuevaPeriodo.mes),
+      tasa: t, notas: nuevaPeriodo.notas || null, capturado_por: perfil.id,
+    }, { onConflict: 'empresa_id,moneda,anio,mes' })
+    if (e) { setError(e.message); return }
+    setNuevaPeriodo({ ...nuevaPeriodo, tasa: '', notas: '' })
+    setExito('Tasa del periodo guardada.')
+    cargar()
+    setTimeout(() => setExito(''), 3000)
+  }
+
   const guardarTasa = async () => {
     setError(''); setExito('')
     if (!nuevaTasa.moneda) { setError('Elige la moneda.'); return }
@@ -187,7 +223,7 @@ export default function Monedas() {
       )}
 
       <div style={S.tabs}>
-        {[['cambio', 'Tipo de cambio'], ['catalogo', 'Monedas']].map(([id, n]) => (
+        {[['cambio', 'Tipo de cambio'], ['catalogo', 'Monedas'], ['politica', 'Politica de costeo']].map(([id, n]) => (
           <button key={id} style={tab === id ? S.tabAct : S.tab} onClick={() => { setTab(id); setError('') }}>{n}</button>
         ))}
       </div>
@@ -313,6 +349,134 @@ export default function Monedas() {
                 </div>
               ))}
             </div>
+          </div>
+        </>
+      )}
+
+      {/* ---------- Politica de costeo ---------- */}
+      {tab === 'politica' && politica && (
+        <>
+          <div style={S.card}>
+            <p style={S.cardTit}>Cuando se congela el tipo de cambio de una compra</p>
+            <p style={S.ayuda}>
+              Una compra en moneda extranjera tiene que quedar valuada en <b>{principal}</b> en algun momento, y
+              a partir de ahi ese numero ya no cambia. Elegir el momento es una decision contable: aqui se define
+              una vez y todos los movimientos la siguen.
+            </p>
+            {[
+              ['recibo', 'Al recibir el material',
+               'La tasa del dia en que el material entra al inventario. Es lo mas comun: el costo se vuelve real cuando la pieza esta en el anden, y el lote se queda con esa tasa.'],
+              ['factura', 'Al registrar la factura del proveedor',
+               'La tasa de la factura, que es lo que contabilidad realmente paga. Mas exacto contra el estado de resultados; a cambio, el lote entra al inventario sin costo firme hasta que llega la factura.'],
+              ['periodo', 'Tasa fija del periodo',
+               'Una tasa presupuestal por mes, igual para todos los movimientos de ese mes. Se captura abajo. La diferencia contra la real se reconoce como variacion cambiaria en vez de ensuciar el costo de cada lote.'],
+            ].map(([v, titulo, expl]) => (
+              <label key={v} style={politica.congela_en === v ? S.opcionSel : S.opcion}>
+                <input type="radio" name="congela" checked={politica.congela_en === v} disabled={!puedeEditar}
+                  onChange={() => guardarPolitica({ congela_en: v })} />
+                <span>
+                  <b>{titulo}</b>
+                  <span style={S.opcionExpl}>{expl}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <div style={S.card}>
+            <p style={S.cardTit}>Cuando no hay tipo de cambio del dia del movimiento</p>
+            {[
+              ['ultima', 'Usar la ultima disponible y marcarlo',
+               'El movimiento no se detiene: se toma la tasa mas reciente, se guarda cual se uso y de que fecha era, y el lote queda marcado como valuado con tasa vieja. Queda el rastro para corregirlo despues.'],
+              ['sin_convertir', 'Dejarlo sin convertir',
+               'El lote entra en su moneda original, sin valor en {principal}, y los reportes de inventario lo excluyen avisando. Mas honesto, pero deja huecos en el valor del inventario.'],
+            ].map(([v, titulo, expl]) => (
+              <label key={v} style={politica.sin_tasa === v ? S.opcionSel : S.opcion}>
+                <input type="radio" name="sintasa" checked={politica.sin_tasa === v} disabled={!puedeEditar}
+                  onChange={() => guardarPolitica({ sin_tasa: v })} />
+                <span>
+                  <b>{titulo}</b>
+                  <span style={S.opcionExpl}>{expl.replace('{principal}', principal)}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <div style={S.card}>
+            <p style={S.cardTit}>Valor del inventario</p>
+            <p style={S.ayuda}>
+              Cada lote conserva el costo con el que entro: <b>el inventario no se revalua</b>. Es lo que pide el
+              costo historico y hace que el valor cuadre con lo que se pago. La diferencia por tipo de cambio se
+              reconoce cuando el material se consume o se vende, no antes.
+              {' '}Si un lote no trae costo congelado -- porque entro antes de esto o nunca se costeo -- el reporte
+              cae al costo estandar del articulo convertido y lo <b>reporta aparte</b>, para que se vea cuanto del
+              inventario esta valuado con cada criterio.
+            </p>
+          </div>
+
+          {politica.congela_en === 'periodo' && (
+            <div style={S.card}>
+              <p style={S.cardTit}>Tasa del periodo</p>
+              <p style={S.ayuda}>
+                Cuantos <b>{principal}</b> vale UNA unidad de la moneda, para todo ese mes. Si el mes no tiene tasa
+                capturada, el sistema se cae a la diaria y lo marca.
+              </p>
+              {puedeEditar && (
+                <>
+                  <div style={S.fila}>
+                    <div style={S.campo}>
+                      <label style={S.label}>Moneda</label>
+                      <select style={S.input} value={nuevaPeriodo.moneda} onChange={e => setNuevaPeriodo({ ...nuevaPeriodo, moneda: e.target.value })}>
+                        <option value="">Selecciona...</option>
+                        {activas.map(m => <option key={m.id} value={m.clave}>{m.clave}</option>)}
+                      </select>
+                    </div>
+                    <div style={S.campo}>
+                      <label style={S.label}>Anio</label>
+                      <input style={S.input} type="number" value={nuevaPeriodo.anio} onChange={e => setNuevaPeriodo({ ...nuevaPeriodo, anio: e.target.value })} />
+                    </div>
+                    <div style={S.campo}>
+                      <label style={S.label}>Mes</label>
+                      <input style={S.input} type="number" min="1" max="12" value={nuevaPeriodo.mes} onChange={e => setNuevaPeriodo({ ...nuevaPeriodo, mes: e.target.value })} />
+                    </div>
+                    <div style={S.campo}>
+                      <label style={S.label}>Tasa</label>
+                      <input style={S.input} type="number" step="0.0001" value={nuevaPeriodo.tasa} onChange={e => setNuevaPeriodo({ ...nuevaPeriodo, tasa: e.target.value })} placeholder="17.2000" />
+                    </div>
+                    <div style={{ ...S.campo, flex: 2 }}>
+                      <label style={S.label}>Notas</label>
+                      <input style={S.input} value={nuevaPeriodo.notas} onChange={e => setNuevaPeriodo({ ...nuevaPeriodo, notas: e.target.value })} placeholder="Presupuesto, contrato..." />
+                    </div>
+                  </div>
+                  <div style={S.acciones}>
+                    <button style={S.boton} onClick={guardarTasaPeriodo}>Guardar tasa del periodo</button>
+                  </div>
+                </>
+              )}
+              <div style={{ ...S.tabla, marginTop: 12 }}>
+                <div style={S.th}>
+                  <span style={{ width: 90 }}>Moneda</span>
+                  <span style={{ width: 120 }}>Periodo</span>
+                  <span style={{ width: 150 }}>Tasa a {principal}</span>
+                  <span style={{ flex: 1 }}>Notas</span>
+                </div>
+                {tasasPeriodo.length === 0 && <p style={S.info}>Sin tasas de periodo capturadas.</p>}
+                {tasasPeriodo.map(t => (
+                  <div key={t.id} style={S.tr}>
+                    <span style={{ width: 90, fontWeight: 600 }}>{t.moneda}</span>
+                    <span style={{ width: 120, color: '#64748b' }}>{t.anio}-{String(t.mes).padStart(2, '0')}</span>
+                    <span style={{ width: 150 }}>{Number(t.tasa).toLocaleString('es-MX', { minimumFractionDigits: 4 })}</span>
+                    <span style={{ flex: 1, color: '#64748b', fontSize: 12 }}>{t.notas}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={S.avisoPol}>
+            <b>Cambiar la politica no re-expresa lo que ya se congelo.</b> Los lotes que ya entraron conservan su
+            costo y su tasa: eso es lo correcto, porque re-expresar el pasado cada vez que cambia una politica
+            hace que un mismo mes valga distinto segun cuando se consulte. La politica nueva aplica de aqui en
+            adelante.
           </div>
         </>
       )}
@@ -455,6 +619,10 @@ const S = {
   pillPrin: { padding: '3px 10px', borderRadius: 20, fontSize: 11.5, fontWeight: 700, background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' },
   pillOk: { padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0' },
   pillMal: { padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' },
+  opcion: { display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: 8, marginBottom: 8, cursor: 'pointer', fontSize: 13.5, color: '#334155' },
+  opcionSel: { display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', border: '1px solid #2563eb', background: '#eff6ff', borderRadius: 8, marginBottom: 8, cursor: 'pointer', fontSize: 13.5, color: '#1e3a8a' },
+  opcionExpl: { display: 'block', fontSize: 12, color: '#64748b', marginTop: 4, lineHeight: 1.6, maxWidth: 820 },
+  avisoPol: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: '12px 14px', fontSize: 12.5, color: '#92400e', lineHeight: 1.6 },
   avisoVencido: { background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 14px', fontSize: 12.5, color: '#7f1d1d', marginBottom: 14, lineHeight: 1.6 },
   info: { fontSize: 13, color: '#94a3b8', padding: '16px', margin: 0 },
   pie: { fontSize: 12, color: '#94a3b8', marginTop: 12, maxWidth: 880, lineHeight: 1.6 },
