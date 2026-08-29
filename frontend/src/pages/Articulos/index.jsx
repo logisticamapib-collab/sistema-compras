@@ -4,7 +4,9 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
 const unidades = ['PZA','KG','LT','MT','CJ','RLL','PAR','JGO','SRV','TON','GR','ML','CM','M2','M3']
-const monedas = ['MXN','USD','EUR']
+// Las monedas ya no viven en una lista escrita a mano: se dan de alta en
+// Configuracion -> Monedas y tipo de cambio, y desde ahi quedan habilitadas en
+// todo el sistema.
 
 const tiposProceso = [
   { value: 'solo_inyeccion', label: 'Solo Inyeccion' },
@@ -63,12 +65,13 @@ export default function Articulos() {
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [formProveedor, setFormProveedor] = useState({
-    proveedor_id: '', codigo_proveedor: '', precio: '',
+    proveedor_id: '', codigo_proveedor: '', precio: '', moneda: '',
     minimo_compra: 1, tiempo_entrega_dias: '', tiempo_trayecto_dias: ''
   })
   const [formCliente, setFormCliente] = useState({ cliente_id: '', codigo_cliente: '', precio: '' })
   const [colores, setColores] = useState([])
   const [variantes, setVariantes] = useState([])
+  const [monedas, setMonedas] = useState([])
   // Vista completa: todo lo del articulo en un renglon, solo lectura. Los
   // datos que no hacen falta para la lista normal -- molde, codigo del
   // cliente -- se traen la primera vez que se abre, no en cada entrada al
@@ -89,7 +92,7 @@ export default function Articulos() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }, { data: cols }, { data: prts }, { data: fams }, { data: vars_ }] = await Promise.all([
+    const [{ data: a }, { data: c }, { data: p }, { data: cl }, { data: s }, { data: destinos }, { data: cols }, { data: prts }, { data: fams }, { data: vars_ }, { data: mons }] = await Promise.all([
       supabase.from('articulos').select('*, categorias(nombre), sites(nombre, codigo)').eq('empresa_id', perfil.empresa_id).order('codigo_interno'),
       supabase.from('categorias').select('*').eq('empresa_id', perfil.empresa_id),
       supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
@@ -100,10 +103,12 @@ export default function Articulos() {
       supabase.from('partes').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
       supabase.from('familias_resina').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('orden').order('clave'),
       supabase.from('variantes_codigo').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
+      supabase.from('monedas').select('clave, nombre').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave'),
     ])
     setArticulos(a || [])
     setColores(cols || [])
     setVariantes(vars_ || [])
+    setMonedas((mons || []).map(m => m.clave))
     setPartes(prts || [])
     setFamilias(fams || [])
     setCategorias(c || [])
@@ -133,7 +138,7 @@ export default function Articulos() {
       supabase.from('molde_cavidades').select('molde_id, articulo_id, numero_cavidad, activa').not('articulo_id', 'is', null),
       supabase.from('moldes').select('id, clave, nombre, num_cavidades').eq('empresa_id', perfil.empresa_id),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id, codigo_cliente, precio, activo'),
-      supabase.from('articulo_proveedor').select('articulo_id, proveedor_id, codigo_proveedor, precio, activo'),
+      supabase.from('articulo_proveedor').select('articulo_id, proveedor_id, codigo_proveedor, precio, moneda, activo'),
       supabase.from('bom').select('articulo_padre_id, componente_articulo_id, cantidad_por_unidad, unidad_medida'),
     ])
     const porArt = {}
@@ -371,6 +376,9 @@ export default function Articulos() {
       proveedor_id: parseInt(formProveedor.proveedor_id),
       codigo_proveedor: formProveedor.codigo_proveedor,
       precio: parseFloat(formProveedor.precio),
+      // Cada proveedor cotiza en lo suyo. Sin esto, un precio en dolares se
+      // copiaba a una orden en pesos sin que nada lo delatara.
+      moneda: formProveedor.moneda || articuloSeleccionado?.tipo_moneda || 'MXN',
       minimo_compra: parseFloat(formProveedor.minimo_compra) || 1,
       tiempo_entrega_dias: parseInt(formProveedor.tiempo_entrega_dias) || 0,
       tiempo_trayecto_dias: parseInt(formProveedor.tiempo_trayecto_dias) || 0
@@ -687,7 +695,7 @@ export default function Articulos() {
       { label: 'IVA %', get: a => a.iva_porcentaje ?? '', w: 60 },
       { label: 'Clientes', get: a => clisDe(a).map(x => nom(clientes, x.cliente_id)).filter(Boolean).join(', '), w: 180 },
       { label: 'Codigo del cliente', get: a => clisDe(a).map(x => x.codigo_cliente).filter(Boolean).join(', '), w: 160 },
-      { label: 'Proveedores', get: a => provsDe(a).map(x => nom(proveedores, x.proveedor_id)).filter(Boolean).join(', '), w: 180 },
+      { label: 'Proveedores', get: a => provsDe(a).map(x => `${nom(proveedores, x.proveedor_id)}${x.moneda && x.moneda !== a.tipo_moneda ? ` [${x.moneda}]` : ''}`).filter(Boolean).join(', '), w: 200 },
       { label: 'Maquilador', get: a => a.se_maquila ? nom(proveedores, a.maquilador_id) : '', w: 150 },
       { label: 'Consigna', get: a => a.es_consigna ? 'Si' : '', w: 80 },
       { label: 'Lead time', get: a => a.lead_time_dias ?? '', w: 80 },
@@ -727,6 +735,7 @@ export default function Articulos() {
       articulo={articuloSeleccionado}
       proveedores={proveedores}
       formProveedor={formProveedor}
+      monedas={monedas}
       setFormProveedor={setFormProveedor}
       guardarProveedorArticulo={guardarProveedorArticulo}
       error={error}
@@ -864,7 +873,7 @@ export default function Articulos() {
               <label style={styles.label}>Moneda</label>
               <select style={styles.input} value={form.tipo_moneda}
                 onChange={e => setForm({ ...form, tipo_moneda: e.target.value })}>
-                {monedas.map(m => <option key={m} value={m}>{m}</option>)}
+                {(monedas.length ? monedas : [form.tipo_moneda]).map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
           </div>
@@ -1357,7 +1366,7 @@ export default function Articulos() {
   )
 }
 
-function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFormProveedor, guardarProveedorArticulo, error, exito, onVolver }) {
+function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFormProveedor, guardarProveedorArticulo, error, exito, onVolver, monedas = [] }) {
   const [proveedoresAsignados, setProveedoresAsignados] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -1419,6 +1428,16 @@ function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFor
               placeholder="0.00" min="0" step="0.01" />
           </div>
           <div style={styles.campo}>
+            <label style={styles.label}>Moneda</label>
+            <select style={styles.input} value={formProveedor.moneda || articulo.tipo_moneda || ''}
+              onChange={e => setFormProveedor({ ...formProveedor, moneda: e.target.value })}>
+              {(monedas.length ? monedas : [articulo.tipo_moneda || 'MXN']).map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <span style={{ fontSize: '11px', color: '#94a3b8', marginTop: '3px', display: 'block' }}>
+              En la que cotiza ESTE proveedor. Arranca en la del articulo ({articulo.tipo_moneda || 'MXN'}).
+            </span>
+          </div>
+          <div style={styles.campo}>
             <label style={styles.label}>Minimo de compra</label>
             <input style={styles.input} type="number" value={formProveedor.minimo_compra}
               onChange={e => setFormProveedor({ ...formProveedor, minimo_compra: e.target.value })}
@@ -1449,6 +1468,7 @@ function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFor
           <span style={{ flex: 2 }}>Proveedor</span>
           <span style={{ flex: 1 }}>Codigo prov.</span>
           <span style={{ flex: 1 }}>Precio</span>
+          <span style={{ width: '70px' }}>Moneda</span>
           <span style={{ flex: 1 }}>Minimo</span>
           <span style={{ flex: 1 }}>Entrega</span>
           <span style={{ flex: 1 }}>Trayecto</span>
@@ -1465,6 +1485,10 @@ function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFor
               <span style={{ flex: 2, fontWeight: '500' }}>{ap.proveedores?.nombre}</span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{ap.codigo_proveedor}</span>
               <span style={{ flex: 1, fontSize: '13px' }}>${parseFloat(ap.precio).toFixed(2)}</span>
+              <span style={{ width: '70px', fontSize: '12px', fontWeight: 600, color: ap.moneda && ap.moneda !== articulo.tipo_moneda ? '#b45309' : '#64748b' }}
+                title={ap.moneda && ap.moneda !== articulo.tipo_moneda ? `Este proveedor cotiza en ${ap.moneda} y el articulo esta costeado en ${articulo.tipo_moneda}` : ''}>
+                {ap.moneda || '—'}
+              </span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{ap.minimo_compra}</span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{ap.tiempo_entrega_dias} dias</span>
               <span style={{ flex: 1, fontSize: '13px', color: '#666' }}>{ap.tiempo_trayecto_dias} dias</span>

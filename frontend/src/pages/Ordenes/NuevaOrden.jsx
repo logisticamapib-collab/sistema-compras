@@ -18,6 +18,7 @@ export default function NuevaOrden({ onVolver, onGuardado, requisicionInicial = 
   const [lineasSeleccionadas, setLineasSeleccionadas] = useState([])
   const [proveedorPorLinea, setProveedorPorLinea] = useState({})
   const [proveedores, setProveedores] = useState([])
+  const [monedas, setMonedas] = useState([])
   // Proveedores que ademas son clientes nuestros. Solo informa.
   const [provTambienCliente, setProvTambienCliente] = useState(new Set())
   const [articuloProveedores, setArticuloProveedores] = useState({})
@@ -82,6 +83,10 @@ export default function NuevaOrden({ onVolver, onGuardado, requisicionInicial = 
       .from('clientes').select('proveedor_id')
       .eq('empresa_id', perfil.empresa_id).not('proveedor_id', 'is', null)
     setProvTambienCliente(new Set((vinc || []).map(v => v.proveedor_id)))
+
+    const { data: mons } = await supabase.from('monedas')
+      .select('clave').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave')
+    setMonedas((mons || []).map(m => m.clave))
     setArticulosCatalogo(a || [])
     setLoading(false)
   }
@@ -739,9 +744,7 @@ export default function NuevaOrden({ onVolver, onGuardado, requisicionInicial = 
                 <label style={styles.label}>Moneda</label>
                 <select style={styles.input} value={form.moneda}
                   onChange={e => setForm({ ...form, moneda: e.target.value })}>
-                  <option value="MXN">MXN - Peso mexicano</option>
-                  <option value="USD">USD - Dolar americano</option>
-                  <option value="EUR">EUR - Euro</option>
+                  {(monedas.length ? monedas : [form.moneda]).map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
             </div>

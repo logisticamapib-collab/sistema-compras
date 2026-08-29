@@ -26,6 +26,7 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
   const [error, setError] = useState('')
   const [articulos, setArticulos] = useState([])
   const [proveedores, setProveedores] = useState([])
+  const [monedas, setMonedas] = useState([])
   // Proveedores que ademas son clientes nuestros. Solo informa: no bloquea ni
   // cambia el flujo. Compras debe saber que hay relacion en los dos sentidos
   // antes de sentarse a negociar.
@@ -51,7 +52,7 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
   const cargarCatalogos = async () => {
     setLoading(true)
     const [{ data: a }, { data: p }, { data: cc }, { data: cg }, { data: ga }] = await Promise.all([
-      supabase.from('articulos').select('*, articulo_proveedor(proveedor_id, precio)').eq('empresa_id', perfil.empresa_id).eq('activo', true),
+      supabase.from('articulos').select('*, articulo_proveedor(proveedor_id, precio, moneda)').eq('empresa_id', perfil.empresa_id).eq('activo', true),
       supabase.from('proveedores').select('*').eq('empresa_id', perfil.empresa_id).eq('activo', true),
       supabase.from('centros_costos').select('*').eq('site_id', perfil.site_id).eq('activo', true),
       supabase.from('cuentas_gastos').select('*').eq('site_id', perfil.site_id).eq('activo', true),
@@ -68,6 +69,10 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
       .from('clientes').select('proveedor_id')
       .eq('empresa_id', perfil.empresa_id).not('proveedor_id', 'is', null)
     setProvTambienCliente(new Set((vinc || []).map(v => v.proveedor_id)))
+
+    const { data: mons } = await supabase.from('monedas')
+      .select('clave').eq('empresa_id', perfil.empresa_id).eq('activo', true).order('clave')
+    setMonedas((mons || []).map(m => m.clave))
     setCentrosCostos(cc || [])
     setCuentasGastos(cg || [])
     setGerentesArea(ga || [])
@@ -82,11 +87,23 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
       if (art) {
         nuevas[i].unidad_medida = art.unidad_medida
         const ap = art.articulo_proveedor?.find(ap => ap.proveedor_id?.toString() === form.proveedor_id)
-        if (ap) nuevas[i].precio_unitario = ap.precio.toString()
+        if (ap) {
+          nuevas[i].precio_unitario = ap.precio.toString()
+          // La moneda viaja con el precio. Antes se copiaba el numero y se
+          // dejaba la de la orden: un precio en dolares terminaba etiquetado
+          // como pesos y nadie lo notaba hasta la factura.
+          nuevas[i].moneda_proveedor = ap.moneda || null
+        }
       }
     }
     setLineas(nuevas)
   }
+
+  // Monedas que traen los precios copiados y que no coinciden con la de la
+  // orden. Una OC no se puede sumar en dos monedas, asi que se avisa fuerte.
+  const monedasEnConflicto = [...new Set(
+    lineas.map(l => l.moneda_proveedor).filter(m => m && m !== form.moneda)
+  )]
 
   const agregarLinea = () => setLineas([...lineas, lineaVacia()])
 
@@ -258,9 +275,7 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
             <label style={styles.label}>Moneda</label>
             <select style={styles.input} value={form.moneda}
               onChange={e => setForm({ ...form, moneda: e.target.value })}>
-              <option value="MXN">MXN</option>
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
+              {(monedas.length ? monedas : [form.moneda]).map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
           <div style={styles.campo}>
@@ -423,6 +438,25 @@ export default function NuevaOrdenDirecta({ onVolver, onGuardado }) {
             </div>
           </div>
         ))}
+
+        {monedasEnConflicto.length > 0 && (
+          <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12.5px', color: '#7f1d1d', margin: '12px 0', lineHeight: 1.6 }}>
+            <b>Hay precios en otra moneda.</b> Esta orden esta en <b>{form.moneda}</b>, pero
+            {' '}{monedasEnConflicto.length === 1 ? 'un precio viene' : 'hay precios'} en
+            {' '}<b>{monedasEnConflicto.join(', ')}</b>, que es como cotiza ese proveedor.
+            {' '}Una orden no se puede sumar en dos monedas: cambia la moneda de la orden a la del proveedor,
+            o corrige el precio de la linea a {form.moneda}.
+            <div style={{ marginTop: 8 }}>
+              {monedasEnConflicto.map(m => (
+                <button key={m} type="button"
+                  style={{ marginRight: 8, padding: '5px 12px', background: '#fff', color: '#b91c1c', border: '1px solid #fca5a5', borderRadius: 6, fontSize: 12.5, cursor: 'pointer' }}
+                  onClick={() => setForm({ ...form, moneda: m })}>
+                  Poner la orden en {m}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={styles.totales}>
           <div style={styles.totalItem}>
