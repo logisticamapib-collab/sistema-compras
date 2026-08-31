@@ -36,6 +36,10 @@ export default function Monedas() {
   const [tab, setTab] = useState('cambio')
   const [politica, setPolitica] = useState(null)
   const [tasasPeriodo, setTasasPeriodo] = useState([])
+  // Con el modulo de compras en "solo recibo" no hay quien registre una
+  // factura, asi que esa opcion no se ofrece: no se ofrece lo que el sistema
+  // no puede cumplir.
+  const [nivelCompras, setNivelCompras] = useState('recibo')
   const [nuevaPeriodo, setNuevaPeriodo] = useState({
     moneda: '', anio: new Date().getFullYear(), mes: new Date().getMonth() + 1, tasa: '', notas: '',
   })
@@ -48,7 +52,7 @@ export default function Monedas() {
   const cargar = async () => {
     setLoading(true)
     // El orden de las variables sigue el orden de las consultas.
-    const [rMon, rEmp, rTc, rArt, rAp, rPol, rTp] = await Promise.all([
+    const [rMon, rEmp, rTc, rArt, rAp, rPol, rTp, rCfg] = await Promise.all([
       supabase.from('monedas').select('*').eq('empresa_id', emp).order('clave'),
       supabase.from('empresas').select('id, moneda_principal, dias_vigencia_tipo_cambio').eq('id', emp).maybeSingle(),
       supabase.from('tipos_cambio').select('*').eq('empresa_id', emp).order('fecha', { ascending: false }).limit(200),
@@ -56,12 +60,14 @@ export default function Monedas() {
       supabase.from('articulo_proveedor').select('moneda'),
       supabase.from('politica_moneda').select('*').eq('empresa_id', emp).maybeSingle(),
       supabase.from('tipos_cambio_periodo').select('*').eq('empresa_id', emp).order('anio', { ascending: false }).order('mes', { ascending: false }).limit(120),
+      supabase.from('config_compras').select('nivel_facturacion').eq('empresa_id', emp).maybeSingle(),
     ])
     setMonedas(rMon.data || [])
     setEmpresa(rEmp.data || null)
     setCambios(rTc.data || [])
     setPolitica(rPol.data || { empresa_id: emp, congela_en: 'recibo', sin_tasa: 'ultima', revalua_inventario: false })
     setTasasPeriodo(rTp.data || [])
+    setNivelCompras(rCfg.data?.nivel_facturacion || 'recibo')
 
     // Cuantos registros usan cada moneda: se necesita para no dejar borrar una
     // que ya se esta usando.
@@ -371,12 +377,22 @@ export default function Monedas() {
               ['periodo', 'Tasa fija del periodo',
                'Una tasa presupuestal por mes, igual para todos los movimientos de ese mes. Se captura abajo. La diferencia contra la real se reconoce como variacion cambiaria en vez de ensuciar el costo de cada lote.'],
             ].map(([v, titulo, expl]) => (
-              <label key={v} style={politica.congela_en === v ? S.opcionSel : S.opcion}>
-                <input type="radio" name="congela" checked={politica.congela_en === v} disabled={!puedeEditar}
+              <label key={v} style={
+                v === 'factura' && nivelCompras === 'recibo' ? S.opcionOff
+                  : politica.congela_en === v ? S.opcionSel : S.opcion
+              }>
+                <input type="radio" name="congela" checked={politica.congela_en === v}
+                  disabled={!puedeEditar || (v === 'factura' && nivelCompras === 'recibo')}
                   onChange={() => guardarPolitica({ congela_en: v })} />
                 <span>
                   <b>{titulo}</b>
                   <span style={S.opcionExpl}>{expl}</span>
+                  {v === 'factura' && nivelCompras === 'recibo' && (
+                    <span style={S.opcionBloq}>
+                      No disponible: el modulo de compras esta en "solo recibo", asi que no hay donde registrar
+                      la factura. Se habilita en Configuracion, Compras y Facturacion.
+                    </span>
+                  )}
                 </span>
               </label>
             ))}
@@ -621,6 +637,8 @@ const S = {
   pillMal: { padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' },
   opcion: { display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: 8, marginBottom: 8, cursor: 'pointer', fontSize: 13.5, color: '#334155' },
   opcionSel: { display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', border: '1px solid #2563eb', background: '#eff6ff', borderRadius: 8, marginBottom: 8, cursor: 'pointer', fontSize: 13.5, color: '#1e3a8a' },
+  opcionOff: { display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', border: '1px dashed #e2e8f0', background: '#f8fafc', borderRadius: 8, marginBottom: 8, cursor: 'not-allowed', fontSize: 13.5, color: '#94a3b8' },
+  opcionBloq: { display: 'block', fontSize: 11.5, color: '#b45309', marginTop: 6, lineHeight: 1.6, maxWidth: 820 },
   opcionExpl: { display: 'block', fontSize: 12, color: '#64748b', marginTop: 4, lineHeight: 1.6, maxWidth: 820 },
   avisoPol: { background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: '12px 14px', fontSize: 12.5, color: '#92400e', lineHeight: 1.6 },
   avisoVencido: { background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 14px', fontSize: 12.5, color: '#7f1d1d', marginBottom: 14, lineHeight: 1.6 },
