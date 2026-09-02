@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import CargaMasivaCatalogo from '../../components/CargaMasivaCatalogo'
 
 // Carga masiva de Articulos y BOM por plantilla Excel.
 // Descarga plantilla -> se llena -> se sube -> valida fila por fila -> carga los validos.
@@ -28,6 +29,11 @@ export default function CargaMasiva() {
   const [maquiladores, setMaquiladores] = useState([])
   const [sites, setSites] = useState([])
   const [arts, setArts] = useState([])
+  const [clientes, setClientes] = useState([])
+  const [monedasCat, setMonedasCat] = useState([])
+  // Lo ya asignado, para no duplicar la pareja articulo-contraparte.
+  const [artCli, setArtCli] = useState([])
+  const [artProv, setArtProv] = useState([])
   const [filas, setFilas] = useState([])   // {n, payload, errores, tipo}
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
@@ -36,13 +42,66 @@ export default function CargaMasiva() {
 
   useEffect(() => { cargar() }, [])
   const cargar = async () => {
-    const [c, p, s, a] = await Promise.all([
+    // El orden de las variables sigue el orden de las consultas.
+    const [c, p, s, a, cl, mo, ac, ap] = await Promise.all([
       supabase.from('categorias').select('id, nombre').eq('empresa_id', emp),
       supabase.from('proveedores').select('id, nombre').eq('empresa_id', emp),
       supabase.from('sites').select('id, nombre').eq('empresa_id', emp),
-      supabase.from('articulos').select('id, codigo_interno').eq('empresa_id', emp),
+      // Se traen origen y se_maquila para poder avisar cuando una asignacion no
+      // corresponde: un cliente compra producto fabricado, un proveedor surte
+      // comprado o maquila.
+      supabase.from('articulos').select('id, codigo_interno, descripcion, origen, se_maquila').eq('empresa_id', emp),
+      supabase.from('clientes').select('id, nombre').eq('empresa_id', emp).eq('activo', true),
+      supabase.from('monedas').select('clave').eq('empresa_id', emp).eq('activo', true).order('clave'),
+      supabase.from('articulo_cliente').select('articulo_id, cliente_id'),
+      supabase.from('articulo_proveedor').select('articulo_id, proveedor_id'),
     ])
     setCats(c.data || []); setMaquiladores(p.data || []); setSites(s.data || []); setArts(a.data || [])
+    setClientes(cl.data || []); setMonedasCat((mo.data || []).map(x => x.clave))
+    setArtCli(ac.data || []); setArtProv(ap.data || [])
+  }
+
+  // Reglas de la pareja articulo-contraparte. Se pide un validador nuevo por
+  // archivo para que lo ya visto arranque limpio.
+  const crearValidadorCliente = () => {
+    const enArchivo = new Set()
+    const enSistema = new Set(artCli.map(x => `${x.articulo_id}|${x.cliente_id}`))
+    return (payload) => {
+      const err = []
+      const { articulo_id: aid, cliente_id: cid } = payload
+      if (!aid || !cid) return err
+      const a = arts.find(x => x.id === aid)
+      // Un cliente compra producto que nosotros fabricamos. Si el articulo es
+      // comprado, casi siempre es que se equivocaron de pestana.
+      if (a && a.origen !== 'fabricado') {
+        err.push(`${a.codigo_interno} es un articulo comprado: un cliente compra producto fabricado. Revisa si querias la pestana de proveedores.`)
+      }
+      const k = `${aid}|${cid}`
+      if (enArchivo.has(k)) err.push('ese cliente ya viene para ese articulo en el archivo')
+      else enArchivo.add(k)
+      if (enSistema.has(k)) err.push('ese cliente ya esta asignado a ese articulo')
+      return err
+    }
+  }
+
+  const crearValidadorProveedor = () => {
+    const enArchivo = new Set()
+    const enSistema = new Set(artProv.map(x => `${x.articulo_id}|${x.proveedor_id}`))
+    return (payload) => {
+      const err = []
+      const { articulo_id: aid, proveedor_id: pid } = payload
+      if (!aid || !pid) return err
+      const a = arts.find(x => x.id === aid)
+      // Un proveedor surte lo comprado, o maquila un fabricado.
+      if (a && a.origen === 'fabricado' && !a.se_maquila) {
+        err.push(`${a.codigo_interno} se fabrica aqui y no esta marcado como maquilado: un proveedor surte comprado o maquila. Revisa si querias la pestana de clientes.`)
+      }
+      const k = `${aid}|${pid}`
+      if (enArchivo.has(k)) err.push('ese proveedor ya viene para ese articulo en el archivo')
+      else enArchivo.add(k)
+      if (enSistema.has(k)) err.push('ese proveedor ya esta asignado a ese articulo')
+      return err
+    }
   }
 
   // ---------- PLANTILLAS ----------
@@ -221,13 +280,83 @@ export default function CargaMasiva() {
     <div style={S.c} className="aparecer">
       <h2 style={S.t}>Carga Masiva</h2>
       <div style={S.tabs}>
-        {[['articulos', 'Articulos'], ['bom', 'BOM']].map(([id, n]) => (
+        {[['articulos', 'Articulos'], ['bom', 'BOM'], ['clientes', 'Clientes por articulo'], ['proveedores', 'Proveedores por articulo']].map(([id, n]) => (
           <button key={id} style={vista === id ? S.tabOn : S.tab} onClick={() => { setVista(id); setFilas([]); setError(''); setExito(''); setResultado(null) }}>{n}</button>
         ))}
       </div>
       {error && <p style={S.err}>{error}</p>}
       {exito && <p style={S.ok}>{exito}</p>}
 
+      {vista === 'clientes' && (
+        <CargaMasivaCatalogo
+          titulo="Clientes"
+          tabla="articulo_cliente"
+          columnas={[
+            { campo: 'articulo_id', columna: 'articulo', tipo: 'ref', req: true,
+              ref: { lista: arts, por: 'codigo_interno', etiqueta: 'articulo' },
+              ayuda: 'Codigo interno del articulo. Tiene que existir ya.' },
+            { campo: 'cliente_id', columna: 'cliente', tipo: 'ref', req: true,
+              ref: { lista: clientes, por: 'nombre', etiqueta: 'cliente' },
+              ayuda: 'Nombre del cliente, tal cual esta en el catalogo.' },
+            { campo: 'codigo_cliente', columna: 'codigo_cliente',
+              ayuda: 'Con que codigo le llama el cliente a esta pieza. Es el que viaja en sus releases y en las etiquetas.' },
+            { campo: 'precio', tipo: 'num', ayuda: 'Precio de venta a ese cliente.' },
+          ]}
+          ejemplos={[
+            ['QG1HA005A0000L10', 'Autopartes del Bajio SA de CV', 'ABC-77120-A', 18.50],
+            ['QG1HA005A0000M10', 'Autopartes del Bajio SA de CV', 'ABC-77120-B', 18.50],
+          ]}
+          notas={[
+            'Un renglon por articulo y por cliente. Un mismo articulo puede tener varios clientes.',
+            'Solo AGREGA: si esa pareja ya existe, la fila se rechaza y no se toca el precio que ya estaba.',
+            'El codigo del cliente es el dato que despues permite cruzar sus releases con tu catalogo.',
+          ]}
+          crearValidador={crearValidadorCliente}
+          camposBase={{ activo: true }}
+          empresaId={emp}
+          puedeCargar={puedeArt}
+          onCargado={cargar}
+        />
+      )}
+
+      {vista === 'proveedores' && (
+        <CargaMasivaCatalogo
+          titulo="Proveedores"
+          tabla="articulo_proveedor"
+          columnas={[
+            { campo: 'articulo_id', columna: 'articulo', tipo: 'ref', req: true,
+              ref: { lista: arts, por: 'codigo_interno', etiqueta: 'articulo' },
+              ayuda: 'Codigo interno del articulo. Tiene que existir ya.' },
+            { campo: 'proveedor_id', columna: 'proveedor', tipo: 'ref', req: true,
+              ref: { lista: maquiladores, por: 'nombre', etiqueta: 'proveedor' },
+              ayuda: 'Nombre del proveedor, tal cual esta en el catalogo.' },
+            { campo: 'codigo_proveedor', columna: 'codigo_proveedor',
+              ayuda: 'Con que codigo le llama el proveedor. Es el que va en la orden de compra.' },
+            { campo: 'precio', tipo: 'num', req: true, ayuda: 'Precio al que cotiza ESE proveedor.' },
+            { campo: 'moneda', tipo: 'lista', opciones: monedasCat.length ? monedasCat : ['MXN'],
+              ayuda: 'En la que cotiza ese proveedor. Vacio = la del articulo. Se dan de alta en Configuracion, Monedas.' },
+            { campo: 'minimo_compra', tipo: 'num', defecto: 1, ayuda: 'Cantidad minima por pedido. Vacio = 1.' },
+            { campo: 'tiempo_entrega_dias', tipo: 'num', defecto: 0, ayuda: 'Dias que tarda en surtir desde que recibe la orden.' },
+            { campo: 'tiempo_trayecto_dias', tipo: 'num', defecto: 0, ayuda: 'Dias de transito hasta la planta.' },
+          ]}
+          ejemplos={[
+            ['RES-001', 'Resinas del Centro SA de CV', 'RC-PP-1100', 28.50, 'MXN', 500, 7, 2],
+            ['RES-001', 'Polimeros Importados SA de CV', 'PI-PP-A', 1.65, 'USD', 1000, 21, 14],
+          ]}
+          notas={[
+            'Un renglon por articulo y por proveedor. Un mismo articulo puede tener varios: el segundo ejemplo muestra el mismo material con dos proveedores y dos monedas.',
+            'Solo AGREGA: si esa pareja ya existe, la fila se rechaza y no se toca lo capturado.',
+            'La moneda importa: sin ella, un precio en dolares se copia a una orden en pesos y nadie lo nota hasta la factura.',
+          ]}
+          crearValidador={crearValidadorProveedor}
+          camposBase={{ activo: true }}
+          empresaId={emp}
+          puedeCargar={puedeArt}
+          onCargado={cargar}
+        />
+      )}
+
+      {(vista === 'articulos' || vista === 'bom') && (
       <div style={S.pasos}>
         <div style={S.paso}><b>1.</b> Descarga la plantilla y llenala.
           {vista === 'articulos'
@@ -238,6 +367,7 @@ export default function CargaMasiva() {
           <label style={S.btn}>Subir archivo<input type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={e => leer(e, vista)} /></label>
         </div>
       </div>
+      )}
 
       {filas.length > 0 && (
         <>
