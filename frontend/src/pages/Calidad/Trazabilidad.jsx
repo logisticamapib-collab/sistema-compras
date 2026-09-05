@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
+import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 import EscanerCamara from '../../components/EscanerCamara'
@@ -256,7 +257,7 @@ export default function Trazabilidad() {
                         <span style={S.datoProv}>
                           <b>Proveedor</b> {r.proveedor} &middot; <b>Recibo</b> {r.recibo_folio || '-'} &middot; {fFecha(r.fecha_recibo)}
                           {r.certificado_ref ? <> &middot; <b>Certificado</b> {r.certificado_ref}</> : ''}
-                          {r.certificado_url ? <> &middot; <a href={r.certificado_url} target="_blank" rel="noreferrer" style={S.link}>ver documento</a></> : ''}
+                          {r.certificado_url ? <> &middot; <EnlaceArchivo valor={r.certificado_url} style={S.link}>ver documento</EnlaceArchivo></> : ''}
                           {r.ppap_estado ? ` · PPAP ${r.ppap_estado}` : ''}
                         </span>
                       )}

@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { subirArchivo as subirAStorage } from '../../lib/archivos'
+import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { supabase } from '../../lib/supabase'
 import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
@@ -120,11 +122,11 @@ export default function Documentos() {
     if (!archivo) return
     setError(''); setSubiendo(doc.id)
     const ruta = `documentos/${doc.codigo}_v${doc.version}_${Date.now()}_${archivo.name}`
-    const { error: eS } = await supabase.storage.from('calidad').upload(ruta, archivo)
-    if (eS) { setError('Error al subir: ' + eS.message); setSubiendo(0); return }
-    const { data: u } = supabase.storage.from('calidad').getPublicUrl(ruta)
+    // Se guarda la ruta, no una URL publica: el enlace se firma al abrirlo.
+    const { valor, error: eS } = await subirAStorage('calidad', ruta, archivo)
+    if (eS) { setError('Error al subir: ' + eS); setSubiendo(0); return }
     const { error: e } = await supabase.from('documentos')
-      .update({ archivo_url: u.publicUrl, archivo_nombre: archivo.name }).eq('id', doc.id)
+      .update({ archivo_url: valor, archivo_nombre: archivo.name }).eq('id', doc.id)
     setSubiendo(0)
     if (e) { setError('No se pudo guardar: ' + e.message); return }
     setExito('Archivo cargado'); cargar()
@@ -412,7 +414,7 @@ export default function Documentos() {
                       </td>
                       <td style={S.td}>
                         {d.archivo_url
-                          ? <a href={d.archivo_url} target="_blank" rel="noreferrer" style={S.link}>abrir</a>
+                          ? <EnlaceArchivo valor={d.archivo_url} style={S.link}>abrir</EnlaceArchivo>
                           : <span style={{ color: '#b91c1c' }}>falta</span>}
                         {d.estatus === 'borrador' && puedeEditar && (
                           <label style={S.subir}>

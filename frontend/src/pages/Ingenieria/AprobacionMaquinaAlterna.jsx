@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { subirArchivo as subirAStorage } from '../../lib/archivos'
+
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
@@ -44,9 +46,9 @@ export default function AprobacionMaquinaAlterna() {
 
   const subirDoc = async (file) => {
     const ruta = `maq-alterna/${Date.now()}-${file.name.replace(/\s+/g, '_')}`
-    const { error: e } = await supabase.storage.from('calidad').upload(ruta, file)
-    if (e) throw new Error('No se pudo subir el archivo: ' + e.message)
-    return { url: supabase.storage.from('calidad').getPublicUrl(ruta).data.publicUrl, nombre: file.name }
+    const { valor, error: e } = await subirAStorage('calidad', ruta, file)
+    if (e) throw new Error('No se pudo subir el archivo: ' + e)
+    return { url: valor, nombre: file.name }
   }
 
   const otDe = (id) => ots.find(x => x.id === id)

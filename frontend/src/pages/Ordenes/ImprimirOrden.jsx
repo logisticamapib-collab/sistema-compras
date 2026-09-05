@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { useAuth } from '../../context/AuthContext'
 import { numeroALetras } from '../../lib/numeroALetras'
 
@@ -139,9 +140,9 @@ export default function ImprimirOrden({ orden, onVolver }) {
                     {orden.cotizacion_archivo_url && (
                       <>
                         <br />
-                        <a href={orden.cotizacion_archivo_url} target="_blank" rel="noreferrer" style={styles.linkCotizacion}>
+                        <EnlaceArchivo valor={orden.cotizacion_archivo_url} style={styles.linkCotizacion}>
                           Ver documento de cotizacion adjunto
-                        </a>
+                        </EnlaceArchivo>
                       </>
                     )}
                   </td>

@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { subirArchivo as subirAStorage } from '../../lib/archivos'
+import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { supabase } from '../../lib/supabase'
 import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
@@ -151,13 +153,12 @@ export default function LiberacionesCalidad() {
     setError('')
     setSubiendo(tipo)
     const ruta = `${articulo.id}/${tipo}_${Date.now()}_${archivo.name}`
-    const { error: errS } = await supabase.storage.from('calidad').upload(ruta, archivo)
-    if (errS) { setError('Error al subir: ' + errS.message); setSubiendo(''); return }
-    const { data: urlData } = supabase.storage.from('calidad').getPublicUrl(ruta)
+    const { valor, error: errS } = await subirAStorage('calidad', ruta, archivo)
+    if (errS) { setError('Error al subir: ' + errS); setSubiendo(''); return }
 
     const campos = tipo === 'PSW'
-      ? { psw_url: urlData.publicUrl, psw_nombre: archivo.name, subido_por: perfil.id }
-      : { ppap_url: urlData.publicUrl, ppap_nombre: archivo.name, subido_por: perfil.id }
+      ? { psw_url: valor, psw_nombre: archivo.name, subido_por: perfil.id }
+      : { ppap_url: valor, ppap_nombre: archivo.name, subido_por: perfil.id }
 
     const errG = await guardarCampos(campos)
     if (errG) { setError(errG.message); setSubiendo(''); return }
@@ -236,7 +237,7 @@ export default function LiberacionesCalidad() {
       <div style={styles.campo}>
         <label style={styles.label}>{tipo === 'PSW' ? 'PSW (Part Submission Warrant)' : 'PPAP (Production Part Approval Process)'}</label>
         {url
-          ? <p style={styles.docCargado}>✓ <a href={url} target="_blank" rel="noreferrer" style={styles.enlace}>{nombre || 'Ver documento'}</a></p>
+          ? <p style={styles.docCargado}>✓ <EnlaceArchivo valor={url} style={styles.enlace}>{nombre || 'Ver documento'}</EnlaceArchivo></p>
           : <p style={styles.docFaltante}>Sin documento</p>}
         {puedeSubir && !lib?.liberado && (
           <input style={styles.inputArchivo} type="file" accept=".pdf,.jpg,.jpeg,.png"

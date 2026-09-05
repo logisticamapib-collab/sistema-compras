@@ -1,4 +1,7 @@
 import { useState, useEffect } from 'react'
+import { subirArchivo as subirAStorage } from '../../lib/archivos'
+import { enlaceDe } from '../../lib/archivos'
+import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
@@ -75,10 +78,9 @@ export default function NormasEmpaque() {
     let camposDocumento = {}
     if (archivo) {
       const ruta = `normas_empaque/${form.articulo_id}/${Date.now()}_${archivo.name}`
-      const { error: errS } = await supabase.storage.from('calidad').upload(ruta, archivo)
-      if (errS) { setError('Error al subir el PDF: ' + errS.message); setLoading(false); return }
-      const { data: urlData } = supabase.storage.from('calidad').getPublicUrl(ruta)
-      camposDocumento = { documento_url: urlData.publicUrl, documento_nombre: archivo.name }
+      const { valor, error: errS } = await subirAStorage('calidad', ruta, archivo)
+      if (errS) { setError('Error al subir el PDF: ' + errS); setLoading(false); return }
+      camposDocumento = { documento_url: valor, documento_nombre: archivo.name }
     }
 
     const payload = {
@@ -121,10 +123,18 @@ export default function NormasEmpaque() {
     await cargarDatos()
   }
 
-  const imprimir = (n) => {
+  const imprimir = async (n) => {
     if (!n.documento_url) return
     // Abre el PDF oficial firmado en una pestana nueva, desde ahi se imprime/postea en maquina
-    window.open(n.documento_url, '_blank')
+    // La ventana se abre antes de pedir el enlace firmado; al reves el
+    // navegador la bloquea.
+    const ventana = window.open('', '_blank')
+    const { url, error: eUrl } = await enlaceDe(n.documento_url)
+    if (eUrl || !url) {
+      if (ventana) { ventana.document.write('<p style="font-family:sans-serif;padding:24px">No se pudo abrir el documento.</p>'); ventana.document.close() }
+      return
+    }
+    if (ventana) ventana.location = url; else window.location.href = url
   }
 
   const etiquetaTipo = (n) => {
@@ -206,7 +216,7 @@ export default function NormasEmpaque() {
               <label style={styles.label}>Formato oficial firmado (PDF) — el que se postea en maquina</label>
               {editando?.documento_url && !archivo && (
                 <p style={{ fontSize: '13px', color: '#16a34a', margin: '0 0 4px 0' }}>
-                  ✓ <a href={editando.documento_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>{editando.documento_nombre || 'Ver documento actual'}</a>
+                  ✓ <EnlaceArchivo valor={editando.documento_url} style={{ color: '#2563eb' }}>{editando.documento_nombre || 'Ver documento actual'}</EnlaceArchivo>
                   <span style={{ color: '#94a3b8' }}> (sube otro para reemplazarlo)</span>
                 </p>
               )}

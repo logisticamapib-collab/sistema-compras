@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 import FiltroSite from '../../components/FiltroSite'
@@ -634,7 +635,7 @@ export default function Calibracion() {
                     <td style={S.td}>{c.proxima_fecha || '-'}</td>
                     <td style={S.td}>
                       {c.documento_url
-                        ? <a href={c.documento_url} target="_blank" rel="noreferrer" style={S.link}>ver</a>
+                        ? <EnlaceArchivo valor={c.documento_url} style={S.link}>ver</EnlaceArchivo>
                         : '-'}
                     </td>
                   </tr>
@@ -745,7 +746,7 @@ export default function Calibracion() {
                       <td style={S.tdR}>{x.ndc ?? '-'}</td>
                       <td style={S.td}><span style={{ ...S.tag, ...(RR[x.resultado] || {}) }}>{x.resultado}</span></td>
                       <td style={S.td}>
-                        {x.documento_url ? <a href={x.documento_url} target="_blank" rel="noreferrer" style={S.link}>ver</a> : '-'}
+                        {x.documento_url ? <EnlaceArchivo valor={x.documento_url} style={S.link}>ver</EnlaceArchivo> : '-'}
                       </td>
                     </tr>
                   ))}

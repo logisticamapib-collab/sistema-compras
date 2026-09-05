@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { subirArchivo as subirAStorage } from '../../lib/archivos'
+import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { useAuth } from '../../context/AuthContext'
 
 const unidades = ['PZA','KG','LT','MT','CJ','RLL','PAR','JGO','SRV','TON','GR','ML','CM','M2','M3']
@@ -97,10 +99,9 @@ export default function EditarOrden({ orden, onVolver, onGuardado }) {
     if (archivoCotizacion) {
       const extension = archivoCotizacion.name.split('.').pop()
       const ruta = `cotizaciones/${orden.folio}-${Date.now()}.${extension}`
-      const { error: errorSubida } = await supabase.storage.from('cotizaciones').upload(ruta, archivoCotizacion)
+      const { valor, error: errorSubida } = await subirAStorage('cotizaciones', ruta, archivoCotizacion)
       if (!errorSubida) {
-        const { data: urlData } = supabase.storage.from('cotizaciones').getPublicUrl(ruta)
-        cotizacionArchivoUrl = urlData.publicUrl
+        cotizacionArchivoUrl = valor
       }
     }
 
@@ -223,9 +224,9 @@ export default function EditarOrden({ orden, onVolver, onGuardado }) {
                 <input type="file" accept=".pdf,image/*"
                   onChange={e => setArchivoCotizacion(e.target.files[0])} />
                 {orden.cotizacion_archivo_url && !archivoCotizacion && (
-                  <a href={orden.cotizacion_archivo_url} target="_blank" rel="noreferrer" style={styles.linkArchivo}>
+                  <EnlaceArchivo valor={orden.cotizacion_archivo_url} style={styles.linkArchivo}>
                     Ver archivo actual
-                  </a>
+                  </EnlaceArchivo>
                 )}
               </div>
             </div>

@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { subirArchivo as subirAStorage } from '../../lib/archivos'
+import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 
@@ -70,10 +72,9 @@ export default function NivelesIngenieria() {
     let camposDocumento = {}
     if (archivo) {
       const ruta = `niveles/${articuloId}/${Date.now()}_${archivo.name}`
-      const { error: errS } = await supabase.storage.from('calidad').upload(ruta, archivo)
-      if (errS) { setError('Error al subir el documento: ' + errS.message); setLoading(false); return }
-      const { data: urlData } = supabase.storage.from('calidad').getPublicUrl(ruta)
-      camposDocumento = { documento_url: urlData.publicUrl, documento_nombre: archivo.name }
+      const { valor, error: errS } = await subirAStorage('calidad', ruta, archivo)
+      if (errS) { setError('Error al subir el documento: ' + errS); setLoading(false); return }
+      camposDocumento = { documento_url: valor, documento_nombre: archivo.name }
     }
 
     let error
@@ -194,7 +195,7 @@ export default function NivelesIngenieria() {
               <label style={styles.label}>Documento del cambio (PDF, dibujo, ECN...)</label>
               {editando?.documento_url && !archivo && (
                 <p style={{ fontSize: '13px', color: '#16a34a', margin: '0 0 4px 0' }}>
-                  ✓ <a href={editando.documento_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>{editando.documento_nombre || 'Ver documento actual'}</a>
+                  ✓ <EnlaceArchivo valor={editando.documento_url} style={{ color: '#2563eb' }}>{editando.documento_nombre || 'Ver documento actual'}</EnlaceArchivo>
                   <span style={{ color: '#94a3b8' }}> (sube otro para reemplazarlo)</span>
                 </p>
               )}
@@ -268,7 +269,7 @@ export default function NivelesIngenieria() {
               </span>
               <span style={{ flex: 1, fontSize: '12px' }}>
                 {n.documento_url
-                  ? <a href={n.documento_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>Ver</a>
+                  ? <EnlaceArchivo valor={n.documento_url} style={{ color: '#2563eb' }}>Ver</EnlaceArchivo>
                   : <span style={{ color: '#94a3b8' }}>-</span>}
               </span>
               <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{n.usuarios?.nombre || '-'}</span>

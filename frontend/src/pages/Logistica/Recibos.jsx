@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 import EtiquetaProducto from '../../components/EtiquetaProducto'
 import PortalImpresion from '../../components/PortalImpresion'
 import { imprimirAislado } from '../../lib/impresion'
+import { subirArchivo as subirAStorage } from '../../lib/archivos'
 import { datosEtiqueta } from '../../lib/etiquetas'
 import { crearCajas, asegurarCajas } from '../../lib/contenedores'
 
@@ -164,9 +165,9 @@ export default function Recibos() {
 
   const subirCertificado = async (file) => {
     const nombre = `recibos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-    const { error: e } = await supabase.storage.from('calidad').upload(nombre, file)
-    if (e) throw new Error('No se pudo subir el certificado: ' + e.message)
-    return supabase.storage.from('calidad').getPublicUrl(nombre).data.publicUrl
+    const { valor, error: e } = await subirAStorage('calidad', nombre, file)
+    if (e) throw new Error('No se pudo subir el certificado: ' + e)
+    return valor
   }
 
   // Arma las etiquetas de los lotes recibidos (una por empaque segun el SNP del articulo)

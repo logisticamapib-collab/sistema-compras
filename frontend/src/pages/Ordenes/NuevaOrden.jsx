@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import { subirArchivo as subirAStorage } from '../../lib/archivos'
 import { useAuth } from '../../context/AuthContext'
 import NuevaOrdenDirecta from './NuevaOrdenDirecta'
 
@@ -334,10 +335,9 @@ export default function NuevaOrden({ onVolver, onGuardado, requisicionInicial = 
       if (cot.archivo) {
         const extension = cot.archivo.name.split('.').pop()
         const ruta = `cotizaciones/${folio}-${Date.now()}.${extension}`
-        const { error: errorSubida } = await supabase.storage.from('cotizaciones').upload(ruta, cot.archivo)
+        const { valor, error: errorSubida } = await subirAStorage('cotizaciones', ruta, cot.archivo)
         if (!errorSubida) {
-          const { data: urlData } = supabase.storage.from('cotizaciones').getPublicUrl(ruta)
-          cotizacionArchivoUrl = urlData.publicUrl
+          cotizacionArchivoUrl = valor
         }
       }
 

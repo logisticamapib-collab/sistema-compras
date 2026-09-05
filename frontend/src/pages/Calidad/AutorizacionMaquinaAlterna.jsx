@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
+import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
 import { useAuth } from '../../context/AuthContext'
 
@@ -118,7 +119,7 @@ export default function AutorizacionMaquinaAlterna() {
             <span style={{ flex: 1.3, fontSize: 12.5 }}>{maqDe(s.maquina_actual_id)?.clave || '-'} → <b>{maqDe(s.maquina_solicitada_id)?.clave}</b></span>
             <span style={{ flex: 1.2, fontSize: 12 }}>
               <span style={{ ...S.pill, backgroundColor: s.doc_tipo === 'ppap' ? '#dcfce7' : '#fef3c7', color: s.doc_tipo === 'ppap' ? '#15803d' : '#b45309' }}>{s.doc_tipo === 'ppap' ? 'PPAP' : 'Desviacion'}</span>
-              {s.doc_url && <div><a href={s.doc_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontSize: 11.5 }}>{s.doc_nombre || 'ver documento'}</a></div>}
+              {s.doc_url && <div><EnlaceArchivo valor={s.doc_url} style={{ color: '#2563eb', fontSize: 11.5 }}>{s.doc_nombre || 'ver documento'}</EnlaceArchivo></div>}
               {s.doc_vigencia && <div style={{ fontSize: 11, color: '#64748b' }}>vence {fDia(s.doc_vigencia)}</div>}
             </span>
             <span style={{ flex: 1.2, fontSize: 11.5, color: '#64748b' }}>{usrDe(s.aut_ing_por)}<div>{fFecha(s.aut_ing_at)}</div></span>
@@ -139,7 +140,7 @@ export default function AutorizacionMaquinaAlterna() {
           <div key={s.id} style={S.tr}>
             <span style={{ flex: 1, fontWeight: 600 }}>{otDe(s.ot_id)?.folio || s.ot_id}</span>
             <span style={{ flex: 1.3, fontSize: 12.5 }}>{maqDe(s.maquina_actual_id)?.clave || '-'} → {maqDe(s.maquina_solicitada_id)?.clave}</span>
-            <span style={{ flex: 1, fontSize: 11.5 }}>{s.doc_url ? <a href={s.doc_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>{s.doc_tipo === 'ppap' ? 'PPAP' : 'Desviacion'}</a> : '-'}</span>
+            <span style={{ flex: 1, fontSize: 11.5 }}>{s.doc_url ? <EnlaceArchivo valor={s.doc_url} style={{ color: '#2563eb' }}>{s.doc_tipo === 'ppap' ? 'PPAP' : 'Desviacion'}</EnlaceArchivo> : '-'}</span>
             <span style={{ flex: 1 }}><span style={{ ...S.pill, backgroundColor: s.estatus === 'aprobada' ? '#dcfce7' : '#fee2e2', color: s.estatus === 'aprobada' ? '#15803d' : '#b91c1c' }}>{s.estatus === 'aprobada' ? 'Liberada' : 'Rechazada'}</span></span>
             <span style={{ flex: 1.2, fontSize: 11.5, color: '#64748b' }}>{usrDe(s.aut_cal_por)}<div>{fFecha(s.aut_cal_at)}</div></span>
             <span style={{ flex: 1.4, fontSize: 12, color: '#64748b' }}>{s.comentario_calidad || '-'}</span>
@@ -159,7 +160,7 @@ export default function AutorizacionMaquinaAlterna() {
             </p>
             <div style={S.docBox}>
               <b>{form.sol.doc_tipo === 'ppap' ? 'PPAP' : 'Desviacion'}</b> adjuntado por Ingenieria
-              {form.sol.doc_url && <div><a href={form.sol.doc_url} target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>{form.sol.doc_nombre || 'abrir documento'}</a></div>}
+              {form.sol.doc_url && <div><EnlaceArchivo valor={form.sol.doc_url} style={{ color: '#2563eb' }}>{form.sol.doc_nombre || 'abrir documento'}</EnlaceArchivo></div>}
               {form.sol.doc_vigencia && <div style={{ fontSize: 12, color: '#64748b' }}>Vigencia: {fDia(form.sol.doc_vigencia)}</div>}
               {form.sol.comentario_ingenieria && <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>Ingenieria: {form.sol.comentario_ingenieria}</div>}
             </div>
