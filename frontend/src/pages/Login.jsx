@@ -1,19 +1,40 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { aIdentidad } from '../lib/accesoInterno'
 
-// CAPTCHA (Cloudflare Turnstile).
+import Captcha, { CAPTCHA_ACTIVO, reiniciarCaptcha } from '../components/Captcha'
+
+
+// Que decirle al usuario cuando no entra.
 //
-// Es el unico control que de verdad frena un ataque automatizado, y la razon
-// es donde vive: Supabase valida el token del lado del SERVIDOR, asi que un
-// script que pega directo al endpoint -- sin pasar por esta pantalla -- tambien
-// tiene que resolverlo. Cualquier contador que pusieramos en el navegador se
-// lo salta sin enterarse.
+// La primera version tapaba TODO con "Datos incorrectos". Eso costo una tarde:
+// se encendio el CAPTCHA en Supabase antes de poner la llave en el navegador,
+// Supabase empezo a rechazar por falta de token, y la pantalla dijo que la
+// contrasena estaba mal. Se busco el problema donde no estaba.
 //
-// Se activa poniendo VITE_TURNSTILE_SITE_KEY en el .env. Si no esta, el login
-// funciona igual que siempre: asi nadie se queda afuera por una llave que
-// falta, ni en desarrollo ni el dia que se cambie de proveedor.
-const CLAVE_CAPTCHA = import.meta.env.VITE_TURNSTILE_SITE_KEY || ''
+// La regla ahora: solo se generaliza cuando el error ES de credenciales.
+// Cualquier otra cosa se muestra tal cual, aunque suene tecnica, porque un
+// mensaje tecnico que apunta al lugar correcto vale mas que uno amable que
+// manda a buscar a otro lado.
+function mensajeDeError(error) {
+  const m = String(error?.message || '')
+
+  if (/captcha/i.test(m)) {
+    return 'El sistema esta pidiendo verificacion CAPTCHA y este navegador no la esta enviando. '
+      + 'Falta configurar VITE_TURNSTILE_SITE_KEY, o hay que apagar la proteccion en Supabase.'
+  }
+  if (error?.status === 429 || /demasiados|too many|rate limit/i.test(m)) {
+    return /demasiados/i.test(m) ? m : 'Demasiados intentos. Espera un momento antes de volver a intentar.'
+  }
+  if (/invalid login credentials|invalid_credentials/i.test(m)) {
+    return 'Datos incorrectos. Revisa tu correo o numero de empleado y tu contrasena.'
+  }
+  if (/email not confirmed/i.test(m)) {
+    return 'Tu cuenta todavia no esta confirmada. Pide que te reenvien el acceso.'
+  }
+  // Lo que no reconocemos se muestra completo, a proposito.
+  return m || 'No se pudo iniciar sesion.'
+}
 
 export default function Login() {
   // Aqui puede venir un correo o un numero de empleado; se resuelve al enviar.
@@ -22,29 +43,6 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [captcha, setCaptcha] = useState('')
-  const cajaCaptcha = useRef(null)
-
-  useEffect(() => {
-    if (!CLAVE_CAPTCHA) return
-    const pintar = () => {
-      if (!window.turnstile || !cajaCaptcha.current || cajaCaptcha.current.dataset.listo) return
-      cajaCaptcha.current.dataset.listo = '1'
-      window.turnstile.render(cajaCaptcha.current, {
-        sitekey: CLAVE_CAPTCHA,
-        callback: setCaptcha,
-        // Si el token caduca antes de que la persona apriete Entrar, se limpia
-        // para que no mande uno muerto y vea un error que no entiende.
-        'expired-callback': () => setCaptcha(''),
-        'error-callback': () => setCaptcha(''),
-      })
-    }
-    if (window.turnstile) { pintar(); return }
-    const et = document.createElement('script')
-    et.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
-    et.async = true
-    et.onload = pintar
-    document.head.appendChild(et)
-  }, [])
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -54,17 +52,13 @@ export default function Login() {
     const { error } = await supabase.auth.signInWithPassword({
       email: aIdentidad(email),
       password,
-      ...(CLAVE_CAPTCHA ? { options: { captchaToken: captcha } } : {}),
+      ...(CAPTCHA_ACTIVO ? { options: { captchaToken: captcha } } : {}),
     })
     if (error) {
-      // 429 es el freno por intentos fallidos, y su mensaje ya viene escrito
-      // para el usuario desde la base. No hay que taparlo con el generico.
-      setError(error.status === 429 || /demasiados/i.test(error.message)
-        ? error.message
-        : 'Datos incorrectos. Revisa tu correo o numero de empleado y tu contrasena.')
+      setError(mensajeDeError(error))
       // El token es de un solo uso: si no se pide otro, el siguiente intento
       // falla por el captcha y no por la contrasena.
-      if (CLAVE_CAPTCHA && window.turnstile) { window.turnstile.reset(); setCaptcha('') }
+      reiniciarCaptcha(); setCaptcha('')
     }
     setLoading(false)
   }
@@ -104,12 +98,12 @@ export default function Login() {
               required
             />
           </div>
-          {CLAVE_CAPTCHA && <div ref={cajaCaptcha} style={{ display: 'flex', justifyContent: 'center' }} />}
+          <Captcha onToken={setCaptcha} />
           {error && <p style={styles.error}>{error}</p>}
           <button
             type="submit"
-            style={(loading || (CLAVE_CAPTCHA && !captcha)) ? styles.botonDeshabilitado : styles.boton}
-            disabled={loading || (CLAVE_CAPTCHA && !captcha)}>
+            style={(loading || (CAPTCHA_ACTIVO && !captcha)) ? styles.botonDeshabilitado : styles.boton}
+            disabled={loading || (CAPTCHA_ACTIVO && !captcha)}>
             {loading ? 'Iniciando sesion...' : 'Iniciar sesion'}
           </button>
         </form>

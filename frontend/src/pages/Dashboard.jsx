@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Configuracion from './Configuracion/index'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import MiCuenta from './MiCuenta'
 import GrupoCompras from './Compras/index'
 import GrupoIngenieria from './Ingenieria/index'
 import GrupoLogistica from './Logistica/index'
@@ -36,6 +37,8 @@ const modulosPendientes = [
 export default function Dashboard() {
   const { perfil, tienePermiso } = useAuth()
   const [moduloActivo, setModuloActivo] = useState(null)
+  const [verMiCuenta, setVerMiCuenta] = useState(false)
+
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -46,7 +49,22 @@ export default function Dashboard() {
 
   const pendienteActivo = modulosPendientes.find(m => m.id === moduloActivo)
 
+  if (verMiCuenta) {
+    return (
+      <div style={styles.container}>
+        <header style={styles.header} className="no-imprimir">
+          <button style={styles.botonBack} onClick={() => setVerMiCuenta(false)}>&larr; Volver</button>
+          <div style={styles.headerDerecho}>
+            <button onClick={handleLogout} style={styles.botonSalir}>Cerrar sesion</button>
+          </div>
+        </header>
+        <MiCuenta onVolver={() => setVerMiCuenta(false)} />
+      </div>
+    )
+  }
+
   if (moduloActivo) {
+
     return (
       <div style={styles.container}>
         <header style={styles.header} className="no-imprimir">
@@ -54,7 +72,10 @@ export default function Dashboard() {
             &larr; Panel de control
           </button>
           <div style={styles.headerDerecho}>
-            <span style={styles.usuario}>{perfil?.nombre} - <strong>{perfil?.rol}</strong></span>
+            <button onClick={() => setVerMiCuenta(true)} style={styles.botonUsuario}
+              title="Mi cuenta y cambiar mi contraseña">
+              {perfil?.nombre} - <strong>{perfil?.rol}</strong>
+            </button>
             <button onClick={handleLogout} style={styles.botonSalir}>Cerrar sesion</button>
           </div>
         </header>
@@ -88,7 +109,10 @@ export default function Dashboard() {
           </div>
         </div>
         <div style={styles.headerDerecho}>
-          <span style={styles.usuario}>{perfil?.nombre} - <strong>{perfil?.rol}</strong></span>
+          <button onClick={() => setVerMiCuenta(true)} style={styles.botonUsuario}
+            title="Mi cuenta y cambiar mi contraseña">
+            {perfil?.nombre} - <strong>{perfil?.rol}</strong>
+          </button>
           <button onClick={handleLogout} style={styles.botonSalir}>Cerrar sesion</button>
         </div>
       </header>
@@ -140,6 +164,7 @@ const styles = {
   subtitulo: { color: '#94a3b8', fontSize: '11px', margin: '2px 0 0 0' },
   headerDerecho: { display: 'flex', alignItems: 'center', gap: '16px' },
   usuario: { color: '#cbd5e1', fontSize: '13px' },
+  botonUsuario: { background: 'transparent', border: 'none', color: '#cbd5e1', fontSize: '13px', cursor: 'pointer', padding: '4px 6px', borderRadius: '4px', textDecoration: 'underline', textUnderlineOffset: '3px' },
   botonSalir: { padding: '7px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' },
   botonBack: { padding: '7px 14px', backgroundColor: 'transparent', color: '#94a3b8', border: '1px solid #334155', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' },
   contenido: { padding: '28px', position: 'relative', zIndex: 1 },
