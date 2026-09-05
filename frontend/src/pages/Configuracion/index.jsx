@@ -13,6 +13,7 @@ import DatosEmpresa from './DatosEmpresa'
 import ConfigEtiquetas from './ConfigEtiquetas'
 import Monedas from './Monedas'
 import CompraFacturacion from './CompraFacturacion'
+import Seguridad from './Seguridad'
 
 const secciones = [
   { id: 'empresa', modulo: 'config_empresa', titulo: 'Datos de la Empresa' },
@@ -28,6 +29,9 @@ const secciones = [
   { id: 'compras', modulo: 'config_compras', titulo: 'Compras y Facturacion' },
   { id: 'notificaciones', modulo: 'config_notificaciones', titulo: 'Notificaciones' },
   { id: 'etiquetas', modulo: 'config_etiquetas', titulo: 'Configuracion de Etiquetas' },
+  // Cuelga del mismo permiso que Usuarios a proposito: quien administra el
+  // acceso de la gente es quien tiene que ver los intentos de entrar.
+  { id: 'seguridad', modulo: 'config_usuarios', titulo: 'Intentos de Ingreso' },
 ]
 
 export default function Configuracion() {
@@ -78,6 +82,7 @@ export default function Configuracion() {
         {seccion === 'compras' && <CompraFacturacion />}
         {seccion === 'notificaciones' && <Notificaciones />}
         {seccion === 'etiquetas' && <ConfigEtiquetas />}
+        {seccion === 'seguridad' && <Seguridad />}
       </div>
     </div>
   )
