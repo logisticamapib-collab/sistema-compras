@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { supabase, supabaseAdmin } from '../../lib/supabase'
+import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import PermisosUsuario from './PermisosUsuario'
 import { ROLES as roles, ROLES_GERENCIALES } from '../../lib/roles'
+import { comoSeVe } from '../../lib/accesoInterno'
 
 
 const niveles = [
@@ -13,6 +14,18 @@ const niveles = [
   { value: 5, label: 'Nivel 5 - Gerente de Compras' },
   { value: 6, label: 'Nivel 6 - Direccion' },
 ]
+
+// supabase-js envuelve un 4xx/5xx en un FunctionsHttpError y deja el cuerpo
+// real dentro de error.context, que es una Response sin leer. Sin esto el
+// administrador solo ve "Edge Function returned a non-2xx status code", que no
+// le dice si se equivoco de correo o si no tiene permiso.
+const leerErrorFn = async (err) => {
+  try {
+    const cuerpo = await err?.context?.json?.()
+    if (cuerpo?.error) return cuerpo.error
+  } catch { /* la respuesta no traia JSON */ }
+  return err?.message || 'No se pudo crear el usuario.'
+}
 
 export default function Usuarios() {
   const { perfil, tienePermiso } = useAuth()
@@ -26,8 +39,12 @@ export default function Usuarios() {
   const [usuarioPermisos, setUsuarioPermisos] = useState(null)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
+  // Aviso cuando el usuario se creo pero el correo de invitacion no salio:
+  // ahi hay que ensenar el enlace para que el administrador lo pase a mano.
+  const [invitacion, setInvitacion] = useState(null)
   const [form, setForm] = useState({
-    nombre: '', email: '', password: '', rol: 'solicitante',
+    nombre: '', email: '', password: '', rol: 'solicitante', modo: 'invitacion',
+    numero_empleado: '', email_notificacion: '',
     site_id: '', puesto_id: '', area_id: '', gerente_id: '',
     nivel_aprobacion: 1, puede_aprobar_como_director: false,
     monto_maximo_aprobacion: ''
@@ -76,8 +93,10 @@ export default function Usuarios() {
   const cancelar = () => {
     setMostrarForm(false)
     setUsuarioEditando(null)
+    setInvitacion(null)
     setForm({
-      nombre: '', email: '', password: '', rol: 'solicitante',
+      nombre: '', email: '', password: '', rol: 'solicitante', modo: 'invitacion',
+      numero_empleado: '', email_notificacion: '',
       site_id: '', puesto_id: '', area_id: '', gerente_id: '',
       nivel_aprobacion: 1, puede_aprobar_como_director: false,
       monto_maximo_aprobacion: ''
@@ -86,13 +105,26 @@ export default function Usuarios() {
   }
 
   const guardarUsuario = async () => {
-    if (!form.nombre || !form.email || !form.site_id) {
-      setError('Nombre, correo y site son obligatorios')
+    if (!form.nombre || !form.site_id) {
+      setError('Nombre y site son obligatorios')
       return
     }
-    if (!usuarioEditando && !form.password) {
-      setError('La contrasena es obligatoria para nuevos usuarios')
-      return
+    if (!usuarioEditando) {
+      // Quien entra con numero de empleado no tiene correo: su identidad la
+      // arma el servidor. Por eso el correo solo es obligatorio en los otros
+      // dos caminos.
+      if (form.modo === 'interno' && !form.numero_empleado.trim()) {
+        setError('Falta el numero de empleado.')
+        return
+      }
+      if (form.modo !== 'interno' && !form.email.trim()) {
+        setError('Falta el correo electronico.')
+        return
+      }
+      if (form.modo !== 'invitacion' && form.password.length < 8) {
+        setError('La contrasena temporal debe tener al menos 8 caracteres.')
+        return
+      }
     }
     setError('')
     setLoading(true)
@@ -120,34 +152,45 @@ export default function Usuarios() {
       }
       setExito('Usuario actualizado correctamente')
     } else {
-      const { data, error: errorAuth } = await supabaseAdmin.auth.signUp({
-        email: form.email,
-        password: form.password
-      })
-
-      if (errorAuth) {
-        setError('Error al crear usuario: ' + errorAuth.message)
-        setLoading(false)
-        return
-      }
-
-      if (data?.user) {
-        await supabase.from('usuarios').upsert({
-          id: data.user.id,
+      // El alta ya no se hace desde aqui. Este navegador no puede crear un
+      // usuario ni elegir a que empresa pertenece: eso lo decide la Edge
+      // Function leyendo el perfil de quien esta llamando. Por eso no se manda
+      // empresa_id, aunque lo tengamos a la mano.
+      const { data, error: errFn } = await supabase.functions.invoke('crear-usuario', {
+        body: {
+          modo: form.modo,
           nombre: form.nombre,
           email: form.email,
+          numero_empleado: form.numero_empleado || null,
+          email_notificacion: form.email_notificacion || null,
+          password: form.modo === 'invitacion' ? undefined : form.password,
           rol: form.rol,
-          puesto_id: form.puesto_id ? Number(form.puesto_id) : null,
-          area_id: form.area_id ? Number(form.area_id) : null,
-          site_id: parseInt(form.site_id),
-          empresa_id: perfil.empresa_id,
+          site_id: form.site_id,
+          puesto_id: form.puesto_id || null,
+          area_id: form.area_id || null,
           gerente_id: form.gerente_id || null,
-          nivel_aprobacion: parseInt(form.nivel_aprobacion),
+          nivel_aprobacion: form.nivel_aprobacion,
           puede_aprobar_como_director: form.puede_aprobar_como_director,
-          monto_maximo_aprobacion: form.monto_maximo_aprobacion ? parseFloat(form.monto_maximo_aprobacion) : null
-        })
+          monto_maximo_aprobacion: form.monto_maximo_aprobacion || null,
+        },
+      })
+
+      const msg = data?.error || (errFn ? await leerErrorFn(errFn) : null)
+      if (msg) { setError(msg); setLoading(false); return }
+
+      if (data?.aviso) {
+        // Quedo creado pero el correo no salio: se ensena el enlace en vez de
+        // dejar al administrador creyendo que la persona ya puede entrar.
+        setInvitacion({ aviso: data.aviso, enlace: data.enlace })
+        setExito('')
+      } else {
+        setInvitacion(null)
+        setExito(form.modo === 'invitacion'
+          ? `Invitacion enviada a ${form.email}. Va a poner su propia contrasena; nadie mas la conoce.`
+          : form.modo === 'interno'
+            ? `Usuario creado. Entra tecleando su numero ${form.numero_empleado} y la contrasena que le pusiste; el sistema le va a pedir que la cambie.`
+            : 'Usuario creado. La primera vez que entre, el sistema le va a pedir que cambie la contrasena.')
       }
-      setExito('Usuario creado correctamente')
     }
 
     cancelar()
@@ -160,6 +203,46 @@ export default function Usuarios() {
     await supabase.from('usuarios')
       .update({ activo: !usuario.activo })
       .eq('id', usuario.id)
+    await cargarDatos()
+  }
+
+  // Reenviar el acceso. Es la salida cuando alguien se queda afuera: el enlace
+  // es de un solo uso y caduca, y en el login no hay "olvide mi contrasena" a
+  // proposito -- se le pide a un humano que ya tiene permiso, en vez de abrir
+  // un endpoint publico de recuperacion.
+  const reenviarAcceso = async (u) => {
+    if (!window.confirm(`Reenviar el acceso a ${u.nombre} (${u.email})?\n\n`
+      + 'Le va a llegar un enlace nuevo. El anterior deja de servir, y hasta que abra el nuevo '
+      + 'y ponga su contrasena, no va a poder entrar.')) return
+    setError(''); setExito(''); setInvitacion(null); setLoading(true)
+    const { data, error: errFn } = await supabase.functions.invoke('crear-usuario', {
+      body: { accion: 'reenviar', usuario_id: u.id },
+    })
+    const msg = data?.error || (errFn ? await leerErrorFn(errFn) : null)
+    if (msg) { setError(msg); setLoading(false); return }
+    if (data?.aviso) setInvitacion({ aviso: data.aviso, enlace: data.enlace })
+    else setExito(`Acceso reenviado a ${u.email}.`)
+    setLoading(false)
+    await cargarDatos()
+  }
+
+  // La otra salida cuando alguien se queda afuera. Es la unica que sirve para
+  // las cuentas internas, que no tienen a donde recibir un enlace.
+  const ponerTemporal = async (u) => {
+    const p = window.prompt(
+      `Contrasena temporal para ${u.nombre}.\n\n`
+      + 'Se la tienes que dar tu. En cuanto entre, el sistema le va a exigir que la cambie '
+      + 'por una que solo el conozca.\n\nMinimo 8 caracteres:')
+    if (p === null) return
+    if (p.length < 8) { setError('La contrasena temporal debe tener al menos 8 caracteres.'); return }
+    setError(''); setExito(''); setInvitacion(null); setLoading(true)
+    const { data, error: errFn } = await supabase.functions.invoke('crear-usuario', {
+      body: { accion: 'nueva_temporal', usuario_id: u.id, password: p },
+    })
+    const msg = data?.error || (errFn ? await leerErrorFn(errFn) : null)
+    if (msg) { setError(msg); setLoading(false); return }
+    setExito(`Listo. Dale esta contrasena a ${u.nombre}; el sistema le va a pedir cambiarla al entrar.`)
+    setLoading(false)
     await cargarDatos()
   }
 
@@ -185,6 +268,23 @@ export default function Usuarios() {
 
       {error && <p style={styles.error}>{error}</p>}
       {exito && <p style={styles.exito}>{exito}</p>}
+
+      {invitacion && (
+        <div style={{ background: '#fff8e1', border: '1px solid #ffca28', borderRadius: '6px', padding: '12px', marginBottom: '12px' }}>
+          <p style={{ margin: '0 0 8px', fontSize: '13px', fontWeight: 600 }}>{invitacion.aviso}</p>
+          {invitacion.enlace && (
+            <>
+              <p style={{ margin: '0 0 6px', fontSize: '12px', color: '#666' }}>
+                Copia este enlace y hazselo llegar. Caduca, asi que si tarda hay que reenviar la invitacion.
+              </p>
+              <textarea readOnly value={invitacion.enlace} rows={3}
+                style={{ width: '100%', fontSize: '11px', fontFamily: 'monospace', padding: '6px' }}
+                onFocus={e => e.target.select()} />
+            </>
+          )}
+          <button style={{ ...styles.boton, marginTop: '8px' }} onClick={() => setInvitacion(null)}>Entendido</button>
+        </div>
+      )}
 
       {mostrarForm && (
         <div style={styles.form}>
@@ -223,20 +323,66 @@ export default function Usuarios() {
               </div>
             </div>
             {!usuarioEditando && (
-              <div style={styles.fila}>
-                <div style={styles.campo}>
-                  <label style={styles.label}>Correo electronico *</label>
-                  <input style={styles.input} type="email" value={form.email}
-                    onChange={e => setForm({ ...form, email: e.target.value })}
-                    placeholder="correo@empresa.com" />
+              <>
+                <div style={styles.fila}>
+                  <div style={styles.campo}>
+                    <label style={styles.label}>Como entra *</label>
+                    <select style={styles.input} value={form.modo}
+                      onChange={e => setForm({ ...form, modo: e.target.value })}>
+                      <option value="invitacion">Con su correo, por invitacion</option>
+                      <option value="temporal">Con su correo y una contrasena temporal</option>
+                      <option value="interno">Sin correo, con su numero de empleado</option>
+                    </select>
+                  </div>
+                  {form.modo === 'interno' ? (
+                    <div style={styles.campo}>
+                      <label style={styles.label}>Numero de empleado *</label>
+                      <input style={styles.input} type="text" value={form.numero_empleado}
+                        onChange={e => setForm({ ...form, numero_empleado: e.target.value })}
+                        placeholder="10432" />
+                    </div>
+                  ) : (
+                    <div style={styles.campo}>
+                      <label style={styles.label}>Correo electronico *</label>
+                      <input style={styles.input} type="email" value={form.email}
+                        onChange={e => setForm({ ...form, email: e.target.value })}
+                        placeholder="correo@empresa.com" />
+                    </div>
+                  )}
+                  <div style={styles.campo}>
+                    {form.modo === 'invitacion' ? <div /> : (
+                      <>
+                        <label style={styles.label}>Contrasena temporal *</label>
+                        <input style={styles.input} type="text" value={form.password}
+                          onChange={e => setForm({ ...form, password: e.target.value })}
+                          placeholder="Minimo 8 caracteres" />
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div style={styles.campo}>
-                  <label style={styles.label}>Contrasena temporal *</label>
-                  <input style={styles.input} type="password" value={form.password}
-                    onChange={e => setForm({ ...form, password: e.target.value })}
-                    placeholder="Minimo 6 caracteres" />
-                </div>
-              </div>
+
+                {form.modo === 'interno' && (
+                  <div style={styles.fila}>
+                    <div style={styles.campo}>
+                      <label style={styles.label}>Correo para avisos (opcional)</label>
+                      <input style={styles.input} type="email" value={form.email_notificacion}
+                        onChange={e => setForm({ ...form, email_notificacion: e.target.value })}
+                        placeholder="Dejalo vacio si no tiene o no quiere dar uno" />
+                    </div>
+                    <div style={styles.campo} /><div style={styles.campo} />
+                  </div>
+                )}
+
+                <p style={{ margin: '4px 2px 0', fontSize: '12px', color: '#666', lineHeight: 1.5 }}>
+                  {form.modo === 'invitacion'
+                    ? 'Recibe un enlace y el mismo crea su contrasena. Nadie mas la conoce, ni tu.'
+                    : form.modo === 'temporal'
+                      ? 'Tu escribes una contrasena y se la das. El sistema no lo deja usar ninguna pantalla hasta que la cambie por una suya.'
+                      : 'Para quien no tiene correo. Entra tecleando solo su numero de empleado y la contrasena que le pongas, y el sistema le pide cambiarla al entrar. '
+                        + 'La cuenta es de la empresa: si se va, se desactiva y se acabo. Si no le pones correo para avisos, no se pierde de nada -- ve todo dentro del sistema, '
+                        + 'y quienes aprueban si reciben el suyo.'}
+                </p>
+              </>
             )}
           </div>
 
@@ -340,7 +486,16 @@ export default function Usuarios() {
                 <p style={{ margin: '0', fontWeight: '500', fontSize: '14px' }}>{u.nombre}</p>
                 <p style={{ margin: '0', fontSize: '11px', color: '#94a3b8' }}>{puestos.find(p => p.id === u.puesto_id)?.nombre || '-'}</p>
               </span>
-              <span style={{ flex: 1.5, fontSize: '12px', color: '#666' }}>{u.email}</span>
+              <span style={{ flex: 1.5, fontSize: '12px', color: '#666' }}>
+                {comoSeVe(u)}
+                {u.password_pendiente && (
+                  <span style={{ display: 'block', color: '#b26a00', fontSize: '11px', marginTop: '2px' }}>
+                    {u.password_pendiente === 'invitacion'
+                      ? 'Todavia no define su contrasena'
+                      : 'Tiene contrasena temporal sin cambiar'}
+                  </span>
+                )}
+              </span>
               <span style={{ flex: 1, fontSize: '12px', color: '#666' }}>{areas.find(a => a.id === u.area_id)?.nombre || '-'}</span>
               <span style={{ flex: 1 }}>
                 <span style={{ ...styles.badge, backgroundColor: '#eff6ff', color: '#2563eb' }}>
@@ -370,6 +525,18 @@ export default function Usuarios() {
                 {tienePermiso('config_usuarios', 'editar') && (
                   <button style={styles.botonAccion} onClick={() => toggleActivo(u)}>
                     {u.activo ? 'Desactivar' : 'Activar'}
+                  </button>
+                )}
+                {tienePermiso('config_usuarios', 'editar') && !u.acceso_interno && (
+                  <button style={styles.botonAccion} onClick={() => reenviarAcceso(u)}
+                    title="Le manda un enlace nuevo para que cree su contrasena">
+                    Reenviar acceso
+                  </button>
+                )}
+                {tienePermiso('config_usuarios', 'editar') && (
+                  <button style={styles.botonAccion} onClick={() => ponerTemporal(u)}
+                    title="Le pones una contrasena nueva y el sistema le exige cambiarla al entrar">
+                    Contrasena temporal
                   </button>
                 )}
                 {perfil?.rol === 'admin' && (

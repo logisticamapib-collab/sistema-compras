@@ -1,6 +1,19 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+
+// Asistente de arranque: da de alta la empresa, sus sites, y convierte en
+// admin a quien lo corre.
+//
+// Se llegaba aqui con solo no tener empresa asignada, y eso lo volvia una
+// puerta: cualquiera que consiguiera una cuenta caia en esta pantalla y salia
+// de ella siendo administrador. Con el registro publico abierto, eso era
+// cualquier persona con un correo.
+//
+// Ahora solo corre si la base esta VACIA de empresas, que es lo unico que
+// significa "instalacion nueva". Si ya hay una empresa, este usuario es
+// alguien a quien le falta que lo den de alta, y eso lo hace un administrador,
+// no el mismo.
 
 const siteVacio = {
   nombre: '', codigo: '', razon_social: '', rfc: '',
@@ -9,6 +22,8 @@ const siteVacio = {
 
 export default function ConfiguracionInicial() {
   const { user, cargarPerfil } = useAuth()
+  const [revisando, setRevisando] = useState(true)
+  const [yaHayEmpresa, setYaHayEmpresa] = useState(false)
   const [paso, setPaso] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -21,6 +36,12 @@ export default function ConfiguracionInicial() {
     nombre: '', razon_social: '', rfc: '', telefono: '',
     email: '', direccion: '', ciudad: '', estado: '', cp: ''
   })
+
+  useEffect(() => {
+    // head:true trae solo la cuenta, sin los datos.
+    supabase.from('empresas').select('id', { count: 'exact', head: true })
+      .then(({ count }) => { setYaHayEmpresa((count || 0) > 0); setRevisando(false) })
+  }, [])
 
   const actualizarSite = (campo, valor) => {
     const nuevos = [...sites]
@@ -111,6 +132,32 @@ export default function ConfiguracionInicial() {
 
     await cargarPerfil(user.id)
     setLoading(false)
+  }
+
+  if (revisando) {
+    return <p style={{ textAlign: 'center', marginTop: '40px' }}>Cargando...</p>
+  }
+
+  // Ya hay empresa: esto no es una instalacion nueva, es un usuario al que le
+  // falta que lo den de alta. Se le dice quien lo puede resolver, en vez de
+  // dejarlo crear una empresa paralela y nombrarse administrador de ella.
+  if (yaHayEmpresa) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.card}>
+          <h1 style={styles.titulo}>Tu usuario todavia no esta asignado</h1>
+          <p style={styles.subtitulo}>
+            Entraste bien, pero tu cuenta no esta ligada a ninguna empresa ni planta, asi que
+            no hay nada que mostrarte todavia.
+          </p>
+          <p style={{ ...styles.subtitulo, marginTop: '12px' }}>
+            Pidele al administrador del sistema que te de de alta en Configuracion &rarr; Usuarios.
+            Tu correo es <strong>{user?.email}</strong>; se lo va a pedir.
+          </p>
+          <button style={styles.boton} onClick={() => supabase.auth.signOut()}>Salir</button>
+        </div>
+      </div>
+    )
   }
 
   return (

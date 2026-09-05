@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { aIdentidad } from '../lib/accesoInterno'
 
 export default function Login() {
+  // Aqui puede venir un correo o un numero de empleado; se resuelve al enviar.
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -12,8 +14,10 @@ export default function Login() {
     setLoading(true)
     setError('')
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) setError('Correo o contrasena incorrectos')
+    const { error } = await supabase.auth.signInWithPassword({
+      email: aIdentidad(email), password,
+    })
+    if (error) setError('Datos incorrectos. Revisa tu correo o numero de empleado y tu contrasena.')
     setLoading(false)
   }
 
@@ -29,13 +33,15 @@ export default function Login() {
 
         <form onSubmit={handleLogin} style={styles.form}>
           <div style={styles.campo}>
-            <label style={styles.label}>Correo electronico</label>
+            <label style={styles.label}>Correo o numero de empleado</label>
             <input
-              type="email"
+              type="text"
               value={email}
               onChange={e => setEmail(e.target.value)}
               style={styles.input}
-              placeholder="tu@correo.com"
+              placeholder="tu@correo.com  o  10432"
+              autoCapitalize="none"
+              autoCorrect="off"
               required
             />
           </div>

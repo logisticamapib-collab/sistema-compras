@@ -49,8 +49,16 @@ export async function obtenerInvolucrados({ requisicionId, ordenId }) {
 
   const { data: usuarios } = await supabase
     .from('usuarios')
-    .select('id, nombre, email')
+    .select('id, nombre, email, email_notificacion, acceso_interno')
     .in('id', Array.from(usuarioIds))
 
-  return usuarios || []
+  // A donde se le escribe a cada quien NO es su identidad. Quien entra con
+  // numero de empleado tiene una identidad interna que no recibe correo, y
+  // quien si tiene correo puede haber pedido que los avisos le lleguen a otro.
+  // Se devuelve el campo `email` ya resuelto para que las pantallas que llaman
+  // a esta funcion no tengan que saber nada de esto, y se deja fuera a quien no
+  // tiene a donde escribirle: esa persona ve todo dentro de la aplicacion.
+  return (usuarios || [])
+    .map(u => ({ ...u, email: u.email_notificacion || (u.acceso_interno ? null : u.email) }))
+    .filter(u => !!u.email)
 }
