@@ -14,6 +14,7 @@ import ConfigEtiquetas from './ConfigEtiquetas'
 import Monedas from './Monedas'
 import CompraFacturacion from './CompraFacturacion'
 import Seguridad from './Seguridad'
+import Bitacora from './Bitacora'
 
 const secciones = [
   { id: 'empresa', modulo: 'config_empresa', titulo: 'Datos de la Empresa' },
@@ -32,6 +33,9 @@ const secciones = [
   // Cuelga del mismo permiso que Usuarios a proposito: quien administra el
   // acceso de la gente es quien tiene que ver los intentos de entrar.
   { id: 'seguridad', modulo: 'config_usuarios', titulo: 'Intentos de Ingreso' },
+  // Modulo propio: Direccion o Calidad pueden necesitarla para una auditoria
+  // sin que eso implique darles el manejo de usuarios.
+  { id: 'bitacora', modulo: 'config_bitacora', titulo: 'Bitacora de Cambios' },
 ]
 
 export default function Configuracion() {
@@ -83,6 +87,7 @@ export default function Configuracion() {
         {seccion === 'notificaciones' && <Notificaciones />}
         {seccion === 'etiquetas' && <ConfigEtiquetas />}
         {seccion === 'seguridad' && <Seguridad />}
+        {seccion === 'bitacora' && <Bitacora />}
       </div>
     </div>
   )
