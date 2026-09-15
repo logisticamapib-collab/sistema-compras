@@ -100,7 +100,7 @@ export default function Dashboard() {
     <div style={styles.container}>
       <header style={styles.header} className="no-imprimir">
         <div style={styles.headerIzquierdo}>
-          <img src="/syntia-logo.png" alt="SYNTIA" style={styles.logoHeader} />
+          <img src="/syntia-logo-2.png" alt="SYNTIA" style={styles.logoHeader} />
           <div>
             <h1 style={styles.titulo}>SYNTIA</h1>
             <p style={styles.subtitulo}>
