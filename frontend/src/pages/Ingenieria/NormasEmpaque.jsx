@@ -4,7 +4,7 @@ import { enlaceDe } from '../../lib/archivos'
 import EnlaceArchivo from '../../components/EnlaceArchivo'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { exportarExcel, imprimirTablaPDF } from '../../lib/exportar'
+import { exportarExcelHojas, imprimirTablaPDF } from '../../lib/exportar'
 
 const formVacio = {
   articulo_id: '', nombre: '', piezas_por_empaque: '', piezas_por_tarima: '',
@@ -23,6 +23,11 @@ export default function NormasEmpaque() {
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
   const [filtroArticulo, setFiltroArticulo] = useState('')
+  // En que se empaca: la caja, la bolsa, el separador, la tarima.
+  const [empaques, setEmpaques] = useState([])
+  const [articulosEmpaque, setArticulosEmpaque] = useState([])
+  const [abierta, setAbierta] = useState(null)
+  const [nuevoEmp, setNuevoEmp] = useState({ articulo_id: '', cantidad: '1', nivel: 'empaque' })
 
   const puedeCrear = tienePermiso('ing_normas_empaque', 'crear')
   const puedeEditar = tienePermiso('ing_normas_empaque', 'editar')
@@ -31,15 +36,56 @@ export default function NormasEmpaque() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: n }, { data: a }] = await Promise.all([
+    const [{ data: n }, { data: a }, { data: e }, { data: ae }] = await Promise.all([
       supabase.from('normas_empaque').select('*, articulos(codigo_interno, descripcion)').order('id'),
       supabase.from('articulos').select('id, codigo_interno, descripcion')
         .eq('empresa_id', perfil.empresa_id).eq('origen', 'fabricado').eq('activo', true)
         .order('codigo_interno'),
+      supabase.from('norma_empaque_articulos').select('*'),
+      // Solo los de categoria Empaque: la base rechaza cualquier otro, asi que
+      // ofrecer mas seria ensenar opciones que no se pueden guardar.
+      supabase.from('articulos').select('id, codigo_interno, descripcion, unidad_medida, categorias!inner(tipo)')
+        .eq('empresa_id', perfil.empresa_id).eq('activo', true).eq('categorias.tipo', 'empaque')
+        .order('codigo_interno'),
     ])
     setNormas(n || [])
     setArticulos(a || [])
+    setEmpaques(e || [])
+    setArticulosEmpaque(ae || [])
     setLoading(false)
+  }
+
+  const empaquesDe = (normaId) => empaques.filter(e => e.norma_empaque_id === normaId)
+  const empDe = (id) => articulosEmpaque.find(a => a.id === id)
+
+  // Cuanto de ese empaque se consume por 1 pieza del producto. Es el mismo
+  // calculo que hace consumo_empaque_por_pieza en la base; si cambia alla,
+  // cambia aqui.
+  const porPieza = (e, n) => {
+    const base = e.nivel === 'tarima' ? Number(n.piezas_por_tarima) : Number(n.piezas_por_empaque)
+    if (!base) return null
+    return Number(e.cantidad) / base
+  }
+
+  const agregarEmpaque = async (norma) => {
+    if (!nuevoEmp.articulo_id) { setError('Elige el empaque'); return }
+    const cant = parseFloat(nuevoEmp.cantidad)
+    if (!(cant > 0)) { setError('La cantidad debe ser mayor que cero'); return }
+    setError('')
+    const { error: e } = await supabase.from('norma_empaque_articulos').insert({
+      norma_empaque_id: norma.id, articulo_id: parseInt(nuevoEmp.articulo_id),
+      cantidad: cant, nivel: nuevoEmp.nivel,
+    })
+    if (e) { setError(e.message.includes('duplicate') ? 'Ese empaque ya esta en esta norma.' : e.message); return }
+    setNuevoEmp({ articulo_id: '', cantidad: '1', nivel: 'empaque' })
+    await cargarDatos()
+  }
+
+  const quitarEmpaque = async (e) => {
+    if (!window.confirm('Quitar este empaque de la norma?')) return
+    const { error: err } = await supabase.from('norma_empaque_articulos').delete().eq('id', e.id)
+    if (err) { setError(err.message); return }
+    await cargarDatos()
   }
 
   const abrirNuevo = () => { setEditando(null); setForm(formVacio); setArchivo(null); setMostrarForm(true); setError('') }
@@ -244,11 +290,78 @@ export default function NormasEmpaque() {
         </select>
       </div>
 
-      {(() => { const cols = [{ label: 'Articulo', get: n => (articulos.find(a => a.id === n.articulo_id)?.codigo_interno || n.articulo_id) }, { label: 'Norma', get: n => n.nombre }, { label: 'Pzas/empaque', get: n => n.piezas_por_empaque }, { label: 'Pzas/tarima', get: n => n.piezas_por_tarima }, { label: 'Tipo', get: n => n.tipo }, { label: 'Aprob. cliente', get: n => n.aprobada_cliente ? 'Si' : 'No' }, { label: 'Activa', get: n => n.activa ? 'Si' : 'No' }]; return (
-      <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', justifyContent: 'flex-end' }}>
-        <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => exportarExcel('normas_empaque', cols, normasFiltradas)}>Excel</button>
-        <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }} onClick={() => imprimirTablaPDF('Normas de Empaque', cols, normasFiltradas)}>PDF</button>
-      </div>) })()}
+      {(() => {
+        // Resumen legible de los empaques, para caber en una celda y en el PDF.
+        const resumenEmpaques = (n) => {
+          const e = empaquesDe(n.id)
+          if (!e.length) return 'SIN EMPAQUE DEFINIDO'
+          return e.map(x => {
+            const a = empDe(x.articulo_id)
+            return `${a?.codigo_interno || x.articulo_id} x${Number(x.cantidad)} por ${x.nivel}`
+          }).join('; ')
+        }
+
+        const cols = [
+          { label: 'Articulo', get: n => (articulos.find(a => a.id === n.articulo_id)?.codigo_interno || n.articulo_id) },
+          { label: 'Descripcion', get: n => n.articulos?.descripcion || '' },
+          { label: 'Norma', get: n => n.nombre },
+          { label: 'Tipo', get: n => n.tipo },
+          { label: 'Pzas/empaque', get: n => n.piezas_por_empaque },
+          { label: 'Pzas/tarima', get: n => n.piezas_por_tarima },
+          { label: 'Empaques', get: n => resumenEmpaques(n) },
+          { label: 'Aprob. cliente', get: n => n.aprobada_cliente ? 'Si' : 'No' },
+          { label: 'Activa', get: n => n.activa ? 'Si' : 'No' },
+        ]
+
+        // En Excel, ademas del resumen, una hoja con un renglon por empaque.
+        // Concatenado no se puede filtrar ni sumar; un auditor que pregunta
+        // "en que normas se usa esta caja" necesita renglones, no una celda
+        // con puntos y comas.
+        const detalle = []
+        for (const n of normasFiltradas) {
+          for (const x of empaquesDe(n.id)) {
+            const a = empDe(x.articulo_id)
+            const pp = porPieza(x, n)
+            detalle.push({
+              articulo: articulos.find(z => z.id === n.articulo_id)?.codigo_interno || n.articulo_id,
+              norma: n.nombre, tipoNorma: n.tipo,
+              empaque: a?.codigo_interno || x.articulo_id,
+              descripcion: a?.descripcion || '',
+              cantidad: Number(x.cantidad),
+              unidad: a?.unidad_medida || '',
+              nivel: x.nivel === 'tarima' ? 'Por tarima' : 'Por empaque',
+              base: x.nivel === 'tarima' ? n.piezas_por_tarima : n.piezas_por_empaque,
+              porPieza: pp == null ? '' : Number(pp.toFixed(8)),
+              activa: n.activa ? 'Si' : 'No',
+            })
+          }
+        }
+        const colsDetalle = [
+          { label: 'Articulo', get: r => r.articulo },
+          { label: 'Norma', get: r => r.norma },
+          { label: 'Tipo de norma', get: r => r.tipoNorma },
+          { label: 'Empaque', get: r => r.empaque },
+          { label: 'Descripcion', get: r => r.descripcion },
+          { label: 'Cantidad', get: r => r.cantidad },
+          { label: 'Unidad', get: r => r.unidad },
+          { label: 'Nivel', get: r => r.nivel },
+          { label: 'Piezas de la base', get: r => r.base },
+          { label: 'Consumo por pieza', get: r => r.porPieza },
+          { label: 'Norma activa', get: r => r.activa },
+        ]
+
+        return (
+          <div className="no-imprimir" style={{ display: 'flex', gap: '8px', marginBottom: '12px', justifyContent: 'flex-end' }}>
+            <button style={{ padding: '9px 14px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }}
+              onClick={() => exportarExcelHojas('normas_empaque', [
+                { nombre: 'Normas', columnas: cols, filas: normasFiltradas },
+                { nombre: 'Empaques por norma', columnas: colsDetalle, filas: detalle },
+              ])}>Excel</button>
+            <button style={{ padding: '9px 14px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', cursor: 'pointer' }}
+              onClick={() => imprimirTablaPDF('Normas de Empaque', cols, normasFiltradas)}>PDF</button>
+          </div>
+        )
+      })()}
       <div style={styles.tabla}>
         <div style={styles.tablaHeader}>
           <span style={{ flex: 2 }}>Articulo</span>
@@ -265,7 +378,8 @@ export default function NormasEmpaque() {
         ) : normasFiltradas.map(n => {
           const tipo = etiquetaTipo(n)
           return (
-            <div key={n.id} className="fila-hover" style={{ ...styles.tablaFila, opacity: n.activa ? 1 : 0.5 }}>
+            <div key={n.id}>
+            <div className="fila-hover" style={{ ...styles.tablaFila, opacity: n.activa ? 1 : 0.5 }}>
               <span style={{ flex: 2, fontSize: '13px' }}>
                 <span style={{ fontWeight: '600', color: '#2563eb' }}>{n.articulos?.codigo_interno}</span>
                 <span style={{ color: '#666' }}> — {n.articulos?.descripcion}</span>
@@ -292,7 +406,86 @@ export default function NormasEmpaque() {
                 )}
                 {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => abrirEditar(n)}>Editar</button>}
                 {puedeEditar && <button style={{ ...styles.botonAccion, marginLeft: '6px' }} onClick={() => toggleActiva(n)}>{n.activa ? 'Desactivar' : 'Activar'}</button>}
+                <button style={{ ...styles.botonAccion, marginLeft: '6px' }}
+                  onClick={() => { setAbierta(abierta === n.id ? null : n.id); setError('') }}>
+                  Empaques ({empaquesDe(n.id).length})
+                </button>
               </span>
+            </div>
+
+            {abierta === n.id && (
+              <div className="no-imprimir" style={estilosEmp.panel}>
+                <p style={estilosEmp.titulo}>En que se empaca</p>
+                <p style={estilosEmp.nota}>
+                  La caja, la bolsa, el separador y la tarima. El <strong>nivel</strong> dice cada cuanto va:
+                  una caja por cada {n.piezas_por_empaque} piezas, una tarima por cada {n.piezas_por_tarima || '—'}.
+                  De ahi sale el consumo por pieza, que es el numero que necesita el BOM.
+                </p>
+
+                {empaquesDe(n.id).length === 0 ? (
+                  <p style={{ ...estilosEmp.nota, color: '#b45309' }}>
+                    Esta norma todavia no dice en que se empaca. Mientras no lo diga, al agregar un empaque
+                    al BOM el sistema no puede confirmar que sea el aprobado.
+                  </p>
+                ) : (
+                  <div style={estilosEmp.tabla}>
+                    <div style={{ ...estilosEmp.fila, ...estilosEmp.encabezado }}>
+                      <span style={{ flex: 3 }}>Empaque</span>
+                      <span style={{ flex: 1 }}>Cantidad</span>
+                      <span style={{ flex: 1 }}>Nivel</span>
+                      <span style={{ flex: 2 }}>Por pieza</span>
+                      <span style={{ flex: 1 }}></span>
+                    </div>
+                    {empaquesDe(n.id).map(e => {
+                      const a = empDe(e.articulo_id)
+                      const pp = porPieza(e, n)
+                      return (
+                        <div key={e.id} style={estilosEmp.fila}>
+                          <span style={{ flex: 3 }}>
+                            <strong style={{ color: '#2563eb' }}>{a?.codigo_interno || e.articulo_id}</strong>
+                            {a?.descripcion ? <span style={{ color: '#666' }}> — {a.descripcion}</span> : null}
+                          </span>
+                          <span style={{ flex: 1 }}>{Number(e.cantidad)} {a?.unidad_medida || ''}</span>
+                          <span style={{ flex: 1 }}>{e.nivel === 'tarima' ? 'Por tarima' : 'Por empaque'}</span>
+                          <span style={{ flex: 2, color: '#555' }}>
+                            {pp == null ? 'falta el dato de la norma' : pp.toFixed(8).replace(/0+$/, '')}
+                          </span>
+                          <span style={{ flex: 1 }}>
+                            {puedeEditar && <button style={styles.botonAccion} onClick={() => quitarEmpaque(e)}>Quitar</button>}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {puedeEditar && (
+                  <div style={estilosEmp.alta}>
+                    <select style={estilosEmp.input} value={nuevoEmp.articulo_id}
+                      onChange={ev => setNuevoEmp({ ...nuevoEmp, articulo_id: ev.target.value })}>
+                      <option value="">Elige un empaque...</option>
+                      {articulosEmpaque.map(a => (
+                        <option key={a.id} value={a.id}>{a.codigo_interno} — {a.descripcion}</option>
+                      ))}
+                    </select>
+                    <input style={{ ...estilosEmp.input, width: 90 }} type="number" min="0" step="0.001"
+                      value={nuevoEmp.cantidad} onChange={ev => setNuevoEmp({ ...nuevoEmp, cantidad: ev.target.value })} />
+                    <select style={estilosEmp.input} value={nuevoEmp.nivel}
+                      onChange={ev => setNuevoEmp({ ...nuevoEmp, nivel: ev.target.value })}>
+                      <option value="empaque">Por empaque</option>
+                      <option value="tarima">Por tarima</option>
+                    </select>
+                    <button style={styles.boton} onClick={() => agregarEmpaque(n)}>Agregar</button>
+                  </div>
+                )}
+                {articulosEmpaque.length === 0 && (
+                  <p style={{ ...estilosEmp.nota, color: '#b45309' }}>
+                    No hay articulos en una categoria de tipo Empaque. Dalos de alta en Articulos,
+                    con una categoria de ese tipo, y apareceran aqui.
+                  </p>
+                )}
+              </div>
+            )}
             </div>
           )
         })}
@@ -324,4 +517,15 @@ const styles = {
   badge: { padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600' },
   error: { color: '#dc2626', fontSize: '13px', marginBottom: '12px' },
   exito: { color: '#16a34a', fontSize: '13px', marginBottom: '12px' },
+}
+
+const estilosEmp = {
+  panel: { padding: '12px 18px 16px', background: '#fafafa', borderBottom: '1px solid #eee' },
+  titulo: { margin: '0 0 4px', fontSize: 13, fontWeight: 600 },
+  nota: { margin: '0 0 10px', fontSize: 12, color: '#666', lineHeight: 1.6, maxWidth: 780 },
+  tabla: { border: '1px solid #e5e7eb', borderRadius: 6, background: '#fff', marginBottom: 10 },
+  fila: { display: 'flex', gap: 10, padding: '7px 10px', borderBottom: '1px solid #f1f1f1', fontSize: 12.5, alignItems: 'center' },
+  encabezado: { background: '#f9fafb', fontWeight: 600, fontSize: 11.5, color: '#555' },
+  alta: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
+  input: { padding: '7px 9px', border: '1px solid #ccc', borderRadius: 5, fontSize: 12.5 },
 }
