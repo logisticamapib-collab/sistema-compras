@@ -59,6 +59,14 @@ export default function Articulos() {
   const [mostrarForm, setMostrarForm] = useState(false)
   const [articuloEditando, setArticuloEditando] = useState(null)
   const [articuloSeleccionado, setArticuloSeleccionado] = useState(null)
+  // Que asignacion se esta corrigiendo. Antes solo se podia activar o
+  // desactivar: un codigo de cliente mal escrito o un precio cambiado no se
+  // podian corregir, habia que desactivar y crear otra, y la lista se llenaba
+  // de renglones muertos.
+  const [editandoProv, setEditandoProv] = useState(null)
+  const [editandoCli, setEditandoCli] = useState(null)
+  // La norma oficial activa por articulo: es la que manda el SNP.
+  const [normaOficial, setNormaOficial] = useState({})
   const [mostrarProveedores, setMostrarProveedores] = useState(false)
   const [mostrarClientes, setMostrarClientes] = useState(false)
   const [busqueda, setBusqueda] = useState('')
@@ -121,15 +129,25 @@ export default function Articulos() {
       mapaDestinos[d.articulo_id].push(d.site_id)
     }
     setSitesDestinoPorArticulo(mapaDestinos)
-    const [{ data: ap }, { data: ac }] = await Promise.all([
+    // Tres variables para tres consultas. La norma oficial se necesita porque
+    // es la que manda el SNP de los fabricados.
+    const [{ data: ap }, { data: ac }, { data: nof }] = await Promise.all([
       supabase.from('articulo_proveedor').select('articulo_id, proveedor_id'),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id'),
+      supabase.from('normas_empaque').select('articulo_id, nombre, piezas_por_empaque')
+        .eq('tipo', 'oficial').eq('activa', true),
     ])
+    const mn = {}; (nof || []).forEach(x => { mn[x.articulo_id] = x })
+    setNormaOficial(mn)
     const mp = {}; (ap || []).forEach(x => { (mp[x.articulo_id] = mp[x.articulo_id] || new Set()).add(x.proveedor_id) })
     const mc = {}; (ac || []).forEach(x => { (mc[x.articulo_id] = mc[x.articulo_id] || new Set()).add(x.cliente_id) })
     setArtProv(mp); setArtCli(mc)
     setLoading(false)
   }
+
+  // La norma del articulo que se esta editando. Al dar de alta todavia no hay
+  // id, asi que no hay norma que mostrar: se captura primero y la norma despues.
+  const normaOficialDelForm = articuloEditando ? normaOficial[articuloEditando.id] : null
 
   const cargarVistaCompleta = async () => {
     setCargandoVista(true)
@@ -371,9 +389,7 @@ export default function Articulos() {
     }
     setError('')
 
-    const { error } = await supabase.from('articulo_proveedor').insert({
-      articulo_id: articuloSeleccionado.id,
-      proveedor_id: parseInt(formProveedor.proveedor_id),
+    const datos = {
       codigo_proveedor: formProveedor.codigo_proveedor,
       precio: parseFloat(formProveedor.precio),
       // Cada proveedor cotiza en lo suyo. Sin esto, un precio en dolares se
@@ -381,15 +397,27 @@ export default function Articulos() {
       moneda: formProveedor.moneda || articuloSeleccionado?.tipo_moneda || 'MXN',
       minimo_compra: parseFloat(formProveedor.minimo_compra) || 1,
       tiempo_entrega_dias: parseInt(formProveedor.tiempo_entrega_dias) || 0,
-      tiempo_trayecto_dias: parseInt(formProveedor.tiempo_trayecto_dias) || 0
-    })
+      tiempo_trayecto_dias: parseInt(formProveedor.tiempo_trayecto_dias) || 0,
+    }
+
+    // Al corregir no se toca el proveedor: eso seria otra asignacion. La
+    // identidad del renglon es el par articulo-proveedor, y cambiarlo dejaria
+    // el historial apuntando a quien no fue.
+    const { error } = editandoProv
+      ? await supabase.from('articulo_proveedor').update(datos).eq('id', editandoProv.id)
+      : await supabase.from('articulo_proveedor').insert({
+          ...datos,
+          articulo_id: articuloSeleccionado.id,
+          proveedor_id: parseInt(formProveedor.proveedor_id),
+        })
 
     if (error) {
       setError(error.message.includes('unique') ? 'Este proveedor ya esta asignado al articulo' : error.message)
       return
     }
 
-    setExito('Proveedor asignado correctamente')
+    setExito(editandoProv ? 'Cambios guardados' : 'Proveedor asignado correctamente')
+    setEditandoProv(null)
     setFormProveedor({ proveedor_id: '', codigo_proveedor: '', precio: '', minimo_compra: 1, tiempo_entrega_dias: '', tiempo_trayecto_dias: '' })
     setTimeout(() => setExito(''), 3000)
   }
@@ -401,19 +429,26 @@ export default function Articulos() {
     }
     setError('')
 
-    const { error } = await supabase.from('articulo_cliente').insert({
-      articulo_id: articuloSeleccionado.id,
-      cliente_id: parseInt(formCliente.cliente_id),
+    const datos = {
       codigo_cliente: formCliente.codigo_cliente,
       precio: formCliente.precio ? parseFloat(formCliente.precio) : null,
-    })
+    }
+
+    const { error } = editandoCli
+      ? await supabase.from('articulo_cliente').update(datos).eq('id', editandoCli.id)
+      : await supabase.from('articulo_cliente').insert({
+          ...datos,
+          articulo_id: articuloSeleccionado.id,
+          cliente_id: parseInt(formCliente.cliente_id),
+        })
 
     if (error) {
       setError(error.message.includes('unique') ? 'Este cliente ya esta asignado al articulo' : error.message)
       return
     }
 
-    setExito('Cliente asignado correctamente')
+    setExito(editandoCli ? 'Cambios guardados' : 'Cliente asignado correctamente')
+    setEditandoCli(null)
     setFormCliente({ cliente_id: '', codigo_cliente: '', precio: '' })
     setTimeout(() => setExito(''), 3000)
   }
@@ -737,10 +772,12 @@ export default function Articulos() {
       formProveedor={formProveedor}
       monedas={monedas}
       setFormProveedor={setFormProveedor}
+      editando={editandoProv}
+      setEditando={setEditandoProv}
       guardarProveedorArticulo={guardarProveedorArticulo}
       error={error}
       exito={exito}
-      onVolver={() => { setMostrarProveedores(false); setArticuloSeleccionado(null); setError(''); setExito('') }}
+      onVolver={() => { setMostrarProveedores(false); setArticuloSeleccionado(null); setEditandoProv(null); setError(''); setExito('') }}
     />
   }
 
@@ -750,10 +787,12 @@ export default function Articulos() {
       clientes={clientes}
       formCliente={formCliente}
       setFormCliente={setFormCliente}
+      editando={editandoCli}
+      setEditando={setEditandoCli}
       guardarClienteArticulo={guardarClienteArticulo}
       error={error}
       exito={exito}
-      onVolver={() => { setMostrarClientes(false); setArticuloSeleccionado(null); setError(''); setExito('') }}
+      onVolver={() => { setMostrarClientes(false); setArticuloSeleccionado(null); setEditandoCli(null); setError(''); setExito('') }}
     />
   }
 
@@ -1009,7 +1048,34 @@ export default function Articulos() {
                 contarse mas seguido por alguna situacion en particular.
               </span>
             </div>
-            <div style={{ ...styles.campo, flex: 1 }} />
+            <div style={styles.campo}>
+              <label style={styles.label}>SNP (piezas por empaque)</label>
+              {form.origen === 'fabricado' ? (
+                // Para un fabricado el SNP lo manda la norma de empaque: es el
+                // documento que el cliente aprueba. Tener aqui una copia
+                // editable fue lo que permitio que 5 de 6 articulos tuvieran un
+                // SNP que contradecia su propia norma.
+                <>
+                  <div style={{ ...styles.input, background: '#f8fafc', color: '#475569', display: 'flex', alignItems: 'center' }}>
+                    {normaOficialDelForm ? Number(normaOficialDelForm.piezas_por_empaque) : '—'}
+                  </div>
+                  <span style={styles.ayudaCampo}>
+                    {normaOficialDelForm
+                      ? <>Lo manda la norma oficial <b>{normaOficialDelForm.nombre}</b>. Para cambiarlo, cambia la norma en Ingenieria &rarr; Normas de Empaque.</>
+                      : <span style={{ color: '#b45309' }}>Este articulo no tiene norma de empaque oficial activa. Hasta que la tenga, no hay piezas por empaque y las etiquetas y la lista de embarque no van a saber de cuanto armar.</span>}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <input style={styles.input} type="number" min="0" step="0.01" value={form.snp}
+                    onChange={e => setForm({ ...form, snp: e.target.value })} placeholder="0" />
+                  <span style={styles.ayudaCampo}>
+                    Cuantas piezas trae un empaque del proveedor. Los comprados no llevan norma de
+                    empaque, asi que aqui si se captura.
+                  </span>
+                </>
+              )}
+            </div>
           </div>
 
           {form.origen === 'comprado' && (
@@ -1038,11 +1104,7 @@ export default function Articulos() {
                   <input style={styles.input} type="number" min="0" step="0.01" value={form.stock_minimo}
                     onChange={e => setForm({ ...form, stock_minimo: e.target.value })} placeholder="0" />
                 </div>
-                <div style={styles.campo}>
-                  <label style={styles.label}>SNP (cantidad por empaque)</label>
-                  <input style={styles.input} type="number" min="0" step="0.01" value={form.snp}
-                    onChange={e => setForm({ ...form, snp: e.target.value })} placeholder="0" />
-                </div>
+
                 <div style={styles.campo}>
                   <label style={styles.label}>Dias de inventario de seguridad</label>
                   <input style={styles.input} type="number" min="0" step="0.01" value={form.dias_inventario_seguridad}
@@ -1366,7 +1428,7 @@ export default function Articulos() {
   )
 }
 
-function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFormProveedor, guardarProveedorArticulo, error, exito, onVolver, monedas = [] }) {
+function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFormProveedor, editando, setEditando, guardarProveedorArticulo, error, exito, onVolver, monedas = [] }) {
   const [proveedoresAsignados, setProveedoresAsignados] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -1403,15 +1465,23 @@ function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFor
       {exito && <p style={styles.exito}>{exito}</p>}
 
       <div style={styles.form}>
-        <h3 style={styles.formTitulo}>Asignar proveedor</h3>
+        <h3 style={styles.formTitulo}>
+          {editando ? `Corrigiendo: ${editando.proveedores?.nombre}` : 'Asignar proveedor'}
+        </h3>
         <div style={styles.fila}>
           <div style={styles.campo}>
             <label style={styles.label}>Proveedor *</label>
-            <select style={styles.input} value={formProveedor.proveedor_id}
+            <select style={{ ...styles.input, ...(editando ? { background: '#f1f5f9', color: '#64748b' } : {}) }}
+              value={formProveedor.proveedor_id} disabled={!!editando}
               onChange={e => setFormProveedor({ ...formProveedor, proveedor_id: e.target.value })}>
               <option value="">Selecciona proveedor</option>
               {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
             </select>
+            {editando && (
+              <span style={{ fontSize: '11px', color: '#94a3b8', marginTop: '3px', display: 'block' }}>
+                El proveedor no se cambia al corregir: seria otra asignacion. Desactiva esta y crea la otra.
+              </span>
+            )}
           </div>
           <div style={styles.campo}>
             <label style={styles.label}>Codigo proveedor</label>
@@ -1458,8 +1528,14 @@ function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFor
         </div>
         <div style={styles.botones}>
           <button style={styles.boton} onClick={async () => { await guardarProveedorArticulo(); await cargarProveedoresAsignados() }}>
-            Asignar proveedor
+            {editando ? 'Guardar cambios' : 'Asignar proveedor'}
           </button>
+          {editando && (
+            <button style={styles.botonCancelar} onClick={() => {
+              setEditando(null)
+              setFormProveedor({ proveedor_id: '', codigo_proveedor: '', precio: '', minimo_compra: 1, tiempo_entrega_dias: '', tiempo_trayecto_dias: '' })
+            }}>Cancelar</button>
+          )}
         </div>
       </div>
 
@@ -1497,7 +1573,20 @@ function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFor
                   {ap.activo ? 'Activo' : 'Inactivo'}
                 </span>
               </span>
-              <span style={{ flex: 1 }}>
+              <span style={{ flex: 1, display: 'flex', gap: '6px' }}>
+                <button style={styles.botonAccion} onClick={() => {
+                  setEditando(ap)
+                  setFormProveedor({
+                    proveedor_id: ap.proveedor_id?.toString() || '',
+                    codigo_proveedor: ap.codigo_proveedor || '',
+                    precio: ap.precio?.toString() || '',
+                    moneda: ap.moneda || '',
+                    minimo_compra: ap.minimo_compra?.toString() || '1',
+                    tiempo_entrega_dias: ap.tiempo_entrega_dias?.toString() || '',
+                    tiempo_trayecto_dias: ap.tiempo_trayecto_dias?.toString() || '',
+                  })
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}>Editar</button>
                 <button style={styles.botonAccion} onClick={() => toggleActivoProveedor(ap)}>
                   {ap.activo ? 'Desactivar' : 'Activar'}
                 </button>
@@ -1510,7 +1599,7 @@ function VistaProveedoresArticulo({ articulo, proveedores, formProveedor, setFor
   )
 }
 
-function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente, guardarClienteArticulo, error, exito, onVolver }) {
+function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente, editando, setEditando, guardarClienteArticulo, error, exito, onVolver }) {
   const [clientesAsignados, setClientesAsignados] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -1547,15 +1636,23 @@ function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente
       {exito && <p style={styles.exito}>{exito}</p>}
 
       <div style={styles.form}>
-        <h3 style={styles.formTitulo}>Asignar cliente</h3>
+        <h3 style={styles.formTitulo}>
+          {editando ? `Corrigiendo: ${editando.clientes?.nombre}` : 'Asignar cliente'}
+        </h3>
         <div style={styles.fila}>
           <div style={styles.campo}>
             <label style={styles.label}>Cliente *</label>
-            <select style={styles.input} value={formCliente.cliente_id}
+            <select style={{ ...styles.input, ...(editando ? { background: '#f1f5f9', color: '#64748b' } : {}) }}
+              value={formCliente.cliente_id} disabled={!!editando}
               onChange={e => setFormCliente({ ...formCliente, cliente_id: e.target.value })}>
               <option value="">Selecciona cliente</option>
               {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
             </select>
+            {editando && (
+              <span style={{ fontSize: '11px', color: '#94a3b8', marginTop: '3px', display: 'block' }}>
+                El cliente no se cambia al corregir: seria otra asignacion. Desactiva esta y crea la otra.
+              </span>
+            )}
           </div>
           <div style={styles.campo}>
             <label style={styles.label}>Codigo del cliente para este articulo</label>
@@ -1572,8 +1669,14 @@ function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente
         </div>
         <div style={styles.botones}>
           <button style={styles.boton} onClick={async () => { await guardarClienteArticulo(); await cargarClientesAsignados() }}>
-            Asignar cliente
+            {editando ? 'Guardar cambios' : 'Asignar cliente'}
           </button>
+          {editando && (
+            <button style={styles.botonCancelar} onClick={() => {
+              setEditando(null)
+              setFormCliente({ cliente_id: '', codigo_cliente: '', precio: '' })
+            }}>Cancelar</button>
+          )}
         </div>
       </div>
 
@@ -1600,7 +1703,16 @@ function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente
                   {ac.activo ? 'Activo' : 'Inactivo'}
                 </span>
               </span>
-              <span style={{ flex: 1 }}>
+              <span style={{ flex: 1, display: 'flex', gap: '6px' }}>
+                <button style={styles.botonAccion} onClick={() => {
+                  setEditando(ac)
+                  setFormCliente({
+                    cliente_id: ac.cliente_id?.toString() || '',
+                    codigo_cliente: ac.codigo_cliente || '',
+                    precio: ac.precio?.toString() || '',
+                  })
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}>Editar</button>
                 <button style={styles.botonAccion} onClick={() => toggleActivoCliente(ac)}>
                   {ac.activo ? 'Desactivar' : 'Activar'}
                 </button>
@@ -1616,6 +1728,7 @@ function VistaClientesArticulo({ articulo, clientes, formCliente, setFormCliente
 const btnBase = { padding: '9px 14px', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }
 const styles = {
   ayudaCampo: { fontSize: '11px', color: '#64748b', lineHeight: 1.4 },
+  botonCancelar: { ...btnBase, backgroundColor: '#fff', color: '#64748b', border: '1px solid #cbd5e1' },
   btnVista: { padding: '9px 14px', backgroundColor: '#fff', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
   btnVistaOn: { padding: '9px 14px', backgroundColor: '#2563eb', color: '#fff', border: '1px solid #2563eb', borderRadius: '7px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' },
   vcEncab: { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap' },
