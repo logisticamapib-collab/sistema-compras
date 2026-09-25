@@ -12,7 +12,19 @@ import CargaMasivaCatalogo from '../../components/CargaMasivaCatalogo'
 const UNIDADES = ['PZA', 'KG', 'LT', 'MT', 'CJ', 'RLL', 'PAR', 'JGO', 'SRV', 'TON', 'GR', 'ML', 'CM', 'M2', 'M3']
 const TIPOS_PROCESO = ['solo_inyeccion', 'solo_ensamble', 'inyeccion_y_ensamble', 'doble_inyeccion']
 const COLS_ART = ['codigo_interno', 'descripcion', 'origen', 'unidad_medida', 'categoria', 'es_consigna', 'tipo_proceso', 'peso_pieza_g', 'peso_colada_g', 'peso_purga_g', 'pct_scrap_aprobado', 'admite_molido', 'pct_molido_max', 'lead_time_dias', 'moq', 'tiempo_transito_dias', 'stock_minimo', 'snp', 'dias_inventario_seguridad', 'multiplo_lote', 'costo', 'tipo_moneda', 'iva_porcentaje', 'se_maquila', 'maquilador', 'precio_maquila', 'site']
-const COLS_BOM = ['articulo_padre', 'componente', 'tipo_componente', 'cantidad_por_unidad', 'unidad_medida']
+// Tres columnas, no cinco.
+//
+// tipo_componente se quito porque la plantilla pedia escribir
+// "materia_prima / componente / empaque / insumo" y la base solo acepta
+// "articulo" o "empaque": CUALQUIER archivo llenado segun esas instrucciones
+// era rechazado renglon por renglon. Ahora se deduce de la categoria del
+// componente, que es de donde sale en la captura manual.
+//
+// unidad_medida se quito porque es la del componente y nada la convierte:
+// ni mrp_correr ni costo_std_unitario miran esa columna. Dejar que alguien
+// escribiera una distinta era abrir la puerta a que el MRP restara metros
+// contra rollos sin avisar.
+const COLS_BOM = ['articulo_padre', 'componente', 'cantidad_por_unidad']
 
 const boolCel = (v) => ['si', 'sí', 'x', '1', 'true', 'verdadero', 'y', 'yes'].includes(String(v ?? '').trim().toLowerCase())
 const numCel = (v) => { const n = parseFloat(String(v ?? '').replace(',', '.')); return isNaN(n) ? null : n }
@@ -29,6 +41,7 @@ export default function CargaMasiva() {
   const [maquiladores, setMaquiladores] = useState([])
   const [sites, setSites] = useState([])
   const [arts, setArts] = useState([])
+  const [bomActual, setBomActual] = useState([])
   const [clientes, setClientes] = useState([])
   const [monedasCat, setMonedasCat] = useState([])
   // Lo ya asignado, para no duplicar la pareja articulo-contraparte.
@@ -43,22 +56,27 @@ export default function CargaMasiva() {
   useEffect(() => { cargar() }, [])
   const cargar = async () => {
     // El orden de las variables sigue el orden de las consultas.
-    const [c, p, s, a, cl, mo, ac, ap] = await Promise.all([
+    // Nueve variables para nueve consultas, en el mismo orden.
+    const [c, p, s, a, cl, mo, ac, ap, bm] = await Promise.all([
       supabase.from('categorias').select('id, nombre').eq('empresa_id', emp),
       supabase.from('proveedores').select('id, nombre').eq('empresa_id', emp),
       supabase.from('sites').select('id, nombre').eq('empresa_id', emp),
       // Se traen origen y se_maquila para poder avisar cuando una asignacion no
       // corresponde: un cliente compra producto fabricado, un proveedor surte
       // comprado o maquila.
-      supabase.from('articulos').select('id, codigo_interno, descripcion, origen, se_maquila').eq('empresa_id', emp),
+      supabase.from('articulos').select('id, codigo_interno, descripcion, origen, se_maquila, unidad_medida, categorias(tipo)').eq('empresa_id', emp),
       supabase.from('clientes').select('id, nombre').eq('empresa_id', emp).eq('activo', true),
       supabase.from('monedas').select('clave').eq('empresa_id', emp).eq('activo', true).order('clave'),
       supabase.from('articulo_cliente').select('articulo_id, cliente_id'),
       supabase.from('articulo_proveedor').select('articulo_id, proveedor_id'),
+      // El BOM que ya existe, para poder rechazar el componente repetido antes
+      // de mandarlo. La base tambien lo impide, pero ahi el mensaje habla de
+      // indices unicos y no le dice nada a quien lleno el archivo.
+      supabase.from('bom').select('articulo_padre_id, componente_articulo_id'),
     ])
     setCats(c.data || []); setMaquiladores(p.data || []); setSites(s.data || []); setArts(a.data || [])
     setClientes(cl.data || []); setMonedasCat((mo.data || []).map(x => x.clave))
-    setArtCli(ac.data || []); setArtProv(ap.data || [])
+    setArtCli(ac.data || []); setArtProv(ap.data || []); setBomActual(bm.data || [])
   }
 
   // Reglas de la pareja articulo-contraparte. Se pide un validador nuevo por
@@ -133,8 +151,8 @@ export default function CargaMasiva() {
   }
 
   const descargarPlantillaBom = () => {
-    const ej = ['PT-0001', 'RES-001', 'materia_prima', 0.023, 'KG']
-    const ej2 = ['PT-0001', 'INS-001', 'componente', 1, 'PZA']
+    const ej = ['PT-0001', 'RES-001', 0.023]
+    const ej2 = ['PT-0001', 'INS-001', 1]
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.aoa_to_sheet([COLS_BOM, ej, ej2])
     ws['!cols'] = COLS_BOM.map(() => ({ wch: 18 }))
@@ -142,11 +160,12 @@ export default function CargaMasiva() {
     const instr = [
       ['INSTRUCCIONES — Carga masiva de BOM'],
       ['articulo_padre', 'codigo del articulo fabricado (padre)'],
-      ['componente', 'codigo del articulo componente/MP'],
-      ['tipo_componente', 'materia_prima / componente / empaque / insumo'],
-      ['cantidad_por_unidad', 'cantidad por pieza (en Kg ya incluye pieza+colada; o en pieza para ensamble)'],
-      ['unidad_medida', 'KG / GR / PZA ...'],
+      ['componente', 'codigo del articulo componente / materia prima / empaque'],
+      ['cantidad_por_unidad', 'cantidad por 1 pieza del padre, EN LA UNIDAD DEL COMPONENTE (en Kg ya incluye pieza+colada; o en piezas para ensamble)'],
+      [''],
       ['Nota', 'El padre y el componente deben existir ya en Articulos (cargalos primero).'],
+      ['Nota', 'La unidad NO se captura: es la del componente, y la cantidad tiene que ir en esa unidad. El sistema no convierte unidades.'],
+      ['Nota', 'Tampoco se captura el tipo: si el componente pertenece a una categoria de tipo Empaque, el renglon se marca como empaque solo.'],
     ]
     const wsi = XLSX.utils.aoa_to_sheet(instr); wsi['!cols'] = [{ wch: 22 }, { wch: 60 }]
     XLSX.utils.book_append_sheet(wb, wsi, 'Instrucciones')
@@ -234,6 +253,13 @@ export default function CargaMasiva() {
   }
 
   const validarBom = (rows) => {
+    // Un componente aparece UNA vez por articulo padre. El BOM se suma al
+    // explotarlo, asi que un renglon repetido no es un renglon feo: es el
+    // doble de material. Ya paso una vez, por cargar el mismo archivo dos
+    // veces, y dejo 28 pares al doble.
+    const enArchivo = new Set()
+    const enSistema = new Set(bomActual.map(b => `${b.articulo_padre_id}|${b.componente_articulo_id}`))
+
     const out = rows.map((r, i) => {
       const err = []
       const padre = artByCode(r.articulo_padre)
@@ -244,11 +270,27 @@ export default function CargaMasiva() {
       else if (!comp) err.push(`componente "${txt(r.componente)}" no existe`)
       const cant = numCel(r.cantidad_por_unidad)
       if (cant == null || cant <= 0) err.push('cantidad_por_unidad invalida')
-      const um = txt(r.unidad_medida).toUpperCase()
-      if (!um) err.push('unidad_medida vacia')
+      if (padre && comp && padre.id === comp.id) err.push('un articulo no puede ser componente de si mismo')
+
+      // Tipo y unidad se deducen del componente, con la misma regla que usa la
+      // captura manual. Si el componente esta en una categoria de tipo Empaque,
+      // el renglon es empaque.
+      const esEmpaque = comp?.categorias?.tipo === 'empaque'
+      const um = comp?.unidad_medida || null
+      if (comp && !um) err.push(`el componente "${comp.codigo_interno}" no tiene unidad de medida capturada`)
+
+      if (padre && comp) {
+        const k = `${padre.id}|${comp.id}`
+        if (enArchivo.has(k)) err.push(`"${comp.codigo_interno}" ya viene para "${padre.codigo_interno}" en este mismo archivo`)
+        else enArchivo.add(k)
+        if (enSistema.has(k)) err.push(`"${comp.codigo_interno}" ya esta en el BOM de "${padre.codigo_interno}". Si cambio la cantidad, corrigela en la pantalla de BOM.`)
+      }
+
       const payload = {
         articulo_padre_id: padre?.id || null, componente_articulo_id: comp?.id || null,
-        tipo_componente: txt(r.tipo_componente) || 'componente',
+        tipo_componente: esEmpaque ? 'empaque' : 'articulo',
+        // La OT toma la norma del articulo padre, no del renglon del BOM.
+        norma_empaque_id: null,
         cantidad_por_unidad: cant, unidad_medida: um,
       }
       return { n: i + 2, payload, errores: err, tipo: 'bom', cod: `${txt(r.articulo_padre)} <- ${txt(r.componente)}` }

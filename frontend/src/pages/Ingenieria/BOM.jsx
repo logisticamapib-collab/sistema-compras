@@ -9,6 +9,10 @@ export default function BOM() {
   const { perfil, tienePermiso } = useAuth()
   const [articulos, setArticulos] = useState([])
   const [normas, setNormas] = useState([])
+  // Que empaques trae cada norma. Sin esto el aviso solo podria decir "no hay
+  // norma"; con esto puede decir lo que de verdad importa: "esta caja no es la
+  // aprobada para este producto".
+  const [empaquesNorma, setEmpaquesNorma] = useState([])
   const [bomCompleto, setBomCompleto] = useState([]) // todas las lineas de BOM (para explosion multinivel)
   const [padreId, setPadreId] = useState('')
   const [vista, setVista] = useState('individual') // 'individual' | 'todos'
@@ -26,14 +30,17 @@ export default function BOM() {
 
   const cargarDatos = async () => {
     setLoading(true)
-    const [{ data: a }, { data: n }, { data: b }] = await Promise.all([
+    // Cuatro variables para cuatro consultas, en el mismo orden.
+    const [{ data: a }, { data: n }, { data: ne }, { data: b }] = await Promise.all([
       supabase.from('articulos').select('id, codigo_interno, descripcion, origen, es_consigna, unidad_medida, categorias(tipo)')
         .eq('empresa_id', perfil.empresa_id).eq('activo', true).order('codigo_interno'),
       supabase.from('normas_empaque').select('id, articulo_id, nombre, piezas_por_empaque, piezas_por_tarima').eq('activa', true),
+      supabase.from('norma_empaque_articulos').select('*'),
       supabase.from('bom').select('*'),
     ])
     setArticulos(a || [])
     setNormas(n || [])
+    setEmpaquesNorma(ne || [])
     setBomCompleto(b || [])
     setLoading(false)
   }
@@ -44,6 +51,13 @@ export default function BOM() {
 
   const articulosComponente = articulos.filter(a => a.id !== parseInt(padreId))
   const normasDelPadre = normas.filter(n => n.articulo_id === parseInt(padreId))
+
+  // ¿Este empaque esta en alguna norma activa de este producto? Es la
+  // diferencia entre avisar "no hay norma" y avisar "esta caja no es la
+  // aprobada", que es lo que alguien necesita leer para corregir.
+  const idsNorma = normasDelPadre.map(n => n.id)
+  const empaqueAutorizado = !!form.componente_articulo_id && empaquesNorma.some(
+    e => idsNorma.includes(e.norma_empaque_id) && e.articulo_id === parseInt(form.componente_articulo_id))
 
   const nombreArticulo = (id) => {
     const a = articulos.find(x => x.id === id)
@@ -73,7 +87,9 @@ export default function BOM() {
       ...form,
       componente_articulo_id: id,
       tipo_componente: esEmpaque ? 'empaque' : 'articulo',
-      unidad_medida: form.unidad_medida || comp?.unidad_medida || '',
+      // La unidad se toma SIEMPRE del componente, no se conserva la anterior.
+      // Ver el comentario del campo mas abajo: nada convierte unidades.
+      unidad_medida: comp?.unidad_medida || '',
     })
   }
 
@@ -86,7 +102,10 @@ export default function BOM() {
       setError('Ese componente ya contiene a este articulo en su BOM (crearia un ciclo)')
       return
     }
-    if (!editando && lineas.some(l => l.componente_articulo_id === parseInt(form.componente_articulo_id))) {
+    // Tambien al editar: cambiar el componente de un renglon a uno que ya
+    // esta en la lista dejaba dos iguales. El BOM se suma al explotarlo, asi
+    // que eso es el doble de material.
+    if (lineas.some(l => l.componente_articulo_id === parseInt(form.componente_articulo_id) && l.id !== editando?.id)) {
       setError('Ese componente ya esta en el BOM de este articulo')
       return
     }
@@ -97,7 +116,8 @@ export default function BOM() {
       articulo_padre_id: parseInt(padreId),
       componente_articulo_id: parseInt(form.componente_articulo_id),
       tipo_componente: form.tipo_componente,
-      norma_empaque_id: form.tipo_componente === 'empaque' && form.norma_empaque_id ? parseInt(form.norma_empaque_id) : null,
+      // No se guarda norma_empaque_id: la OT toma la norma del articulo padre.
+      norma_empaque_id: null,
       cantidad_por_unidad: parseFloat(form.cantidad_por_unidad),
       unidad_medida: form.unidad_medida || null,
     }
@@ -317,28 +337,41 @@ export default function BOM() {
               <input style={styles.input} type="number" min="0" step="0.000001" value={form.cantidad_por_unidad}
                 onChange={e => setForm({ ...form, cantidad_por_unidad: e.target.value })} placeholder="Ej: 0.0325" />
             </div>
+            {/* La unidad NO se captura: es la del componente.
+                Ni mrp_correr ni costo_std_unitario miran esta columna, solo
+                multiplican la cantidad. Si alguien pudiera escribir METROS
+                mientras el articulo se inventaria en ROLLOS, el MRP restaria
+                metros contra rollos y nadie se enteraria. Mientras no exista un
+                factor de conversion, la cantidad tiene que ir en la unidad del
+                propio componente. */}
             <div style={styles.campo}>
               <label style={styles.label}>Unidad</label>
-              <input style={styles.input} value={form.unidad_medida}
-                onChange={e => setForm({ ...form, unidad_medida: e.target.value })} placeholder="KG, PZA..." />
+              <div style={{ ...styles.input, background: '#f8f9fa', color: '#555', display: 'flex', alignItems: 'center' }}>
+                {form.unidad_medida || '—'}
+              </div>
+              <p style={{ fontSize: '11px', color: '#94a3b8', margin: '4px 0 0' }}>
+                La del componente. La cantidad va en esta unidad.
+              </p>
             </div>
           </div>
-          {form.tipo_componente === 'empaque' && (
-            <div style={styles.fila}>
-              <div style={{ ...styles.campo, flex: 2 }}>
-                <label style={styles.label}>Norma de empaque asociada (opcional)</label>
-                <select style={styles.input} value={form.norma_empaque_id}
-                  onChange={e => setForm({ ...form, norma_empaque_id: e.target.value })}>
-                  <option value="">Sin norma especifica</option>
-                  {normasDelPadre.map(n => (
-                    <option key={n.id} value={n.id}>{n.nombre || `Norma #${n.id}`} ({n.piezas_por_empaque} pzs/empaque)</option>
-                  ))}
-                </select>
-                {normasDelPadre.length === 0 && (
-                  <p style={styles.avisoNorma}>Este articulo no tiene normas de empaque activas. Puedes crearlas en la seccion Normas de Empaque.</p>
-                )}
-              </div>
-            </div>
+          {/* El BOM dice QUE se necesita para fabricarlo; la norma de empaque
+              dice si ese empaque esta APROBADO para este articulo. Son cosas
+              distintas y por eso aqui no se bloquea: el candado de verdad vive
+              en Calidad, Liberacion PSW/PPAP, y ahi impide planear y declarar
+              produccion. Aqui solo se avisa.
+
+              Tampoco se pide elegir una norma: la orden de trabajo toma la del
+              articulo PADRE, no la del renglon del BOM. Pedirla aqui sugeria
+              que este renglon decidia el empaque, y no lo decide. */}
+          {form.tipo_componente === 'empaque' && !empaqueAutorizado && (
+            <p style={styles.avisoNorma}>
+              {normasDelPadre.length === 0
+                ? 'Este articulo no tiene ninguna norma de empaque activa. '
+                : 'Este empaque no aparece en ninguna de las normas de empaque activas de este articulo. '}
+              Este empaque aun no esta autorizado para uso en este articulo, favor de generar
+              la norma de empaque correspondiente. El componente se guarda de todas formas;
+              la autorizacion se revisa al planear y al declarar produccion.
+            </p>
           )}
           <div style={styles.botones}>
             <button style={styles.boton} onClick={guardar} disabled={loading}>{loading ? 'Guardando...' : 'Guardar'}</button>
