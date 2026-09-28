@@ -263,6 +263,13 @@ export default function CorrerMRP() {
                           {renderFila('Disponible', grupo.filas, 'disponible_proyectado')}
                           {renderFila('Seguridad', grupo.filas, 'stock_seguridad', '#64748b')}
                           {renderFila('Orden planeada', grupo.filas, 'orden_planeada', '#7c3aed', true)}
+                          {/* El renglon que faltaba.
+                              La matriz muestra la orden en el cubo donde se NECESITA, que es
+                              la convencion de un MRP. Sin este renglon parecia que la orden
+                              arrancaba el mismo dia de la demanda, y la fecha real de arranque
+                              solo se veia cruzando con la tabla de arriba. Una matriz de MRP
+                              lleva los dos: cuando se recibe y cuando hay que soltarla. */}
+                          {renderFilaLiberar(grupo.filas, corridaSel?.fecha_inicio)}
                         </tbody>
                       </table>
                     </div>
@@ -275,6 +282,27 @@ export default function CorrerMRP() {
         </>
       )}
     </div>
+  )
+}
+
+// Cuando hay que soltar cada orden. Si la fecha ya paso, va en rojo: esa orden
+// nace tarde y no se recupera esperando.
+function renderFilaLiberar(filas, inicioCorrida) {
+  return (
+    <tr>
+      <td style={{ ...styles.mLabel, color: '#7c3aed' }}>Liberar</td>
+      {filas.map(f => {
+        const hay = Number(f.orden_planeada ?? 0) > 0
+        const tarde = hay && f.fecha_liberacion && inicioCorrida && f.fecha_liberacion < inicioCorrida
+        return (
+          <td key={f.id} style={{ ...styles.mCell, fontSize: '11px', fontWeight: '600',
+            color: tarde ? '#dc2626' : '#7c3aed', backgroundColor: hay ? '#faf5ff' : 'transparent' }}
+            title={tarde ? 'La fecha de liberacion ya paso: esta orden nace tarde' : ''}>
+            {hay ? fechaCorta(f.fecha_liberacion) : '\u00b7'}
+          </td>
+        )
+      })}
+    </tr>
   )
 }
 
