@@ -14,6 +14,9 @@ const COLS_PROV = [
   { label: 'Condiciones', get: p => p.condiciones_pago },
   { label: 'Dias credito', get: p => p.dias_credito },
   { label: 'Maquilador', get: p => p.es_maquilador ? 'Si' : 'No' },
+  { label: 'Dias maquila', get: p => p.es_maquilador ? p.dias_maquila : '' },
+  { label: 'Dias traslado', get: p => p.es_maquilador ? p.dias_traslado : '' },
+  { label: 'Dias colchon', get: p => p.es_maquilador ? p.dias_colchon : '' },
   { label: 'Estatus', get: p => p.activo ? 'Activo' : 'Inactivo' },
 ]
 
@@ -35,6 +38,9 @@ const COLS_CARGA = [
   { campo: 'forma_pago', ayuda: 'Ej: Transferencia, 03.' },
   { campo: 'numero_cuenta', ayuda: 'Cuenta o CLABE del proveedor.' },
   { campo: 'es_maquilador', tipo: 'bool', ayuda: 'si / no. Solo un maquilador puede recibir ordenes de maquila.' },
+  { campo: 'dias_maquila', tipo: 'num', defecto: 0, ayuda: 'Solo si es maquilador: dias que tarda en producir. El MRP lo usa para saber cuando soltarle la orden.' },
+  { campo: 'dias_traslado', tipo: 'num', defecto: 0, ayuda: 'Solo si es maquilador: dias del viaje de ida y vuelta.' },
+  { campo: 'dias_colchon', tipo: 'num', defecto: 0, ayuda: 'Solo si es maquilador: dias de reserva para no recibir el mismo dia del embarque al cliente.' },
 ]
 const EJEMPLOS_CARGA = [
   ['Resinas del Centro', 'Resinas del Centro SA de CV', 'RCE050101AB2', 'Ing. Pedro Lara', 'ventas@resinascentro.com', '442 987 6543', 'Av. Peñuelas 25', 'Queretaro', 'Queretaro', '76148', '30 dias', 30, 'Transferencia', '012680001234567890', 'no'],
@@ -45,6 +51,7 @@ const formVacio = {
   nombre: '', razon_social: '', rfc: '', contacto: '',
   email: '', telefono: '', direccion: '', ciudad: '',
   estado: '', cp: '', condiciones_pago: '', dias_credito: 0,
+  dias_maquila: 0, dias_traslado: 0, dias_colchon: 0,
   forma_pago: '', numero_cuenta: '', es_maquilador: false,
 }
 
@@ -118,6 +125,7 @@ export default function Proveedores() {
       direccion: p.direccion || '', ciudad: p.ciudad || '', estado: p.estado || '', cp: p.cp || '',
       condiciones_pago: p.condiciones_pago || '', dias_credito: p.dias_credito || 0,
       forma_pago: p.forma_pago || '', numero_cuenta: p.numero_cuenta || '', es_maquilador: !!p.es_maquilador,
+      dias_maquila: p.dias_maquila ?? 0, dias_traslado: p.dias_traslado ?? 0, dias_colchon: p.dias_colchon ?? 0,
     })
     setTambienCliente(!!vinculos[p.id])
     setMostrarForm(true); setMostrarCarga(false); setError('')
@@ -197,6 +205,11 @@ export default function Proveedores() {
       razon_social: form.razon_social || form.nombre,
       rfc: form.rfc || null,
       dias_credito: parseInt(form.dias_credito) || 0,
+      // Solo tienen sentido en un maquilador. Si se desmarca, se limpian para
+      // que no queden dias colgando de un proveedor que solo vende material.
+      dias_maquila: form.es_maquilador ? (parseInt(form.dias_maquila) || 0) : 0,
+      dias_traslado: form.es_maquilador ? (parseInt(form.dias_traslado) || 0) : 0,
+      dias_colchon: form.es_maquilador ? (parseInt(form.dias_colchon) || 0) : 0,
     }
 
     let provId = proveedorEditando?.id
@@ -405,6 +418,45 @@ export default function Proveedores() {
               <input type="checkbox" checked={!!form.es_maquilador} onChange={e => setForm({ ...form, es_maquilador: e.target.checked })} />
               Es maquilador (subcontratacion): habilita este proveedor para ordenes de maquila
             </label>
+
+            {/* Los tiempos del maquilador. Son el valor por omision de TODOS sus
+                articulos; en el articulo se pueden sobrescribir cuando alguno
+                sea la excepcion. El MRP los usa para saber cuando soltarle la
+                orden, en vez de estimarla con nuestra propia maquina -- que es
+                lo que hacia antes, con una maquina que no va a usarse. */}
+            {form.es_maquilador && (
+              <div style={{ marginTop: '14px' }}>
+                <p style={{ fontSize: '12.5px', color: '#475569', margin: '0 0 8px', lineHeight: 1.6 }}>
+                  Tiempos de este maquilador. Se aplican por omision a todos sus articulos y se
+                  pueden sobrescribir en cada uno.
+                </p>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: '150px' }}>
+                    <label style={styles.label}>Dias de maquila</label>
+                    <input style={styles.input} type="number" min="0" value={form.dias_maquila}
+                      onChange={e => setForm({ ...form, dias_maquila: e.target.value })} placeholder="0" />
+                    <span style={{ fontSize: '11px', color: '#94a3b8' }}>Lo que tarda en producir.</span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: '150px' }}>
+                    <label style={styles.label}>Dias de traslado</label>
+                    <input style={styles.input} type="number" min="0" value={form.dias_traslado}
+                      onChange={e => setForm({ ...form, dias_traslado: e.target.value })} placeholder="0" />
+                    <span style={{ fontSize: '11px', color: '#94a3b8' }}>El viaje de ida y vuelta.</span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: '150px' }}>
+                    <label style={styles.label}>Dias de colchon</label>
+                    <input style={styles.input} type="number" min="0" value={form.dias_colchon}
+                      onChange={e => setForm({ ...form, dias_colchon: e.target.value })} placeholder="0" />
+                    <span style={{ fontSize: '11px', color: '#94a3b8' }}>Para no recibir el mismo dia del embarque.</span>
+                  </div>
+                </div>
+                <p style={{ fontSize: '11.5px', color: '#64748b', margin: '8px 0 0' }}>
+                  Suman <strong>{(parseInt(form.dias_maquila) || 0) + (parseInt(form.dias_traslado) || 0) + (parseInt(form.dias_colchon) || 0)} dias habiles</strong>{' '}
+                  de anticipacion. El colchon mueve la FECHA; los dias de inventario de seguridad del
+                  articulo mueven la CANTIDAD, y son cosa aparte.
+                </p>
+              </div>
+            )}
           </div>
 
           <div style={styles.bloqueVinculo}>

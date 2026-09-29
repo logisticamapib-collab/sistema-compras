@@ -30,6 +30,8 @@ const formVacio = {
   // editar para no borrar lo que ya se habia capturado, pero no se ofrece.
   tipo_proceso: 'solo_inyeccion', articulo_wip_origen_id: '',
   se_maquila: false, maquilador_id: '', precio_maquila: '',
+  // Vacio = hereda del maquilador. Un cero significa cero dias, que no es lo mismo.
+  dias_maquila: '', dias_traslado: '', dias_colchon: '',
   peso_pieza_g: '', peso_colada_g: '', peso_purga_g: '',
   pct_scrap_aprobado: 0, admite_molido: false, pct_molido_max: 0,
   site_id: '', sites_destino: [],
@@ -149,6 +151,16 @@ export default function Articulos() {
   // id, asi que no hay norma que mostrar: se captura primero y la norma despues.
   const normaOficialDelForm = articuloEditando ? normaOficial[articuloEditando.id] : null
 
+  // El maquilador elegido, para poder ensenar que se hereda. La misma cuenta
+  // que hace dias_maquila_de en la base; si cambia alla, cambia aqui.
+  const maquiladorDelForm = form.maquilador_id
+    ? proveedores.find(p => p.id === parseInt(form.maquilador_id))
+    : null
+  const diasMaquilaEfectivos =
+    (form.dias_maquila  !== '' ? parseInt(form.dias_maquila)  || 0 : maquiladorDelForm?.dias_maquila  || 0) +
+    (form.dias_traslado !== '' ? parseInt(form.dias_traslado) || 0 : maquiladorDelForm?.dias_traslado || 0) +
+    (form.dias_colchon  !== '' ? parseInt(form.dias_colchon)  || 0 : maquiladorDelForm?.dias_colchon  || 0)
+
   const cargarVistaCompleta = async () => {
     setCargandoVista(true)
     // El orden de las variables sigue el orden de las consultas.
@@ -217,6 +229,7 @@ export default function Articulos() {
       costo: articulo.costo ?? '',
       tipo_proceso: articulo.tipo_proceso || 'solo_inyeccion',
       se_maquila: articulo.se_maquila || false, maquilador_id: articulo.maquilador_id?.toString() || '', precio_maquila: articulo.precio_maquila ?? '',
+      dias_maquila: articulo.dias_maquila ?? '', dias_traslado: articulo.dias_traslado ?? '', dias_colchon: articulo.dias_colchon ?? '',
       articulo_wip_origen_id: articulo.articulo_wip_origen_id?.toString() || '',
       peso_pieza_g: articulo.peso_pieza_g ?? '',
       peso_colada_g: articulo.peso_colada_g ?? '',
@@ -286,6 +299,11 @@ export default function Articulos() {
       se_maquila: esFabricado ? !!form.se_maquila : false,
       maquilador_id: esFabricado && form.se_maquila && form.maquilador_id ? parseInt(form.maquilador_id) : null,
       precio_maquila: esFabricado && form.se_maquila && form.precio_maquila !== '' ? parseFloat(form.precio_maquila) : null,
+      // Vacio se guarda como NULO para que herede del maquilador. Un cero se
+      // guarda como cero: son respuestas distintas.
+      dias_maquila:  esFabricado && form.se_maquila && form.dias_maquila  !== '' ? parseInt(form.dias_maquila)  : null,
+      dias_traslado: esFabricado && form.se_maquila && form.dias_traslado !== '' ? parseInt(form.dias_traslado) : null,
+      dias_colchon:  esFabricado && form.se_maquila && form.dias_colchon  !== '' ? parseInt(form.dias_colchon)  : null,
       articulo_wip_origen_id: esFabricado && form.articulo_wip_origen_id ? parseInt(form.articulo_wip_origen_id) : null,
       peso_pieza_g: esFabricado && form.peso_pieza_g !== '' ? parseFloat(form.peso_pieza_g) : null,
       peso_colada_g: esFabricado && form.peso_colada_g !== '' ? parseFloat(form.peso_colada_g) : null,
@@ -1149,6 +1167,44 @@ export default function Articulos() {
                   </div>
                 )}
               </div>
+
+              {/* Los tiempos. Vacio = hereda del maquilador, que es lo normal.
+                  Se llenan solo cuando ESTA pieza sea la excepcion.
+                  El MRP los usa en lugar de estimar con nuestra maquina: un
+                  articulo maquilado no lo fabrica nuestro molde, asi que la
+                  cantidad de la orden no deberia mover su fecha. */}
+              {form.se_maquila && (
+                <div style={styles.fila}>
+                  <div style={styles.campo}>
+                    <label style={styles.label}>Dias de maquila</label>
+                    <input style={styles.input} type="number" min="0" value={form.dias_maquila}
+                      onChange={e => setForm({ ...form, dias_maquila: e.target.value })}
+                      placeholder={maquiladorDelForm ? `hereda ${maquiladorDelForm.dias_maquila}` : 'hereda del maquilador'} />
+                  </div>
+                  <div style={styles.campo}>
+                    <label style={styles.label}>Dias de traslado</label>
+                    <input style={styles.input} type="number" min="0" value={form.dias_traslado}
+                      onChange={e => setForm({ ...form, dias_traslado: e.target.value })}
+                      placeholder={maquiladorDelForm ? `hereda ${maquiladorDelForm.dias_traslado}` : 'hereda del maquilador'} />
+                  </div>
+                  <div style={styles.campo}>
+                    <label style={styles.label}>Dias de colchon</label>
+                    <input style={styles.input} type="number" min="0" value={form.dias_colchon}
+                      onChange={e => setForm({ ...form, dias_colchon: e.target.value })}
+                      placeholder={maquiladorDelForm ? `hereda ${maquiladorDelForm.dias_colchon}` : 'hereda del maquilador'} />
+                  </div>
+                  <div style={{ ...styles.campo, flex: 2 }}>
+                    <span style={styles.ayudaCampo}>
+                      Dejalos <b>vacios</b> para heredar los del maquilador. Un cero significa cero dias,
+                      que no es lo mismo que heredar.
+                      {maquiladorDelForm && <>
+                        {' '}Hoy se aplicarian <b>{diasMaquilaEfectivos} dias habiles</b> de anticipacion
+                        sobre la fecha requerida.
+                      </>}
+                    </span>
+                  </div>
+                </div>
+              )}
               <h3 style={{ ...styles.formTitulo, marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #f1f5f9' }}>
                 Datos de Ingenieria
               </h3>
